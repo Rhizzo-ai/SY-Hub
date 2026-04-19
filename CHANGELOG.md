@@ -45,6 +45,26 @@ Each entry: date, prompt reference (if applicable), change, rationale.
 - Changed mfa_method default from TOTP to Email for easier initial onboarding.
   Spec says TOTP should be preferred; will revert after onboarding complete.
 
+### 2026-04-20 — Prompt 1.2 retrofit: MFA enrolment UI
+
+Gap caught during manual smoke test: MFA backend primitives were built
+(argon2 secret, Fernet backup codes, TOTP verify) and 13/13 acceptance
+criteria reported as passing, but there was no user-facing enrolment
+UI — the testing subagent had been enrolling via direct API calls only.
+
+Retrofit added:
+- Profile area accessible from user avatar in AppShell topbar
+- /profile/security page with MFA enable/disable/regenerate flow
+- QR code + manual-entry secret display on enrolment
+- TOTP verification step before completion
+- 10 backup codes shown with copy-to-clipboard (shown once)
+- Login flow extended: TOTP challenge after password, backup code fallback
+- MFA prompt-to-enrol on next login for super_admin, director, finance roles
+
+Lesson for future prompts: add explicit "end-to-end via UI" verification
+to acceptance-criteria testing, not just API-level testing. Automated
+tests pass against endpoints; users experience UIs.
+
 -->
 ## Polish Pass TODOs (post-Phase 1)
 
