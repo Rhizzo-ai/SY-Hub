@@ -4,94 +4,127 @@
 SY Homes is a UK property development company. This platform replaces spreadsheets, WhatsApp, and Buildertrend with a single system of record for development and construction operations. Phase 1 scope: 77 tables across 10 modules delivered via 25 sequential build prompts.
 
 ## Stack (locked)
-- **Database**: PostgreSQL 15 (`syhomes` DB, user `syhomes`). Managed via `pg_ctlcluster` + idempotent bootstrap in `/root/.emergent/on-restart.sh` (survives container rebuilds). Supervisor manages backend + frontend only.
-- **Schema migrations**: Alembic — `/app/backend/alembic/`. All DDL lives in versioned migration files. `create_all()` is NOT used.
-- **Backend**: FastAPI + SQLAlchemy 2.x + psycopg3 (sync); APScheduler for jobs
+- **Database**: PostgreSQL 15 (`syhomes` DB, user `syhomes`). Managed via `pg_ctlcluster` + idempotent bootstrap in `/root/.emergent/on-restart.sh`.
+- **Schema migrations**: Alembic — `/app/backend/alembic/`.
+- **Backend**: FastAPI + SQLAlchemy 2.x + psycopg3 + APScheduler
+- **Auth**: argon2-cffi (argon2id) + pyotp (TOTP) + qrcode + pyjwt (HS256) + cryptography (Fernet)
 - **Frontend**: React 19 + React Router 7 + Tailwind + shadcn/Radix + RHF + Zod + date-fns-tz
 - **Fonts**: Chivo (headings), IBM Plex Sans (body), IBM Plex Mono (numbers)
-- **Hosting**: Supervisor-managed backend:8001, frontend:3000; postgresql:5432 (pg_ctlcluster)
 
 ## Conventions (applied globally)
-- Tables plural snake_case; fields snake_case; FKs `_id`; timestamps `_at` UTC; dates `_date`; percentages `_pct`; booleans `is_`/`has_`; enums `PascalCase_With_Underscores`.
-- IDs: UUID v4; Money: `DECIMAL(14,2)`; Percentages: `DECIMAL(6,3)` stored 0–100.
-- FKs default `ON DELETE RESTRICT`; junctions `CASCADE`; status field for soft-archive on audit/financial tables.
-- `created_at` + `updated_at` on every table; `updated_at` auto-refresh via PG trigger function `set_updated_at()`.
-- Every table carries `tenant_id UUID NOT NULL` FK → `tenants.id` (Phase 1 single-tenant, multi-tenant ready).
-- `created_by_user_id` to be added retrospectively in Prompt 1.2 (new migration).
-- **All schema changes go through Alembic migrations — never edit SQLAlchemy models and skip the migration.**
-
-## User Personas (Phase 1)
-- **Finance Director** — cross-entity visibility, insurance compliance, Xero oversight.
-- **Construction Manager** — programme, cost codes, project progress (later prompts).
-- **Office Admin** — entity maintenance, Companies House / VAT updates, insurance renewals.
-- **Developer/Ops Director** (superuser) — setup, entity structure, JV creation.
+- Tables plural snake_case; fields snake_case; FKs `_id`; timestamps `_at` UTC; dates `_date`; enums `PascalCase_With_Underscores`.
+- UUID v4 IDs; `DECIMAL(14,2)` money; `DECIMAL(6,3)` percentages 0–100.
+- FKs default `ON DELETE RESTRICT`; junctions `CASCADE`; soft-archive via status field.
+- `created_at` + `updated_at` + `tenant_id` on every table; `updated_at` auto-refresh via PG trigger `set_updated_at()`.
+- **All schema changes go through Alembic migrations.**
+- **Authentication enforced at FastAPI dependency level** — 403 fires before handler logic.
 
 ## Architecture
 ```
 /app/backend/
-├── server.py                       # FastAPI entrypoint; lifespan: alembic upgrade head → seed → start scheduler
-├── alembic.ini
+├── server.py                        # lifespan: alembic upgrade head → seed → seed_rbac → start schedulers
 ├── alembic/
-│   ├── env.py                      # Loads .env; uses Base.metadata; compare_server_default=False (intentional)
+│   ├── env.py
 │   └── versions/
-│       └── 0001_initial_entities.py  # tenants + entities + 5 enums + partial indexes + trigger fn + triggers
-├── .env                            # DATABASE_URL, DEFAULT_TENANT_NAME, INSURANCE_ALERT_HOUR_UTC
+│       ├── 0001_initial_entities.py
+│       └── 0002_users_rbac.py       # users + RBAC + entities.created_by_user_id
+├── .env                             # DATABASE_URL, JWT_SECRET, MFA_ENCRYPTION_KEY, BOOTSTRAP_ADMIN_*
+├── scripts/
+│   └── seed_test_users.py           # idempotent test fixtures
 ├── tests/
-│   ├── conftest.py                 # loads .env before imports
-│   ├── test_entities_api.py        # 31 API tests
-│   └── test_insurance_alerts.py    # 22 threshold-sweep tests
+│   ├── conftest.py
+│   ├── test_entities_api.py         # Prompt 1.1 (updated for auth)
+│   ├── test_insurance_alerts.py
+│   └── test_auth_rbac.py            # Prompt 1.2 (32 tests)
 └── app/
-    ├── db.py                       # engine, Base, TimestampMixin (server_default=func.now())
-    ├── deps.py                     # get_current_tenant_id (single-tenant lookup)
-    ├── models/{tenant,entity}.py
+    ├── db.py
+    ├── deps.py                      # name-based tenant lookup (legacy; prefer auth-derived)
+    ├── auth/
+    │   ├── passwords.py             # argon2id hash/verify/history
+    │   ├── mfa.py                   # TOTP + Fernet + backup codes
+    │   ├── tokens.py                # JWT HS256 (4h in 1.2)
+    │   ├── permissions.py           # compute_effective_permissions + UserPermissions dataclass
+    │   └── deps.py                  # get_current_user + require_permission(*codes) factory
+    ├── models/{tenant,entity,user,rbac}.py
     ├── schemas/entity.py
-    ├── routers/{entities,meta}.py
-    ├── seed.py                     # idempotent: 1 tenant + 3 entities
-    └── jobs/insurance_alerts.py    # APScheduler daily 06:00 UTC; exact-threshold emissions
+    ├── routers/
+    │   ├── auth.py                  # /login, /mfa/*, /password/change, /logout, /me
+    │   ├── users.py                 # CRUD + unlock + scrub_pii + role assignment
+    │   ├── roles.py                 # /roles (list+detail) + /permissions (list)
+    │   ├── entities.py              # retrofitted with permission deps + scope filter + sensitive stripping
+    │   └── meta.py
+    ├── seed.py                      # tenant + entity seed
+    ├── seed_rbac.py                 # permissions (~90) + roles (10) + role-permissions mapping + bootstrap admin
+    └── jobs/
+        ├── insurance_alerts.py
+        └── role_expiry.py           # hourly: Active user_roles → Expired when expires_at passed
 
-/root/.emergent/on-restart.sh       # Idempotent PG install + cluster start + user/db provisioning
+/app/frontend/src/
+├── context/AuthContext.jsx
+├── lib/{api,format}.js
+├── components/
+│   ├── AppShell.jsx                 # sidebar with current user + logout; Users/Roles/Perms enabled
+│   ├── user/RoleAssignmentModal.jsx
+│   └── entity/{EntityForm,InsuranceBadge,EntityStatusBadge}.jsx
+└── pages/
+    ├── LoginPage.jsx
+    ├── EntitiesList/Detail/New/Edit.jsx
+    ├── UsersList/Detail/New.jsx
+    └── RolesAndPermissions.jsx      # RolesList + RoleDetail + PermissionsList
 ```
 
 ## What's Been Implemented
 
 ### 2026-04-19 — Prompt 1.1: Entities ✅
-- **Tables** (migration 0001): `tenants`, `entities` + 5 native PG enums. Partial-unique indexes on CH#/VAT# scoped `(tenant_id, field)`. Composite `(tenant_id, entity_type, status)`. Partial on `xero_org_id`. `set_updated_at()` trigger function + per-table `trg_*_updated_at` triggers.
-- **API**: `/api/entities` (GET list q/type/status/sort/dir/page/page_size; GET detail with parent+children; POST; PUT; DELETE with children-guard + RESTRICT). `/api/meta/{tenant,enums,insurance-alerts}`. `/api/health`.
-- **Validation**: CH 8-alphanumeric; VAT 9–12 digits; year_end `MM-DD`; bank account 8 digits → stored as `****NNNN`; parent cycle-prevention on create + update.
-- **Seed** (idempotent): `SY Homes` tenant + `SY Homes Ltd` (Parent) + `SY Homes (Shrewsbury) Ltd` (SPV) + `SY Homes (Construction) Ltd` (ConstructionCo, CIS Contractor).
-- **Scheduled job**: daily 06:00 UTC sweep — fires `_emit_alert` at exact threshold days `{60,30,14,7,0}` with severity labels `{60_day, 30_day, 14_day, 7_day, 0_day}` and daily `expired` while past due. Replaced with notifications-table writes in Prompt 1.7.
-- **Preview endpoint** `/api/meta/insurance-alerts` returns UI-bucket severity `{upcoming, warning, critical, expired}` for the dashboard — independent vocabulary from the emit hook.
-- **Frontend**: App shell (10 nav items, only Entities enabled); full CRUD UI; inline blur validation; insurance urgency highlighting; parent/children hierarchy navigation; UK date/money formatting; data-testid throughout.
-- **Testing** (2026-04-19, iteration 2): 53/53 backend tests pass (31 API + 22 insurance-threshold sweep); all frontend scenarios verified; `alembic check` clean; `alembic current` → `0001_initial_entities (head)`.
+(See previous PRD revisions — tables, CRUD, scheduled insurance alerts, full UI. Alembic 0001 migration. 53/53 tests.)
 
-## Prioritised Backlog (25-prompt plan — 7 foundation prompts)
+### 2026-04-19 — Prompt 1.2: Users, Roles, Permissions ✅
+- **Tables** (migration 0002): `users`, `roles`, `permissions`, `role_permissions`, `user_roles`, `user_role_entities`, `user_role_projects`. `entities.created_by_user_id` retrofit column + index.
+- **RBAC model**: 10 system roles seeded; 87 atomic permissions across 24 resources; role-permission mapping in `seed_rbac.py`.
+- **Auth primitives**: argon2id password hashing (64 MiB / 3 / 4 per OWASP), password history (5 deep), 12-char minimum; Fernet-encrypted TOTP secrets; 10 single-use backup codes (argon2-hashed); HS256 JWT access tokens (4h in 1.2; reduced to 15min + refresh tokens in 1.3).
+- **Account lockout**: 5 failed attempts → 15/30/60-min escalating lockouts; super_admin `/unlock` endpoint.
+- **MFA flow**: `/mfa/enroll/start` → QR; `/mfa/enroll/confirm` → 10 backup codes returned once; login → mfa_challenge JWT → `/mfa/verify` → access token. Backup codes consumable (used_at stamped).
+- **Effective permissions**: JOIN-per-request (no cache yet per agreed simplification for 1.2); union of active role-permissions minus per-assignment `view_overrides`; entity-scope + project-scope honoured; `UserPermissions.has_on_entity(code, entity_id)` + `entity_ids_with(code)` helpers.
+- **Dependency-level enforcement**: `Depends(require_permission(*codes))` factory — 403 fires before handler logic. Applied to every entities route and every users/roles/permissions route.
+- **Entities retrofit**: `created_by_user_id` stamped on POST; list filtered by scope; sensitive fields (`bank_*`, `xero_*`) stripped from response unless caller has `entities.view_sensitive` or `entities.admin`; Banking/Xero PUT paths blocked without `entities.view_sensitive`.
+- **Scheduled jobs**: hourly `user_roles` expiry sweep → marks `Active` rows past `expires_at` as `Expired`.
+- **Bootstrap**: requires `BOOTSTRAP_ADMIN_EMAIL` + `BOOTSTRAP_ADMIN_PASSWORD` in `.env`; seed fails loudly if absent. Grants `super_admin` role, scope=All/All.
+- **Frontend**: `/login` page (two-pane enterprise layout, TOTP + backup-code fallback); `AuthContext` with JWT localStorage + 401 auto-logout; top-bar user menu + logout; `/users` list + `/users/:id` detail with role-assignment modal (entity_scope=All/Specific picker, view_overrides, expiry); `/users/new` invite flow with one-time token display; `/roles` list + `/roles/:id` matrix (read-only, grouped by resource); `/permissions` grouped list; Entity detail Banking + Xero sections show "Restricted — insufficient permissions" placeholder when `entities.view_sensitive` missing.
+- **Test users** (7 fixtures): `test-admin`, `test-director`, `test-pm` (scoped to Shrewsbury), `test-finance`, `test-site`, `test-readonly`, `test-archived`. Seeded idempotently via `scripts/seed_test_users.py`. Real super_admin (`rhys@syhomes.co.uk`) stays out of test credentials file.
+- **Testing**: 85/85 backend tests pass (32 auth/RBAC + 31 entities + 22 insurance). Frontend flows verified: login, logout, scope-filtered lists, sensitive-field gating, role assignment, invite token display.
 
-### P0 — Next prompts (Foundation: 1.1 → 1.7)
-- **1.2 — Users, Roles, Permissions**: argon2id, 10 roles, ~90 permissions, seed superuser, wire `created_by_user_id` retroactively onto entities (new Alembic migration). Register + enforce the 5 entity permissions (`entities.view`, `entities.view_sensitive`, `entities.create`, `entities.edit`, `entities.delete`).
-- **1.3 — Sessions, Login History, Invitations, SSO, API Keys**: 15-min access + 30/90d refresh tokens, MFA (TOTP/SMS/Email), Google/Microsoft/Apple SSO link.
-- **1.4, 1.5, 1.6** — remainder of Module 1.
-- **1.7 — Notifications**: swap `_emit_alert` log hook for real notifications inserts scoped to director-role users.
+## Acceptance Criteria for Prompt 1.2 — all met
+- ✅ First super_admin created during initial setup (from .env-provided credentials)
+- ✅ 10 roles seeded and visible on /roles
+- ✅ 87 permissions seeded and visible on /permissions (spec said ~90)
+- ✅ Can assign a role to a user with entity/project scope
+- ✅ Director role sees all entities; PM scoped to Shrewsbury sees only Shrewsbury
+- ✅ view_overrides correctly removes specific permissions from an assignment
+- ✅ Expired user_roles marked Expired via hourly scheduled job
+- ✅ Password change rejects reuse of last 5 passwords
+- ✅ MFA flow end-to-end (TOTP enrolment → QR → backup codes → login prompt → verify)
+- ✅ Account locks after 5 failed attempts; super_admin /unlock works
+- 🕒 Self-approval modal — **helper in place; UI deferred** (no approval workflows exist until budgets/appraisals modules)
+- ✅ Archived users cannot log in; row preserved for FK integrity
 
-### P1 — Other modules
-- Projects (2.x), Cost Codes (3.x), Appraisals, Budgets, Cash Flow, Programme, Documents, Compliance.
+## Deferred per agreed deviations (with pointers for the prompt that picks them up)
+- Effective-permissions caching → Prompt 1.3 (when sessions arrive)
+- SMS/Email MFA → requires Twilio/SendGrid integrations (later module)
+- Login history/sessions/refresh tokens → Prompt 1.3
+- SSO (Google/Microsoft/Apple) → Prompt 1.3
+- Password breach check (HIBP) → Prompt 1.3
+- Audit log writes on role changes → Prompt 1.4
+- project_scope='Specific' UI → Prompt 1.5 (projects FK)
+- Self-approval modal integration → first prompt with an approval workflow
+- PII scrub UI confirmation dialog → Prompt 1.7 (Notifications gives us a confirm UX pattern)
 
-### P2 — Integrations & phase 2
-- Xero OAuth (5.1) populates `xero_org_id` / `xero_org_name`.
-- Bank feed integration (deferred).
-- Group consolidation reporting.
-- Multi-tenancy surfacing.
-
-## Deferred / Out of Scope for 1.1
-- Xero connection (Prompt 5.1).
-- Insurance document uploads (Prompt 4.2 — Documents).
-- Bank feed (future).
-- Group consolidation (Phase 2+).
-
-## Operational Notes
-- **Container restart**: `/root/.emergent/on-restart.sh` re-installs PG 15 and re-provisions the role/db if needed. Supervisor then starts backend (runs `alembic upgrade head` + seed in lifespan) and frontend. Data in `/var/lib/postgresql/15/main` survives supervisor restarts but **not** container rebuilds.
-- **Adding a migration**: edit models → `cd /app/backend && alembic revision --autogenerate -m "<title>"` → review the generated file by hand (especially enums, partial indexes, triggers which don't autogenerate reliably) → `alembic upgrade head`. Backend lifespan re-runs `upgrade head` on next restart.
-- **Drift check**: `alembic check` — must return `No new upgrade operations detected.` before declaring a prompt complete.
-- `DEFAULT_TENANT_NAME=SY Homes` in `backend/.env` — seed resolves tenant by name.
+## Prioritised Backlog (Foundation 1.1 → 1.7)
+- **P0**: 1.3 Sessions/Login History/Invitations/SSO/API Keys; 1.4 Audit log (with retroactive hooks on entities & user_role changes); 1.5 Projects; 1.6 (reserved); 1.7 Notifications (closes the `_emit_alert` log hook).
+- **P1**: Modules 2–10 (Projects, Cost Codes, Appraisals, Budgets, Cash Flow, Programme, Documents, Compliance).
+- **P2**: Xero OAuth (5.1), Bank feed, Group consolidation, Multi-tenancy surfacing.
 
 ## Process Commitments
-- Never silently defer agreed-upon standards. If a deviation becomes attractive mid-flight (complexity, time, uncertainty), surface it in-channel before making the change — don't wait to be asked.
+- Never silently defer agreed standards — surface deviations in-channel before changing course.
+- Every prompt delivers: migration + backend + tests + UI + test-fixture coverage.
+- `alembic check` must return clean before declaring a prompt complete.
+- Real human credentials never committed to disk; test users get deterministic passwords in `test_credentials.md`.
