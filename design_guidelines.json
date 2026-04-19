@@ -1,0 +1,161 @@
+{
+  "project_name": "SY Homes Operations Platform",
+  "theme": "light",
+  "archetype": "Archetype 4 (Swiss & High-Contrast) - B2B Ledger Variation",
+  "design_philosophy": "The UI must convey 'the quiet confidence of a well-built ledger system'. This is an enterprise tool for property developers, finance directors, and construction managers. It prioritizes information density, readability, scannability, and trust. Flourishes and animations are minimal; the structure is rigid, data-rich, and clearly demarcated.",
+  "colors": {
+    "background": {
+      "app_shell": "#F8FAFC",
+      "surface": "#FFFFFF",
+      "description": "Slate-50 for the main app background to provide contrast against pure white data cards."
+    },
+    "text": {
+      "primary": "#0F172A",
+      "secondary": "#475569",
+      "tertiary": "#64748B",
+      "inverse": "#FFFFFF",
+      "description": "Avoid pure black. Slate-900 provides high contrast for primary text, while Slate-600/500 handles labels and metadata."
+    },
+    "border": {
+      "default": "#E2E8F0",
+      "focus": "#0F172A",
+      "divider": "#F1F5F9"
+    },
+    "brand": {
+      "primary": "#0F172A",
+      "primary_hover": "#1E293B",
+      "primary_foreground": "#FFFFFF",
+      "description": "Using deep slate as the primary 'brand' color. It is authoritative and solid."
+    },
+    "semantic": {
+      "status_active": {
+        "bg": "#D1FAE5",
+        "text": "#065F46",
+        "border": "#34D399"
+      },
+      "status_dormant": {
+        "bg": "#FEF3C7",
+        "text": "#92400E",
+        "border": "#FBBF24"
+      },
+      "status_struck_off": {
+        "bg": "#FEE2E2",
+        "text": "#991B1B",
+        "border": "#F87171"
+      }
+    },
+    "insurance_urgency": {
+      "normal": {
+        "bg": "#F1F5F9",
+        "text": "#475569",
+        "description": ">60 days"
+      },
+      "amber": {
+        "bg": "#FEF3C7",
+        "text": "#92400E",
+        "description": "<60 days (Warning)"
+      },
+      "red_critical": {
+        "bg": "#FEE2E2",
+        "text": "#991B1B",
+        "description": "<14 days (Critical)"
+      },
+      "expired": {
+        "bg": "#DC2626",
+        "text": "#FFFFFF",
+        "description": "Past date (EXPIRED) - High contrast alert"
+      }
+    }
+  },
+  "typography": {
+    "fonts": {
+      "heading": "'Chivo', sans-serif",
+      "body": "'IBM Plex Sans', sans-serif",
+      "mono": "'IBM Plex Mono', monospace",
+      "instructions": "Avoid Inter/Roboto. Chivo provides a solid, grotesque structure for headings. IBM Plex Sans is highly engineered for dense UI. IBM Plex Mono is CRITICAL for financial figures, VAT numbers, Companies House numbers, and dates."
+    },
+    "scale": {
+      "h1": "text-2xl sm:text-3xl font-bold tracking-tight text-slate-900",
+      "h2": "text-xl sm:text-2xl font-semibold tracking-tight text-slate-900",
+      "h3": "text-lg font-semibold text-slate-900",
+      "h4": "text-base font-medium text-slate-900",
+      "body": "text-sm text-slate-700 leading-relaxed",
+      "small": "text-xs text-slate-500",
+      "overline": "text-xs font-semibold uppercase tracking-widest text-slate-500",
+      "tabular": "font-mono text-sm tabular-nums text-slate-900"
+    }
+  },
+  "layout_and_spacing": {
+    "app_shell": {
+      "sidebar_width": "w-64",
+      "sidebar_style": "fixed left-0 top-0 h-full border-r border-slate-200 bg-white z-40",
+      "topbar_style": "h-16 border-b border-slate-200 bg-white sticky top-0 z-30 px-8 flex items-center justify-between",
+      "main_content": "ml-64 p-8 max-w-[1600px] mx-auto min-h-screen bg-slate-50"
+    },
+    "spacing_scale": {
+      "dense": "p-2 gap-2 (Tables, nested lists)",
+      "standard": "p-4 gap-4 (Card internals, standard forms)",
+      "relaxed": "p-6 gap-6 md:p-8 md:gap-8 (Main layout sections, section wrappers)"
+    },
+    "components": {
+      "cards": {
+        "style": "bg-white border border-slate-200 rounded-lg shadow-sm overflow-hidden",
+        "header": "px-6 py-4 border-b border-slate-200 bg-slate-50/50",
+        "body": "p-6"
+      },
+      "tables": {
+        "style": "w-full text-sm text-left border-collapse",
+        "header": "bg-slate-50 border-y border-slate-200 text-xs font-semibold uppercase tracking-wider text-slate-500",
+        "cell": "py-3 px-4 border-b border-slate-200 align-middle",
+        "row": "hover:bg-slate-50/80 transition-colors",
+        "alignment": "Numbers right-aligned, text left-aligned, status badges center-aligned."
+      },
+      "forms": {
+        "layout": "grid grid-cols-1 md:grid-cols-2 gap-6",
+        "input": "flex h-9 w-full rounded-md border border-slate-300 bg-white px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-900",
+        "label": "block text-sm font-medium text-slate-700 mb-1.5",
+        "validation": "text-xs text-red-500 mt-1"
+      }
+    }
+  },
+  "patterns": {
+    "navigation": {
+      "active_item": "bg-slate-100 text-slate-900 font-medium",
+      "disabled_item": "opacity-50 cursor-not-allowed text-slate-500 grayscale",
+      "behavior": "9 of 10 modules disabled for Phase 1. Only 'Entities' is active."
+    },
+    "entity_detail_view": {
+      "layout": "Bento grid or vertical stack of distinct cards (Identity, Tax, Addresses, Insurance, Banking, Xero, Notes). Use a 2-column layout on large screens.",
+      "hierarchy": "Parent entity clearly visible at the top as an overline or breadcrumb. Child entities displayed as a dense data table inside the hierarchy card."
+    },
+    "formatting": {
+      "dates": "UK format: DD MMM YYYY (e.g., 19 Apr 2026). Displayed using date-fns-tz for Europe/London.",
+      "currency": "GBP (£), right-aligned, tabular-nums."
+    },
+    "testing": "CRITICAL: 'data-testid' must be present on EVERY interactive element (buttons, links, inputs, rows, tabs)."
+  },
+  "interaction_and_motion": {
+    "hover": "Subtle background shifts (slate-50) or border darkening. No heavy scaling or bouncing.",
+    "focus": "Clear, accessible focus rings (ring-2 ring-slate-900 ring-offset-2).",
+    "validation": "Inline validation on blur for forms. Red borders and text helper below the input.",
+    "loading": "Skeleton loaders (animate-pulse bg-slate-200) matching the exact dimensions of the expected content. No generic spinners for main views."
+  },
+  "media_and_assets": {
+    "icons": "lucide-react. Standardize stroke-width to 1.5 for a clean, technical look.",
+    "images": {
+      "auth_background": {
+        "url": "https://images.pexels.com/photos/3318582/pexels-photo-3318582.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+        "description": "Minimalist black and white low angle view of Brutalist architecture. Use as a split-screen login background (if applicable)."
+      },
+      "empty_state_pattern": {
+        "url": "https://images.unsplash.com/photo-1637190623651-e6b10007a0b7?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzMzJ8MHwxfHNlYXJjaHwxfHxhYnN0cmFjdCUyMGFyY2hpdGVjdHVyYWwlMjBibHVlcHJpbnQlMjBsaW5lc3xlbnwwfHx8fDE3NzY2MTI4MzV8MA&ixlib=rb-4.1.0&q=85",
+        "description": "Abstract blueprint lines. Use at 5% opacity overlaid on slate-50 background for empty states to prevent stark white voids."
+      }
+    }
+  },
+  "shadcn_customizations": {
+    "button": "Remove extreme rounded corners (use rounded-md). Ensure primary button is slate-900.",
+    "badge": "Customize variants for semantic status (active, dormant, struck_off) and insurance urgency.",
+    "card": "Remove default extreme shadow. Use border-slate-200 and shadow-sm."
+  }
+}
