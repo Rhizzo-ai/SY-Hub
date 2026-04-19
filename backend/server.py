@@ -19,13 +19,16 @@ from fastapi import APIRouter, FastAPI  # noqa: E402
 from fastapi.responses import JSONResponse  # noqa: E402
 from starlette.middleware.cors import CORSMiddleware  # noqa: E402
 
-from app.db import Base, engine, ensure_updated_at_trigger, UPDATED_AT_FN_SQL  # noqa: E402
+from alembic import command as alembic_command  # noqa: E402
+from alembic.config import Config as AlembicConfig  # noqa: E402
+
+from app.db import engine  # noqa: E402
 from app.jobs.insurance_alerts import start_scheduler, stop_scheduler  # noqa: E402
 from app.routers.entities import router as entities_router  # noqa: E402
 from app.routers.meta import router as meta_router  # noqa: E402
 from app.seed import seed  # noqa: E402
 
-# Import models so they register with metadata before create_all().
+# Import models so they register with metadata (used by alembic env.py).
 from app import models  # noqa: F401, E402
 
 
@@ -36,21 +39,18 @@ logging.basicConfig(
 log = logging.getLogger("syhomes")
 
 
-def _init_schema() -> None:
-    """Create tables + updated_at trigger function + per-table triggers."""
-    with engine.begin() as conn:
-        conn.exec_driver_sql('CREATE EXTENSION IF NOT EXISTS "pgcrypto";')
-        conn.exec_driver_sql(UPDATED_AT_FN_SQL)
-    Base.metadata.create_all(engine)
-    with engine.begin() as conn:
-        for table_name in Base.metadata.tables.keys():
-            ensure_updated_at_trigger(conn, table_name)
-    log.info("Schema ready; updated_at triggers installed.")
+def _run_migrations() -> None:
+    """Apply any pending Alembic migrations. Single source of truth for schema."""
+    cfg = AlembicConfig(str(ROOT_DIR / "alembic.ini"))
+    cfg.set_main_option("script_location", str(ROOT_DIR / "alembic"))
+    cfg.set_main_option("sqlalchemy.url", os.environ["DATABASE_URL"])
+    alembic_command.upgrade(cfg, "head")
+    log.info("Alembic migrations up to date.")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    _init_schema()
+    _run_migrations()
     try:
         seed()
     except Exception:

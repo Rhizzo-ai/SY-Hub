@@ -1,0 +1,105 @@
+{
+  "summary": "Completed comprehensive testing of SY Homes Entities module iteration 2 (Alembic migration retrofit + insurance alert threshold sweep). All 53 backend tests passed (31 API tests + 22 insurance alert sweep tests). Frontend CRUD, filtering, search, hierarchy navigation, and insurance badge highlighting all working correctly. Alembic migrations verified.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "issue": "Seeded data was modified (SY Homes Construction entity_type changed from ConstructionCo to Parent, parent_entity_id set to null). Fixed by restoring correct values.",
+        "resolution": "Data restored to match seed.py expectations"
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "EntityForm.jsx",
+        "issues": ["Console warning: In HTML, <span> cannot be a child of <option> - minor React hydration warning, not affecting functionality"]
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_entities_api.py",
+    "/app/backend/tests/test_insurance_alerts.py",
+    "/app/test_reports/pytest/pytest_results_iter2_final.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Alembic migration 0001_initial_entities correctly reproduces schema from Base.metadata.create_all()",
+    "alembic current returns '0001_initial_entities (head)' - migration applied correctly",
+    "alembic check returns 'No new upgrade operations detected' - no schema drift",
+    "Insurance alert sweep correctly fires at exact thresholds (60, 30, 14, 7, 0 days) with new severity labels (60_day, 30_day, 14_day, 7_day, 0_day, expired)",
+    "Insurance alert sweep correctly fires daily for expired policies",
+    "Insurance alert sweep correctly ignores struck_off entities and null policies",
+    "Preview endpoint /api/meta/insurance-alerts still returns UI-bucket severity values (upcoming, warning, critical, expired) - unchanged",
+    "All 31 iteration 1 API tests still pass (regression verified)",
+    "All 22 new insurance alert threshold sweep tests pass"
+  ],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "100% (53/53 tests passed - 31 API + 22 insurance alerts)",
+    "frontend": "100% (all manual tests passed)"
+  },
+  "seed_data_creation": "Fixed seeded data: SY Homes (Construction) Ltd restored to entity_type=ConstructionCo with parent_entity_id pointing to SY Homes Ltd",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Backend API tests in /app/backend/tests/test_entities_api.py (31 tests). Insurance alert sweep tests in /app/backend/tests/test_insurance_alerts.py (22 tests). Run with PYTHONPATH=/app/backend for insurance alert tests. Alembic migrations verified - single revision 0001_initial_entities at head. Insurance alert thresholds: 60, 30, 14, 7, 0 days with severity labels 60_day, 30_day, 14_day, 7_day, 0_day, expired. Preview endpoint uses UI-bucket severities: upcoming, warning, critical, expired.",
+  "tests_executed": {
+    "alembic_verification": [
+      "alembic current → '0001_initial_entities (head)' ✓",
+      "alembic check → 'No new upgrade operations detected' ✓",
+      "Backend boots cleanly with alembic upgrade head in lifespan ✓",
+      "Seed inserts 3 entities after migration ✓",
+      "Scheduler starts successfully ✓"
+    ],
+    "backend_api_tests": [
+      "GET /api/health - returns 200 with module=entities, phase=1.1 ✓",
+      "GET /api/meta/tenant - returns SY Homes tenant with UUID ✓",
+      "GET /api/meta/enums - returns all 5 enums with expected values ✓",
+      "GET /api/entities - returns 3 seeded entities ✓",
+      "GET /api/entities?entity_type=Parent - filters correctly (1 result) ✓",
+      "GET /api/entities?entity_type=SPV - filters correctly (1 result) ✓",
+      "GET /api/entities?q=Shrewsbury - search works ✓",
+      "GET /api/entities?sort=name&dir=desc - sorting works ✓",
+      "GET /api/entities?sort=name&dir=asc - sorting works ✓",
+      "GET /api/entities?entity_type=InvalidType - returns 400 ✓",
+      "GET /api/entities/{id} - returns detail with parent/children ✓",
+      "POST /api/entities - creates entity successfully ✓",
+      "POST /api/entities - rejects invalid CH number (422) ✓",
+      "POST /api/entities - rejects duplicate CH number (409) ✓",
+      "POST /api/entities - rejects duplicate VAT number (409) ✓",
+      "POST /api/entities - masks bank account number ✓",
+      "PUT /api/entities/{id} - updates and refreshes updated_at ✓",
+      "PUT /api/entities/{id} - rejects self as parent (400) ✓",
+      "PUT /api/entities/{id} - rejects circular parent chain (400) ✓",
+      "PUT /api/entities/{id} - rejects invalid year_end (422) ✓",
+      "DELETE /api/entities/{id} - blocks delete with children (409) ✓",
+      "DELETE /api/entities/{id} - succeeds for leaf entity (204) ✓",
+      "Struck_off status hidden by default, visible with filter ✓",
+      "GET /api/meta/insurance-alerts - returns alerts with correct UI severity (warning for 30 days) ✓"
+    ],
+    "insurance_alert_sweep_tests": [
+      "Sweep fires at exact threshold 60 days with severity=60_day ✓",
+      "Sweep fires at exact threshold 30 days with severity=30_day ✓",
+      "Sweep fires at exact threshold 14 days with severity=14_day ✓",
+      "Sweep fires at exact threshold 7 days with severity=7_day ✓",
+      "Sweep fires at exact threshold 0 days with severity=0_day ✓",
+      "Sweep does NOT fire at 59, 61, 45, 31, 29, 15, 13, 8, 6, 1 days ✓",
+      "Sweep fires every day while expired (1, 7, 30, 365 days ago) with severity=expired ✓",
+      "Sweep fires once per policy when multiple policies at threshold ✓",
+      "Sweep ignores struck_off entities ✓",
+      "Sweep ignores null policies ✓"
+    ],
+    "frontend_tests": [
+      "Entities list page loads with 3 seeded entities ✓",
+      "Sidebar shows Entities active, other modules disabled with 'Soon' ✓",
+      "Clicking row navigates to detail page ✓",
+      "Detail page shows all 8 sections (Identity, Tax, Addresses, Insurance, Banking, Xero, Hierarchy, Notes) ✓",
+      "SY Homes Ltd shows 2 children in hierarchy ✓",
+      "Child entity shows parent link ✓",
+      "New entity form with all fields ✓",
+      "Insurance section shows 'Alerts are emitted at 60, 30, 14, 7 and 0 days before expiry' ✓"
+    ]
+  }
+}

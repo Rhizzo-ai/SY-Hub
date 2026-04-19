@@ -10,7 +10,7 @@ import os
 import uuid
 from datetime import datetime
 
-from sqlalchemy import create_engine, event, DateTime, ForeignKey
+from sqlalchemy import create_engine, event, DateTime, ForeignKey, func, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import (
     DeclarativeBase,
@@ -48,12 +48,12 @@ class TimestampMixin:
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
-        server_default="now()",
+        server_default=func.now(),
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
-        server_default="now()",
+        server_default=func.now(),
     )
 
 
