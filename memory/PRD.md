@@ -79,6 +79,20 @@ SY Homes is a UK property development company. This platform replaces spreadshee
 (See previous PRD revisions — tables, CRUD, scheduled insurance alerts, full UI. Alembic 0001 migration. 53/53 tests.)
 
 ### 2026-04-19 — Prompt 1.2: Users, Roles, Permissions ✅
+
+### 2026-04-19 — Prompt 1.2 addendum: MFA security gap closures ✅
+- **Alembic 0003**: `users.mfa_enforced_at` → `mfa_enrolled_at` (name reflects intent: moment of enrolment, not policy enforcement).
+- **Gap 1 — Disable MFA requires password re-auth**: `POST /api/auth/mfa/disable` now takes `{current_password}`. Wrong password → 400. Closes the session-hijack-strips-MFA vector.
+- **Gap 2 — Regenerate backup codes requires password + current TOTP**: `POST /api/auth/mfa/backup-codes/regenerate` takes `{current_password, current_totp}`. Either wrong → 400. Prevents an attacker with a live session from invalidating the user's physical recovery path.
+- **Gap 3 — Hard block on login for MFA-enforced roles**: Users holding `super_admin` / `director` / `finance` who haven't enrolled now receive a short-lived (15 min) `mfa_pending` JWT instead of a full access token. That token only unlocks `/auth/me`, `/auth/mfa/enroll/*`, `/auth/password/change`, `/auth/logout`. Any protected endpoint (e.g. `/api/entities`) returns 401. Completing `/mfa/enroll/confirm` atomically issues a full access token + sets the httpOnly cookie (token swap).
+- **Seniority**: The login response surfaces `enforced_role_name` of the most-senior enforced role the user holds (by `roles.priority ASC`). UI displays "Your role (Director) requires two-factor authentication…" dynamically.
+- **Frontend forced-enrolment gate** (`/app/frontend/src/pages/ForcedMfaEnroll.jsx`): Full-screen gate rendered by `ProtectedRoute` whenever the session is in `pending_mfa` state. Intro → Scan → Backup-codes flow, with `Log out` available at every step. Navigating to `/entities` while pending shows the gate (hard-block honoured client-side too).
+- **ProfileSecurity disable modal**: `data-testid='mfa-disable-password'` input; submit disabled without password.
+- **ProfileSecurity regen modal**: `data-testid='mfa-regen-password'` + `mfa-regen-totp`; submit disabled until both filled.
+- **Test suite**: conftest helper `login_with_auto_enroll` caches the TOTP secret per email for the pytest session so MFA-enforced fixtures never skip after the first enrolment. Real bootstrap admin (`rhys@syhomes.co.uk`) is **never** auto-enrolled by tests — `super_admin_token` aliases to `test-admin`. 119/119 backend tests pass (58 existing + 21 gap-closure + 40 others).
+- **Testing agent 5th iteration**: 21/21 new backend tests + 8/8 frontend flows green; no critical/minor issues.
+
+### 2026-04-19 — Prompt 1.2: Users, Roles, Permissions ✅
 - **Tables** (migration 0002): `users`, `roles`, `permissions`, `role_permissions`, `user_roles`, `user_role_entities`, `user_role_projects`. `entities.created_by_user_id` retrofit column + index.
 - **RBAC model**: 10 system roles seeded; 87 atomic permissions across 24 resources; role-permission mapping in `seed_rbac.py`.
 - **Auth primitives**: argon2id password hashing (64 MiB / 3 / 4 per OWASP), password history (5 deep), 12-char minimum; Fernet-encrypted TOTP secrets; 10 single-use backup codes (argon2-hashed); HS256 JWT access tokens (4h in 1.2; reduced to 15min + refresh tokens in 1.3).

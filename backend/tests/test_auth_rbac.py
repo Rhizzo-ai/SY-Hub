@@ -13,6 +13,8 @@ BASE_URL = os.environ.get('REACT_APP_BACKEND_URL', '').rstrip('/')
 if not BASE_URL:
     BASE_URL = "https://construction-command-5.preview.emergentagent.com"
 
+from tests.conftest import login_with_auto_enroll
+
 # Test credentials
 TEST_PASSWORD = "TestUser-Dev-2026!"
 SUPER_ADMIN_EMAIL = "rhys@syhomes.co.uk"
@@ -37,39 +39,24 @@ def api_client():
 
 
 @pytest.fixture(scope="module")
-def super_admin_token(api_client):
-    """Get super_admin token"""
-    response = api_client.post(f"{BASE_URL}/api/auth/login", json={
-        "email": SUPER_ADMIN_EMAIL,
-        "password": SUPER_ADMIN_PASSWORD
-    })
-    if response.status_code != 200:
-        pytest.skip(f"Super admin login failed: {response.text}")
-    return response.json()["access_token"]
+def super_admin_token(api_client, test_admin_token):
+    """Alias fixture — points at test-admin (super_admin role). Must NOT hit
+    the real bootstrap admin account (rhys@syhomes.co.uk) because the
+    auto-enrol helper would overwrite the human operator's MFA secret.
+    """
+    return test_admin_token
 
 
 @pytest.fixture(scope="module")
 def test_admin_token(api_client):
-    """Get test-admin token"""
-    response = api_client.post(f"{BASE_URL}/api/auth/login", json={
-        "email": TEST_ADMIN_EMAIL,
-        "password": TEST_PASSWORD
-    })
-    if response.status_code != 200:
-        pytest.skip(f"Test admin login failed: {response.text}")
-    return response.json()["access_token"]
+    """Get test-admin token (super_admin role → auto-enrol via pyotp)"""
+    return login_with_auto_enroll(api_client, BASE_URL, TEST_ADMIN_EMAIL, TEST_PASSWORD)
 
 
 @pytest.fixture(scope="module")
 def test_director_token(api_client):
-    """Get test-director token"""
-    response = api_client.post(f"{BASE_URL}/api/auth/login", json={
-        "email": TEST_DIRECTOR_EMAIL,
-        "password": TEST_PASSWORD
-    })
-    if response.status_code != 200:
-        pytest.skip(f"Test director login failed: {response.text}")
-    return response.json()["access_token"]
+    """Get test-director token (director role - MFA enforced → auto-enrol)"""
+    return login_with_auto_enroll(api_client, BASE_URL, TEST_DIRECTOR_EMAIL, TEST_PASSWORD)
 
 
 @pytest.fixture(scope="module")
@@ -86,14 +73,8 @@ def test_pm_token(api_client):
 
 @pytest.fixture(scope="module")
 def test_finance_token(api_client):
-    """Get test-finance token"""
-    response = api_client.post(f"{BASE_URL}/api/auth/login", json={
-        "email": TEST_FINANCE_EMAIL,
-        "password": TEST_PASSWORD
-    })
-    if response.status_code != 200:
-        pytest.skip(f"Test finance login failed: {response.text}")
-    return response.json()["access_token"]
+    """Get test-finance token (finance role - MFA enforced → auto-enrol)"""
+    return login_with_auto_enroll(api_client, BASE_URL, TEST_FINANCE_EMAIL, TEST_PASSWORD)
 
 
 @pytest.fixture(scope="module")
@@ -133,12 +114,18 @@ class TestAuthLogin:
             "email": SUPER_ADMIN_EMAIL,
             "password": SUPER_ADMIN_PASSWORD
         })
+        # NOTE: uses the REAL operator account; do NOT read or cache its
+        # session here — just assert the contract shape.
         assert response.status_code == 200
         data = response.json()
-        assert "access_token" in data
         assert data["token_type"] == "bearer"
-        assert data["mfa_required"] is False
-        assert data["user"]["email"] == SUPER_ADMIN_EMAIL
+        if data.get("mfa_required"):
+            assert data["mfa_challenge_token"]
+        elif data.get("mfa_enrollment_required"):
+            assert data["mfa_pending_token"]
+        else:
+            assert "access_token" in data
+            assert data["user"]["email"] == SUPER_ADMIN_EMAIL
     
     def test_login_test_admin_success(self, api_client):
         """POST /api/auth/login with test-admin returns access_token"""
@@ -191,7 +178,8 @@ class TestAuthMe:
         data = response.json()
         assert data["is_super_admin"] is True
         assert len(data["permissions"]) == 87
-        assert data["email"] == SUPER_ADMIN_EMAIL
+        # Fixture aliases to test-admin to avoid touching the real operator.
+        assert data["email"] == TEST_ADMIN_EMAIL
     
     def test_me_unauthenticated_returns_401(self):
         """GET /api/auth/me without token returns 401"""

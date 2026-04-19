@@ -20,6 +20,8 @@ TEST_PREFIX = "TEST_"
 SUPER_ADMIN_EMAIL = "test-admin@example.test"
 SUPER_ADMIN_PASSWORD = "TestUser-Dev-2026!"
 
+from tests.conftest import login_with_auto_enroll
+
 
 @pytest.fixture(scope="module")
 def api_client():
@@ -31,14 +33,8 @@ def api_client():
 
 @pytest.fixture(scope="module")
 def auth_token(api_client):
-    """Get authentication token for super_admin"""
-    response = api_client.post(f"{BASE_URL}/api/auth/login", json={
-        "email": SUPER_ADMIN_EMAIL,
-        "password": SUPER_ADMIN_PASSWORD
-    })
-    if response.status_code != 200:
-        pytest.skip(f"Authentication failed: {response.text}")
-    return response.json()["access_token"]
+    """Get authentication token for super_admin (auto-enrol MFA if required)"""
+    return login_with_auto_enroll(api_client, BASE_URL, SUPER_ADMIN_EMAIL, SUPER_ADMIN_PASSWORD)
 
 
 @pytest.fixture(scope="module")
