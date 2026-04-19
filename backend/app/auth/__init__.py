@@ -15,6 +15,8 @@ from app.auth.deps import (
     get_current_principal,
     get_current_tenant_id_from_user,
     get_optional_principal,
+    get_enrollment_principal,
+    get_enrollment_user,
     require_permission,
 )
 from app.auth.permissions import (
@@ -38,6 +40,8 @@ __all__ = [
     "get_current_principal",
     "get_current_tenant_id_from_user",
     "get_optional_principal",
+    "get_enrollment_principal",
+    "get_enrollment_user",
     "require_permission",
     "UserPermissions",
     "compute_effective_permissions",

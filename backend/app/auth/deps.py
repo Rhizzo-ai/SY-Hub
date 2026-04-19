@@ -85,6 +85,52 @@ def get_current_tenant_id_from_user(
     return principal.tenant_id
 
 
+def get_enrollment_principal(
+    request: Request,
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+) -> Principal:
+    """Like get_current_principal, but also accepts `mfa_pending` tokens.
+
+    Used by endpoints that an enforced-role user must be able to reach while
+    they still haven't completed MFA enrolment (e.g. /auth/me, /mfa/enroll/*,
+    /password/change, /logout).
+    """
+    from app.auth.tokens import decode_token
+    import jwt
+
+    token = _extract_token(request, authorization)
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    try:
+        payload = decode_token(token)
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token expired")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    if payload.get("type") not in ("access", "mfa_pending"):
+        raise HTTPException(status_code=401, detail="Invalid token type for this endpoint")
+
+    try:
+        user_id = uuid.UUID(payload["sub"])
+        tenant_id = uuid.UUID(payload["tenant_id"])
+    except (KeyError, ValueError):
+        raise HTTPException(status_code=401, detail="Malformed token")
+
+    user = db.get(User, user_id)
+    if user is None:
+        raise HTTPException(status_code=401, detail="User not found")
+    if user.tenant_id != tenant_id:
+        raise HTTPException(status_code=401, detail="Tenant mismatch")
+    if user.status in ("Suspended", "Archived"):
+        raise HTTPException(status_code=403, detail=f"Account {user.status.lower()}")
+    return Principal(user=user, tenant_id=tenant_id, token_type=payload["type"])
+
+
+def get_enrollment_user(principal: Principal = Depends(get_enrollment_principal)) -> User:
+    return principal.user
+
+
 # ---------- require_permission factory ----------
 
 def require_permission(*codes: str) -> Callable:

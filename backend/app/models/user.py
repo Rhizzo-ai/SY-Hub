@@ -90,7 +90,7 @@ class User(Base, TimestampMixin):
     mfa_method: Mapped[Optional[str]] = mapped_column(mfa_method_enum)
     mfa_secret_encrypted: Mapped[Optional[str]] = mapped_column(Text)
     mfa_backup_codes_encrypted: Mapped[Optional[str]] = mapped_column(Text)
-    mfa_enforced_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    mfa_enrolled_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
 
     last_login_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     last_login_ip: Mapped[Optional[str]] = mapped_column(String(45))

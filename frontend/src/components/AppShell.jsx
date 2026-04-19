@@ -2,9 +2,17 @@ import React from "react";
 import { NavLink, Link, useNavigate } from "react-router-dom";
 import {
     Building2, Users, Layers, Calculator, LineChart, Wallet,
-    CalendarDays, FileText, ShieldCheck, Landmark, Link2, LogOut, KeyRound,
+    CalendarDays, FileText, ShieldCheck, Landmark, Link2, LogOut, KeyRound, User as UserIcon, ShieldAlert, ChevronDown,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
+import {
+    DropdownMenu,
+    DropdownMenuContent,
+    DropdownMenuItem,
+    DropdownMenuLabel,
+    DropdownMenuSeparator,
+    DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 const NAV = [
     { label: "Entities", to: "/entities", icon: Building2, enabled: true, testid: "nav-entities" },
@@ -77,19 +85,56 @@ export default function AppShell({ children }) {
                         <span className="text-xs uppercase tracking-widest text-slate-500">Tenant</span>
                         <span className="font-heading text-sm font-semibold text-slate-900" data-testid="topbar-tenant-name">SY Homes</span>
                     </div>
-                    <div className="flex items-center gap-4">
-                        {me && (
-                            <div className="text-right leading-tight hidden sm:block" data-testid="topbar-user">
-                                <div className="text-sm font-medium text-slate-900">{me.display_name}</div>
-                                <div className="text-[11px] mono text-slate-500">{me.email}</div>
-                            </div>
+                    <div className="flex items-center gap-3">
+                        {me?.mfa_enrollment_required && (
+                            <Link
+                                to="/profile/security"
+                                className="hidden sm:inline-flex items-center gap-1 text-[11px] uppercase tracking-widest font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded-full px-3 py-1 hover:bg-amber-100"
+                                data-testid="topbar-mfa-pill"
+                            >
+                                <ShieldAlert size={12} /> MFA required
+                            </Link>
                         )}
-                        <div className="h-8 w-8 rounded-full bg-slate-900 flex items-center justify-center text-white text-xs font-semibold" data-testid="topbar-user-avatar">
-                            {initials || "SU"}
-                        </div>
-                        <button onClick={async () => { await logout(); nav("/login"); }} className="text-slate-500 hover:text-slate-900" data-testid="logout-button" title="Sign out">
-                            <LogOut size={16} />
-                        </button>
+                        <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                                <button
+                                    className="flex items-center gap-2.5 pl-2 pr-1.5 py-1 rounded-md hover:bg-slate-100 transition-colors"
+                                    data-testid="topbar-user-menu"
+                                >
+                                    {me && (
+                                        <div className="text-right leading-tight hidden sm:block" data-testid="topbar-user">
+                                            <div className="text-sm font-medium text-slate-900">{me.display_name}</div>
+                                            <div className="text-[11px] mono text-slate-500">{me.email}</div>
+                                        </div>
+                                    )}
+                                    <div className="h-8 w-8 rounded-full bg-slate-900 flex items-center justify-center text-white text-xs font-semibold" data-testid="topbar-user-avatar">
+                                        {initials || "SU"}
+                                    </div>
+                                    <ChevronDown size={14} className="text-slate-400" />
+                                </button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end" className="w-56" data-testid="topbar-user-menu-content">
+                                <DropdownMenuLabel className="font-normal">
+                                    <div className="text-xs text-slate-500">Signed in as</div>
+                                    <div className="text-sm font-medium text-slate-900 mt-0.5 truncate">{me?.email}</div>
+                                </DropdownMenuLabel>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem onClick={() => nav("/profile/security")} data-testid="menu-profile">
+                                    <UserIcon size={14} className="mr-2" /> Profile & Security
+                                </DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => nav("/profile/security")} data-testid="menu-change-password">
+                                    <KeyRound size={14} className="mr-2" /> Change password
+                                </DropdownMenuItem>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem
+                                    onClick={async () => { await logout(); nav("/login"); }}
+                                    className="text-rose-700 focus:text-rose-800 focus:bg-rose-50"
+                                    data-testid="menu-signout"
+                                >
+                                    <LogOut size={14} className="mr-2" /> Sign out
+                                </DropdownMenuItem>
+                            </DropdownMenuContent>
+                        </DropdownMenu>
                     </div>
                 </header>
                 <main className="p-8 max-w-[1600px] mx-auto" data-testid="app-main">{children}</main>

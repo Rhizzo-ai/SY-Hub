@@ -84,6 +84,10 @@ class MfaEnrollConfirmResponse(BaseModel):
     backup_codes: list[str]
 
 
+class RegenerateBackupCodesResponse(BaseModel):
+    backup_codes: list[str]
+
+
 class PasswordChangeRequest(BaseModel):
     current_password: str
     new_password: str
@@ -98,8 +102,13 @@ class MeResponse(BaseModel):
     user_type: str
     status: str
     mfa_enabled: bool
+    mfa_method: Optional[str] = None
+    mfa_enrollment_required: bool = False
+    mfa_backup_codes_remaining: int = 0
     permissions: list[str]
     is_super_admin: bool
+    password_changed_at: Optional[datetime] = None
+    last_login_at: Optional[datetime] = None
 
 
 # ---------- Helpers ----------
@@ -300,6 +309,19 @@ def mfa_disable(
     db.commit()
 
 
+@router.post("/mfa/backup-codes/regenerate", response_model=RegenerateBackupCodesResponse)
+def regenerate_backup_codes(
+    current: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if not current.mfa_enabled:
+        raise HTTPException(status_code=400, detail="MFA not enrolled")
+    codes = generate_backup_codes()
+    current.mfa_backup_codes_encrypted = encrypt_backup_codes(codes)
+    db.commit()
+    return RegenerateBackupCodesResponse(backup_codes=codes)
+
+
 @router.post("/password/change", status_code=204)
 def password_change(
     payload: PasswordChangeRequest,
@@ -346,6 +368,26 @@ def me(
 ):
     perms = compute_effective_permissions(db, principal.user.id, principal.tenant_id)
     u = principal.user
+
+    # Check if user holds any MFA-enforced role and hasn't enrolled yet.
+    enforcement_required = False
+    if not u.mfa_enabled:
+        from app.models.rbac import Role
+        enforced_role_ids = db.scalars(
+            select(Role.id).where(Role.code.in_(MFA_ENFORCED_ROLES))
+        ).all()
+        if enforced_role_ids:
+            has_enforced = db.scalar(
+                select(UserRole.id).where(
+                    UserRole.user_id == u.id,
+                    UserRole.status == "Active",
+                    UserRole.role_id.in_(enforced_role_ids),
+                )
+            )
+            enforcement_required = has_enforced is not None
+
+    backup_remaining = count_unused_backup_codes(u.mfa_backup_codes_encrypted)
+
     return MeResponse(
         id=u.id,
         email=u.email,
@@ -355,8 +397,13 @@ def me(
         user_type=u.user_type,
         status=u.status,
         mfa_enabled=u.mfa_enabled,
+        mfa_method=u.mfa_method,
+        mfa_enrollment_required=enforcement_required,
+        mfa_backup_codes_remaining=backup_remaining,
         permissions=sorted(perms.all_permissions),
         is_super_admin=perms.is_super_admin,
+        password_changed_at=u.password_changed_at,
+        last_login_at=u.last_login_at,
     )
 
 

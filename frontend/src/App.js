@@ -14,6 +14,7 @@ import UsersList from "@/pages/UsersList";
 import UserDetail from "@/pages/UserDetail";
 import UserNew from "@/pages/UserNew";
 import { RolesList, RoleDetail, PermissionsList } from "@/pages/RolesAndPermissions";
+import ProfileSecurity from "@/pages/ProfileSecurity";
 
 function ShellRoutes() {
     return (
@@ -30,6 +31,8 @@ function ShellRoutes() {
                 <Route path="/roles" element={<RolesList />} />
                 <Route path="/roles/:id" element={<RoleDetail />} />
                 <Route path="/permissions" element={<PermissionsList />} />
+                <Route path="/profile" element={<Navigate to="/profile/security" replace />} />
+                <Route path="/profile/security" element={<ProfileSecurity />} />
                 <Route path="*" element={
                     <div className="text-slate-600" data-testid="not-found-page">
                         <h1 className="font-heading text-2xl font-bold text-slate-900">Not found</h1>
