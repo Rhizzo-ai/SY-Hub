@@ -49,6 +49,7 @@ export default function EntityEdit() {
                 navigate("/entities");
             })
             .finally(() => setLoading(false));
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [id]);
 
     const submit = async (payload) => {
