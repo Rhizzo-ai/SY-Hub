@@ -26,3 +26,27 @@ Each entry: date, prompt reference (if applicable), change, rationale.
   Spec says TOTP should be preferred; will revert after onboarding complete.
 
 -->
+## Polish Pass TODOs (post-Phase 1)
+
+UX refinements deferred until all 25 build prompts complete. Don't action
+during build — log here, address in one focused polish pass.
+
+### Entity UX
+- Demote "Entities" from primary sidebar to Settings/Admin section.
+  In daily operations SY Homes staff don't think of themselves as working
+  for three separate companies; it's one team. Entity structure is plumbing,
+  not foreground. Keep data model exactly as built (required for VAT, CT,
+  lender reporting, ringfenced liability) — just tone down UI prominence.
+- Auto-derive entity on cost postings from project (and linked ConstructionCo
+  for construction costs). Don't require manual entity selection in common
+  cases.
+- Default dashboards to unified "Group" view; entity breakdown as optional
+  filter, not default display.
+- Keep entity exposure in finance/Xero flows (where Louise and the accountant
+  genuinely care) and at project setup (set once, forgotten).
+
+### Brand polish
+- Apply SY Homes brand palette: orange #E85A1B (primary accent),
+  navy #1F2D3D (primary dark).
+- Select and apply production font stack.
+- Unified component styling pass across all 10 modules.
