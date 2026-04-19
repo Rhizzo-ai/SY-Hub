@@ -1,10 +1,11 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from "react";
 import { api, setAuthToken, getAuthToken } from "@/lib/api";
+import ForcedMfaEnroll from "@/pages/ForcedMfaEnroll";
 
 const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
-    // `state`: 'loading' | 'authed' | 'anon'
+    // `state`: 'loading' | 'authed' | 'pending_mfa' | 'anon'
     const [state, setState] = useState(getAuthToken() ? "loading" : "anon");
     const [me, setMe] = useState(null);
 
@@ -12,7 +13,7 @@ export function AuthProvider({ children }) {
         try {
             const r = await api.get("/auth/me");
             setMe(r.data);
-            setState("authed");
+            setState(r.data?.token_type === "mfa_pending" ? "pending_mfa" : "authed");
             return r.data;
         } catch (e) {
             setAuthToken(null);
@@ -35,7 +36,18 @@ export function AuthProvider({ children }) {
 
     const login = useCallback(async (email, password) => {
         const r = await api.post("/auth/login", { email, password });
-        if (r.data.mfa_required) return { mfa_required: true, challenge: r.data.mfa_challenge_token };
+        if (r.data.mfa_required) {
+            return { mfa_required: true, challenge: r.data.mfa_challenge_token };
+        }
+        if (r.data.mfa_enrollment_required && r.data.mfa_pending_token) {
+            // Enforced-role user, not yet enrolled — hard block path.
+            setAuthToken(r.data.mfa_pending_token);
+            await fetchMe();
+            return {
+                mfa_enrollment_required: true,
+                enforced_role_name: r.data.enforced_role_name,
+            };
+        }
         setAuthToken(r.data.access_token);
         await fetchMe();
         return { mfa_required: false };
@@ -90,6 +102,10 @@ export function ProtectedRoute({ children }) {
     if (state === "anon") {
         window.location.replace("/login");
         return null;
+    }
+    if (state === "pending_mfa") {
+        // Render forced-enrolment gate instead of the app shell.
+        return <ForcedMfaEnroll />;
     }
     return children;
 }

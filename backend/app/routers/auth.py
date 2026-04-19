@@ -6,20 +6,19 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
-from pydantic import BaseModel, EmailStr, Field
+from fastapi import APIRouter, Depends, HTTPException, Response
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.deps import get_current_tenant_id
 from app.models.user import User
-from app.models.rbac import UserRole
+from app.models.rbac import Role, UserRole
 from app.auth import (
     Principal,
     compute_effective_permissions,
     get_current_principal,
-    get_current_user,
     hash_password,
     is_in_history,
     issue_access_token,
@@ -28,6 +27,7 @@ from app.auth import (
     PasswordPolicyError,
     verify_password,
 )
+from app.auth.deps import get_enrollment_principal, get_enrollment_user
 from app.auth.mfa import (
     count_unused_backup_codes,
     decrypt_secret,
@@ -44,8 +44,8 @@ log = logging.getLogger(__name__)
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 MFA_ENFORCED_ROLES = {"super_admin", "director", "finance"}
+MFA_PENDING_LIFETIME_MINUTES = 15
 LOCKOUT_THRESHOLD = 5
-LOCKOUT_WINDOW_MIN = 15
 LOCKOUT_DURATIONS_MIN = [15, 30, 60]  # escalating
 
 
@@ -61,6 +61,9 @@ class LoginResponse(BaseModel):
     token_type: str = "bearer"
     mfa_required: bool = False
     mfa_challenge_token: Optional[str] = None
+    mfa_enrollment_required: bool = False
+    mfa_pending_token: Optional[str] = None
+    enforced_role_name: Optional[str] = None
     user: Optional[dict] = None
 
 
@@ -82,6 +85,16 @@ class MfaEnrollConfirmRequest(BaseModel):
 
 class MfaEnrollConfirmResponse(BaseModel):
     backup_codes: list[str]
+    access_token: Optional[str] = None
+
+
+class MfaDisableRequest(BaseModel):
+    current_password: str = Field(..., min_length=1)
+
+
+class RegenerateBackupCodesRequest(BaseModel):
+    current_password: str = Field(..., min_length=1)
+    current_totp: str = Field(..., min_length=6, max_length=16)
 
 
 class RegenerateBackupCodesResponse(BaseModel):
@@ -105,6 +118,8 @@ class MeResponse(BaseModel):
     mfa_method: Optional[str] = None
     mfa_enrollment_required: bool = False
     mfa_backup_codes_remaining: int = 0
+    enforced_role_name: Optional[str] = None
+    token_type: str = "access"
     permissions: list[str]
     is_super_admin: bool
     password_changed_at: Optional[datetime] = None
@@ -145,18 +160,23 @@ def _is_locked(u: User) -> bool:
     return u.locked_until is not None and u.locked_until > datetime.now(timezone.utc)
 
 
-def _user_is_mfa_enforced(db: Session, user: User) -> bool:
-    rows = db.execute(
-        select(UserRole.role_id)
-        .where(UserRole.user_id == user.id, UserRole.status == "Active")
-    ).all()
-    if not rows:
-        return False
-    from app.models.rbac import Role
-    codes = db.scalars(
-        select(Role.code).where(Role.id.in_([r[0] for r in rows]))
-    ).all()
-    return any(c in MFA_ENFORCED_ROLES for c in codes)
+def _most_senior_enforced_role(db: Session, user: User) -> Optional[Role]:
+    """Returns the most-senior enforced role the user holds via Active user_roles.
+
+    Seniority uses roles.priority ASC (lower = more senior; super_admin=1).
+    """
+    role = db.scalars(
+        select(Role)
+        .join(UserRole, UserRole.role_id == Role.id)
+        .where(
+            UserRole.user_id == user.id,
+            UserRole.status == "Active",
+            Role.code.in_(MFA_ENFORCED_ROLES),
+        )
+        .order_by(Role.priority.asc())
+        .limit(1)
+    ).first()
+    return role
 
 
 # ---------- Endpoints ----------
@@ -209,7 +229,26 @@ def login(
         db.commit()
         return LoginResponse(mfa_required=True, mfa_challenge_token=challenge)
 
-    # MFA enforced but not enrolled: permit first login, flag for enrollment.
+    # MFA-enforced role but not enrolled → HARD BLOCK.
+    # Issue a short-lived `mfa_pending` token that only permits
+    # /auth/me, /auth/mfa/enroll/*, /auth/password/change, /auth/logout.
+    enforced_role = _most_senior_enforced_role(db, user)
+    if enforced_role is not None:
+        _clear_lockout(user)
+        pending = issue_access_token(
+            user.id, user.email, user.tenant_id,
+            token_type="mfa_pending", lifetime_minutes=MFA_PENDING_LIFETIME_MINUTES,
+        )
+        db.commit()
+        return LoginResponse(
+            access_token=pending,
+            mfa_enrollment_required=True,
+            mfa_pending_token=pending,
+            enforced_role_name=enforced_role.name,
+            user=_serialise_user_public(user),
+        )
+
+    # Normal login — no MFA, no enforcement.
     _clear_lockout(user)
     user.last_login_at = datetime.now(timezone.utc)
 
@@ -271,7 +310,9 @@ def mfa_verify(
 
 
 @router.post("/mfa/enroll/start", response_model=MfaEnrollStartResponse)
-def mfa_enroll_start(current: User = Depends(get_current_user)):
+def mfa_enroll_start(current: User = Depends(get_enrollment_user)):
+    # Accessible to both full `access` tokens (user opted in)
+    # and `mfa_pending` tokens (enforced-role user completing enrolment).
     secret = generate_totp_secret()
     return MfaEnrollStartResponse(
         secret=secret,
@@ -282,9 +323,11 @@ def mfa_enroll_start(current: User = Depends(get_current_user)):
 @router.post("/mfa/enroll/confirm", response_model=MfaEnrollConfirmResponse)
 def mfa_enroll_confirm(
     payload: MfaEnrollConfirmRequest,
-    current: User = Depends(get_current_user),
+    response: Response,
+    principal: Principal = Depends(get_enrollment_principal),
     db: Session = Depends(get_db),
 ):
+    current = principal.user
     if not verify_totp(payload.secret, payload.code):
         raise HTTPException(status_code=400, detail="Invalid TOTP code — re-scan and try again")
     codes = generate_backup_codes()
@@ -292,30 +335,56 @@ def mfa_enroll_confirm(
     current.mfa_backup_codes_encrypted = encrypt_backup_codes(codes)
     current.mfa_enabled = True
     current.mfa_method = "TOTP"
-    current.mfa_enforced_at = datetime.now(timezone.utc)
+    current.mfa_enrolled_at = datetime.now(timezone.utc)
+    current.last_login_at = datetime.now(timezone.utc)
+
+    # If the caller came in on an `mfa_pending` token, promote them to a full
+    # access token now that enrolment is complete.
+    access_token = None
+    if principal.token_type == "mfa_pending":
+        access_token = issue_access_token(current.id, current.email, current.tenant_id)
+        _set_token_cookie(response, access_token)
+
     db.commit()
-    return MfaEnrollConfirmResponse(backup_codes=codes)
+    return MfaEnrollConfirmResponse(backup_codes=codes, access_token=access_token)
 
 
 @router.post("/mfa/disable", status_code=204)
 def mfa_disable(
-    current: User = Depends(get_current_user),
+    payload: MfaDisableRequest,
+    current: User = Depends(get_enrollment_user),
     db: Session = Depends(get_db),
 ):
+    # Require password re-auth — a valid session alone is not enough to
+    # remove a second factor. Prevents session-hijack MFA stripping.
+    if not current.password_hash or not verify_password(payload.current_password, current.password_hash):
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
     current.mfa_enabled = False
     current.mfa_method = None
     current.mfa_secret_encrypted = None
     current.mfa_backup_codes_encrypted = None
+    current.mfa_enrolled_at = None
     db.commit()
 
 
 @router.post("/mfa/backup-codes/regenerate", response_model=RegenerateBackupCodesResponse)
 def regenerate_backup_codes(
-    current: User = Depends(get_current_user),
+    payload: RegenerateBackupCodesRequest,
+    current: User = Depends(get_enrollment_user),
     db: Session = Depends(get_db),
 ):
-    if not current.mfa_enabled:
+    if not current.mfa_enabled or not current.mfa_secret_encrypted:
         raise HTTPException(status_code=400, detail="MFA not enrolled")
+
+    # Require password AND current TOTP — regeneration invalidates all
+    # existing backup codes, so we double-gate it.
+    if not current.password_hash or not verify_password(payload.current_password, current.password_hash):
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
+
+    secret = decrypt_secret(current.mfa_secret_encrypted)
+    if not verify_totp(secret, payload.current_totp.strip()):
+        raise HTTPException(status_code=400, detail="Invalid authenticator code")
+
     codes = generate_backup_codes()
     current.mfa_backup_codes_encrypted = encrypt_backup_codes(codes)
     db.commit()
@@ -325,7 +394,7 @@ def regenerate_backup_codes(
 @router.post("/password/change", status_code=204)
 def password_change(
     payload: PasswordChangeRequest,
-    current: User = Depends(get_current_user),
+    current: User = Depends(get_enrollment_user),
     db: Session = Depends(get_db),
 ):
     if not current.password_hash or not verify_password(payload.current_password, current.password_hash):
@@ -358,33 +427,35 @@ def password_change(
 
 @router.post("/logout", status_code=204)
 def logout(response: Response):
+    # Intentionally unauthenticated: clearing local/cookie token is enough,
+    # and this also lets an mfa_pending user cleanly sign out.
     response.delete_cookie("access_token", path="/")
 
 
 @router.get("/me", response_model=MeResponse)
 def me(
-    principal: Principal = Depends(get_current_principal),
+    principal: Principal = Depends(get_enrollment_principal),
     db: Session = Depends(get_db),
 ):
-    perms = compute_effective_permissions(db, principal.user.id, principal.tenant_id)
     u = principal.user
 
-    # Check if user holds any MFA-enforced role and hasn't enrolled yet.
+    # For mfa_pending tokens we have no permissions yet — return an empty
+    # set so the UI knows to gate the shell.
+    if principal.token_type == "mfa_pending":
+        permissions: list[str] = []
+        is_super_admin = False
+    else:
+        perms = compute_effective_permissions(db, u.id, principal.tenant_id)
+        permissions = sorted(perms.all_permissions)
+        is_super_admin = perms.is_super_admin
+
+    # Compute enforced role (if any) regardless of token type so the UI can
+    # show the "Your role (Director) requires MFA" copy correctly.
+    enforced_role = None
     enforcement_required = False
     if not u.mfa_enabled:
-        from app.models.rbac import Role
-        enforced_role_ids = db.scalars(
-            select(Role.id).where(Role.code.in_(MFA_ENFORCED_ROLES))
-        ).all()
-        if enforced_role_ids:
-            has_enforced = db.scalar(
-                select(UserRole.id).where(
-                    UserRole.user_id == u.id,
-                    UserRole.status == "Active",
-                    UserRole.role_id.in_(enforced_role_ids),
-                )
-            )
-            enforcement_required = has_enforced is not None
+        enforced_role = _most_senior_enforced_role(db, u)
+        enforcement_required = enforced_role is not None
 
     backup_remaining = count_unused_backup_codes(u.mfa_backup_codes_encrypted)
 
@@ -400,8 +471,10 @@ def me(
         mfa_method=u.mfa_method,
         mfa_enrollment_required=enforcement_required,
         mfa_backup_codes_remaining=backup_remaining,
-        permissions=sorted(perms.all_permissions),
-        is_super_admin=perms.is_super_admin,
+        enforced_role_name=enforced_role.name if enforced_role else None,
+        token_type=principal.token_type,
+        permissions=permissions,
+        is_super_admin=is_super_admin,
         password_changed_at=u.password_changed_at,
         last_login_at=u.last_login_at,
     )

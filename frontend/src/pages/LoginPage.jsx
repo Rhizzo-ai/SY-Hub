@@ -17,10 +17,12 @@ export default function LoginPage() {
     const [busy, setBusy] = useState(false);
 
     useEffect(() => {
-        if (state === "authed") nav("/entities", { replace: true });
+        if (state === "authed" || state === "pending_mfa") {
+            nav(state === "pending_mfa" ? "/" : "/entities", { replace: true });
+        }
     }, [state, nav]);
 
-    if (state === "authed") {
+    if (state === "authed" || state === "pending_mfa") {
         return null;
     }
 
@@ -32,6 +34,9 @@ export default function LoginPage() {
             if (res.mfa_required) {
                 setMfaChallenge(res.challenge);
                 toast.info("Enter your 6-digit code from your authenticator app");
+            } else if (res.mfa_enrollment_required) {
+                // AuthContext state flips to `pending_mfa`; effect above will redirect.
+                nav("/", { replace: true });
             } else {
                 nav("/entities", { replace: true });
             }

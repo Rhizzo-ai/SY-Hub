@@ -26,8 +26,15 @@ export default function ProfileSecurity() {
     const nav = useNavigate();
     const [showEnroll, setShowEnroll] = useState(false);
     const [showDisableConfirm, setShowDisableConfirm] = useState(false);
+    const [showRegenConfirm, setShowRegenConfirm] = useState(false);
     const [regenCodes, setRegenCodes] = useState(null);
     const [busy, setBusy] = useState(false);
+
+    // Re-auth form state — disable MFA
+    const [disablePassword, setDisablePassword] = useState("");
+    // Re-auth form state — regenerate backup codes
+    const [regenPassword, setRegenPassword] = useState("");
+    const [regenTotp, setRegenTotp] = useState("");
 
     // Password-change form state
     const [pwCurrent, setPwCurrent] = useState("");
@@ -38,23 +45,40 @@ export default function ProfileSecurity() {
 
     if (!me) return <div className="flex items-center gap-2 text-slate-500"><Loader2 size={14} className="animate-spin" /> Loading…</div>;
 
-    const onDisableMfa = async () => {
+    const resetDisableForm = () => { setDisablePassword(""); };
+    const resetRegenForm = () => { setRegenPassword(""); setRegenTotp(""); };
+
+    const onDisableMfa = async (e) => {
+        e.preventDefault();
+        if (!disablePassword) { toast.error("Enter your current password"); return; }
         setBusy(true);
         try {
-            await api.post("/auth/mfa/disable");
+            await api.post("/auth/mfa/disable", { current_password: disablePassword });
             toast.success("Two-factor authentication disabled");
             setShowDisableConfirm(false);
+            resetDisableForm();
+            setRegenCodes(null);
             await refresh();
         } catch (e) {
             toast.error(e.friendlyMessage);
         } finally { setBusy(false); }
     };
 
-    const onRegenerate = async () => {
+    const onRegenerate = async (e) => {
+        e.preventDefault();
+        if (!regenPassword || regenTotp.trim().length < 6) {
+            toast.error("Password and 6-digit TOTP code required");
+            return;
+        }
         setBusy(true);
         try {
-            const r = await api.post("/auth/mfa/backup-codes/regenerate");
+            const r = await api.post("/auth/mfa/backup-codes/regenerate", {
+                current_password: regenPassword,
+                current_totp: regenTotp.trim(),
+            });
             setRegenCodes(r.data.backup_codes);
+            setShowRegenConfirm(false);
+            resetRegenForm();
             await refresh();
         } catch (e) {
             toast.error(e.friendlyMessage);
@@ -95,8 +119,11 @@ export default function ProfileSecurity() {
                 <div className="rounded-md border border-amber-300 bg-amber-50 px-4 py-3 text-amber-900 text-sm flex items-start gap-2" data-testid="mfa-enforcement-banner">
                     <ShieldAlert size={16} className="mt-0.5 shrink-0" />
                     <div>
-                        <div className="font-semibold">Two-factor authentication is required for your role.</div>
-                        <p className="text-xs mt-1">Please enrol now. You can continue using the platform in the meantime, but MFA will be enforced on your next login.</p>
+                        <div className="font-semibold">
+                            Two-factor authentication is required for your role
+                            {me.enforced_role_name ? ` (${me.enforced_role_name})` : ""}.
+                        </div>
+                        <p className="text-xs mt-1">Enrol now to continue accessing SY Homes. You'll be hard-blocked on your next login otherwise.</p>
                     </div>
                 </div>
             )}
@@ -125,13 +152,13 @@ export default function ProfileSecurity() {
                     <div className="flex gap-2">
                         {me.mfa_enabled ? (
                             <>
-                                <Button variant="outline" onClick={onRegenerate} disabled={busy} data-testid="mfa-regenerate-button">
+                                <Button variant="outline" onClick={() => { resetRegenForm(); setShowRegenConfirm(true); }} disabled={busy} data-testid="mfa-regenerate-button">
                                     <KeyRound size={14} className="mr-1.5" /> New backup codes
                                 </Button>
                                 <Button
                                     variant="outline"
                                     className="text-rose-700 border-rose-200 hover:bg-rose-50"
-                                    onClick={() => setShowDisableConfirm(true)}
+                                    onClick={() => { resetDisableForm(); setShowDisableConfirm(true); }}
                                     data-testid="mfa-disable-button"
                                 >
                                     Disable MFA
@@ -198,23 +225,90 @@ export default function ProfileSecurity() {
 
             {showDisableConfirm && (
                 <div className="fixed inset-0 bg-slate-900/60 z-50 flex items-center justify-center p-4" data-testid="mfa-disable-confirm">
-                    <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6 space-y-4">
+                    <form
+                        onSubmit={onDisableMfa}
+                        className="bg-white rounded-lg shadow-xl max-w-md w-full p-6 space-y-4"
+                    >
                         <h3 className="font-heading text-lg font-semibold">Disable two-factor authentication?</h3>
                         <p className="text-sm text-slate-600">
                             Your account will be protected by password only. Any unused backup codes will be invalidated.
+                            Enter your current password to continue.
                         </p>
                         {me.mfa_enrollment_required && (
                             <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-3 py-2">
-                                MFA is required for your role — you'll be prompted to re-enrol on next login.
+                                MFA is required for your role — you'll be hard-blocked on next login until you re-enrol.
                             </div>
                         )}
+                        <div>
+                            <label className="block text-[11px] uppercase tracking-widest font-semibold text-slate-500 mb-1.5">Current password</label>
+                            <Input
+                                type="password"
+                                autoFocus
+                                value={disablePassword}
+                                onChange={(e) => setDisablePassword(e.target.value)}
+                                className="bg-white h-9"
+                                data-testid="mfa-disable-password"
+                                required
+                            />
+                        </div>
                         <div className="flex justify-end gap-2 pt-4 border-t border-slate-200">
-                            <Button variant="outline" onClick={() => setShowDisableConfirm(false)} data-testid="mfa-disable-cancel">Cancel</Button>
-                            <Button onClick={onDisableMfa} disabled={busy} className="bg-rose-600 hover:bg-rose-700 text-white" data-testid="mfa-disable-confirm-btn">
+                            <Button type="button" variant="outline" onClick={() => { setShowDisableConfirm(false); resetDisableForm(); }} data-testid="mfa-disable-cancel">Cancel</Button>
+                            <Button type="submit" disabled={busy || !disablePassword} className="bg-rose-600 hover:bg-rose-700 text-white" data-testid="mfa-disable-confirm-btn">
                                 {busy && <Loader2 size={14} className="mr-1.5 animate-spin" />} Disable MFA
                             </Button>
                         </div>
-                    </div>
+                    </form>
+                </div>
+            )}
+
+            {showRegenConfirm && (
+                <div className="fixed inset-0 bg-slate-900/60 z-50 flex items-center justify-center p-4" data-testid="mfa-regen-confirm">
+                    <form
+                        onSubmit={onRegenerate}
+                        className="bg-white rounded-lg shadow-xl max-w-md w-full p-6 space-y-4"
+                    >
+                        <h3 className="font-heading text-lg font-semibold">Regenerate backup codes?</h3>
+                        <p className="text-sm text-slate-600">
+                            Your previous backup codes will be invalidated immediately. Confirm with your password
+                            and a fresh 6-digit code from your authenticator app.
+                        </p>
+                        <div>
+                            <label className="block text-[11px] uppercase tracking-widest font-semibold text-slate-500 mb-1.5">Current password</label>
+                            <Input
+                                type="password"
+                                autoFocus
+                                value={regenPassword}
+                                onChange={(e) => setRegenPassword(e.target.value)}
+                                className="bg-white h-9"
+                                data-testid="mfa-regen-password"
+                                required
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-[11px] uppercase tracking-widest font-semibold text-slate-500 mb-1.5">Authenticator code</label>
+                            <Input
+                                value={regenTotp}
+                                onChange={(e) => setRegenTotp(e.target.value)}
+                                className="bg-white h-10 mono text-center tracking-[0.4em]"
+                                placeholder="123456"
+                                maxLength={6}
+                                inputMode="numeric"
+                                data-testid="mfa-regen-totp"
+                                required
+                            />
+                        </div>
+                        <div className="flex justify-end gap-2 pt-4 border-t border-slate-200">
+                            <Button type="button" variant="outline" onClick={() => { setShowRegenConfirm(false); resetRegenForm(); }} data-testid="mfa-regen-cancel">Cancel</Button>
+                            <Button
+                                type="submit"
+                                disabled={busy || !regenPassword || regenTotp.trim().length !== 6}
+                                className="bg-slate-900 hover:bg-slate-800 text-white"
+                                data-testid="mfa-regen-confirm-btn"
+                            >
+                                {busy && <Loader2 size={14} className="mr-1.5 animate-spin" />} Regenerate codes
+                            </Button>
+                        </div>
+                    </form>
                 </div>
             )}
         </div>
