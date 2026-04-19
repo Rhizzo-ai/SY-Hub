@@ -14,6 +14,7 @@ import {
     StickyNote,
     Loader2,
     ChevronRight,
+    Lock,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import {
@@ -28,6 +29,7 @@ import EntityStatusBadge from "@/components/entity/EntityStatusBadge";
 import InsuranceBadge from "@/components/entity/InsuranceBadge";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
+import { useAuth } from "@/context/AuthContext";
 import {
     AlertDialog,
     AlertDialogAction,
@@ -75,6 +77,8 @@ function Field({ label, children, testid, mono = false }) {
 export default function EntityDetail() {
     const { id } = useParams();
     const navigate = useNavigate();
+    const { hasPerm } = useAuth();
+    const canViewSensitive = hasPerm("entities.view_sensitive") || hasPerm("entities.admin");
     const [entity, setEntity] = useState(null);
     const [loading, setLoading] = useState(true);
     const [deleting, setDeleting] = useState(false);
@@ -332,40 +336,68 @@ export default function EntityDetail() {
                 </Section>
 
                 <Section icon={Landmark} title="Banking" testid="section-banking">
-                    <div className="grid grid-cols-2 gap-6">
-                        <Field label="Bank" testid="field-bank-name">
-                            {entity.bank_name || "—"}
-                        </Field>
-                        <Field label="Account name" testid="field-bank-account-name">
-                            {entity.bank_account_name || "—"}
-                        </Field>
-                        <Field
-                            label="Account number"
-                            testid="field-bank-account-masked"
-                            mono
-                        >
-                            {entity.bank_account_number_masked || "—"}
-                        </Field>
-                    </div>
-                    <p className="mt-4 text-xs text-slate-500">
-                        Only the last 4 digits are stored. Full numbers are never retained.
-                    </p>
+                    {!canViewSensitive ? (
+                        <div className="flex items-start gap-3 text-sm text-slate-600" data-testid="banking-restricted">
+                            <Lock size={14} className="text-slate-400 mt-0.5" />
+                            <div>
+                                <div className="font-medium text-slate-700">Restricted</div>
+                                <p className="text-xs text-slate-500 mt-1">
+                                    Banking details are hidden. Requires the <span className="mono">entities.view_sensitive</span> permission.
+                                </p>
+                            </div>
+                        </div>
+                    ) : (
+                        <>
+                            <div className="grid grid-cols-2 gap-6">
+                                <Field label="Bank" testid="field-bank-name">
+                                    {entity.bank_name || "—"}
+                                </Field>
+                                <Field label="Account name" testid="field-bank-account-name">
+                                    {entity.bank_account_name || "—"}
+                                </Field>
+                                <Field
+                                    label="Account number"
+                                    testid="field-bank-account-masked"
+                                    mono
+                                >
+                                    {entity.bank_account_number_masked || "—"}
+                                </Field>
+                            </div>
+                            <p className="mt-4 text-xs text-slate-500">
+                                Only the last 4 digits are stored. Full numbers are never retained.
+                            </p>
+                        </>
+                    )}
                 </Section>
 
                 <Section icon={Link2} title="Xero" testid="section-xero">
-                    <div className="grid grid-cols-2 gap-6">
-                        <Field label="Xero organisation" testid="field-xero-org-name">
-                            {entity.xero_org_name || "Not connected"}
-                        </Field>
-                        <Field label="Xero org ID" testid="field-xero-org-id" mono>
-                            {entity.xero_org_id || "—"}
-                        </Field>
-                    </div>
-                    <p className="mt-4 text-xs text-slate-500">
-                        Xero OAuth connection is handled in Prompt 5.1 — these
-                        values are populated by the integration and are
-                        read-only here.
-                    </p>
+                    {!canViewSensitive ? (
+                        <div className="flex items-start gap-3 text-sm text-slate-600" data-testid="xero-restricted">
+                            <Lock size={14} className="text-slate-400 mt-0.5" />
+                            <div>
+                                <div className="font-medium text-slate-700">Restricted</div>
+                                <p className="text-xs text-slate-500 mt-1">
+                                    Xero linkage details are hidden. Requires the <span className="mono">entities.view_sensitive</span> permission.
+                                </p>
+                            </div>
+                        </div>
+                    ) : (
+                        <>
+                            <div className="grid grid-cols-2 gap-6">
+                                <Field label="Xero organisation" testid="field-xero-org-name">
+                                    {entity.xero_org_name || "Not connected"}
+                                </Field>
+                                <Field label="Xero org ID" testid="field-xero-org-id" mono>
+                                    {entity.xero_org_id || "—"}
+                                </Field>
+                            </div>
+                            <p className="mt-4 text-xs text-slate-500">
+                                Xero OAuth connection is handled in Prompt 5.1 — these
+                                values are populated by the integration and are
+                                read-only here.
+                            </p>
+                        </>
+                    )}
                 </Section>
 
                 <Section

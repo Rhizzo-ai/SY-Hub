@@ -3,44 +3,61 @@ import "@/App.css";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { Toaster } from "sonner";
 
+import { AuthProvider, ProtectedRoute, useAuth } from "@/context/AuthContext";
 import AppShell from "@/components/AppShell";
+import LoginPage from "@/pages/LoginPage";
 import EntitiesList from "@/pages/EntitiesList";
 import EntityDetail from "@/pages/EntityDetail";
 import EntityNew from "@/pages/EntityNew";
 import EntityEdit from "@/pages/EntityEdit";
+import UsersList from "@/pages/UsersList";
+import UserDetail from "@/pages/UserDetail";
+import UserNew from "@/pages/UserNew";
+import { RolesList, RoleDetail, PermissionsList } from "@/pages/RolesAndPermissions";
+
+function ShellRoutes() {
+    return (
+        <AppShell>
+            <Routes>
+                <Route path="/" element={<Navigate to="/entities" replace />} />
+                <Route path="/entities" element={<EntitiesList />} />
+                <Route path="/entities/new" element={<EntityNew />} />
+                <Route path="/entities/:id" element={<EntityDetail />} />
+                <Route path="/entities/:id/edit" element={<EntityEdit />} />
+                <Route path="/users" element={<UsersList />} />
+                <Route path="/users/new" element={<UserNew />} />
+                <Route path="/users/:id" element={<UserDetail />} />
+                <Route path="/roles" element={<RolesList />} />
+                <Route path="/roles/:id" element={<RoleDetail />} />
+                <Route path="/permissions" element={<PermissionsList />} />
+                <Route path="*" element={
+                    <div className="text-slate-600" data-testid="not-found-page">
+                        <h1 className="font-heading text-2xl font-bold text-slate-900">Not found</h1>
+                        <p className="text-sm mt-2">This module is not yet available in Phase 1.</p>
+                    </div>
+                } />
+            </Routes>
+        </AppShell>
+    );
+}
+
+function AppRoutes() {
+    return (
+        <Routes>
+            <Route path="/login" element={<LoginPage />} />
+            <Route path="/*" element={<ProtectedRoute><ShellRoutes /></ProtectedRoute>} />
+        </Routes>
+    );
+}
 
 function App() {
     return (
         <div className="App">
             <BrowserRouter>
-                <AppShell>
-                    <Routes>
-                        <Route path="/" element={<Navigate to="/entities" replace />} />
-                        <Route path="/entities" element={<EntitiesList />} />
-                        <Route path="/entities/new" element={<EntityNew />} />
-                        <Route path="/entities/:id" element={<EntityDetail />} />
-                        <Route path="/entities/:id/edit" element={<EntityEdit />} />
-                        <Route
-                            path="*"
-                            element={
-                                <div className="text-slate-600" data-testid="not-found-page">
-                                    <h1 className="font-heading text-2xl font-bold text-slate-900">
-                                        Not found
-                                    </h1>
-                                    <p className="text-sm mt-2">
-                                        This module is not yet available in Phase 1.
-                                    </p>
-                                </div>
-                            }
-                        />
-                    </Routes>
-                </AppShell>
-                <Toaster
-                    position="top-right"
-                    toastOptions={{
-                        className: "!font-sans",
-                    }}
-                />
+                <AuthProvider>
+                    <AppRoutes />
+                </AuthProvider>
+                <Toaster position="top-right" toastOptions={{ className: "!font-sans" }} />
             </BrowserRouter>
         </div>
     );

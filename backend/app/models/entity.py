@@ -132,6 +132,14 @@ class Entity(Base, TimestampMixin):
 
     notes: Mapped[Optional[str]] = mapped_column(Text)
 
+    # Added in Prompt 1.2 — tracks who created the entity
+    created_by_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
     # Relationships
     parent = relationship(
         "Entity",
