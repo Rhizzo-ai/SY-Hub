@@ -114,3 +114,36 @@ See SY_Hub_Scope_Expansion_Memo.md for full details.
 Project Instructions document also created (held in Claude Project,
 not in this repo) governing how Claude operates across all future
 chats in the project.
+
+## Prompt 1.2 — Users, Roles, Permissions (CLOSED)
+
+**Built:**
+- Argon2id password hashing, TOTP MFA, JWT auth
+- 10 seeded roles, 87 permissions
+- Bootstrap super_admin
+- Login, MFA challenge, password change, profile security
+- 135/135 backend tests passing
+
+**Close-out patches:**
+- Patch #1: Password complexity (upper/lower/number/symbol), admin unlock UI, lockout policy confirmed (5 attempts → 15/30/60 min escalating, counter resets on success)
+- Patch #2: Edit user UI (name, email, phone, status; gated on users.admin; email collision → 409; self-deactivation blocked)
+
+**Deviations from spec:**
+- Password history check (≠ last 5) added — not in original spec, sensible
+- Interim audit via `admin_notes` stamps (proper audit_events deferred to 1.4)
+- TOTP ±1 step window kept (RFC 6238 standard, ~30s grace)
+
+**Deferred to later prompts:**
+- Forgot-password + admin password-reset → 1.3 (shares email/token infra with invitations)
+- Email delivery of invitations → 1.3
+- Audit log promotion → 1.4
+- Manual lock button → 1.4
+
+**Deferred to Polish Pass:**
+- HIBP breach check on passwords
+- Roles & Permissions management UI
+- Company/contact detail fields (belong to supplier/subbie records in Track 2)
+
+**Known gaps acceptable at this stage:**
+- No role/permission editing UI (use seed file + redeploy)
+- Invitations require manual token copy-paste until 1.3 wires email
