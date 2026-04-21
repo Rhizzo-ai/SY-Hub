@@ -110,6 +110,7 @@ class UserUpdate(BaseModel):
     last_name: Optional[str] = None
     display_name: Optional[str] = None
     job_title: Optional[str] = None
+    email: Optional[str] = None
     phone: Optional[str] = None
     user_type: Optional[str] = None
     primary_entity_id: Optional[uuid.UUID] = None
@@ -337,28 +338,91 @@ def invite_user(
     return InviteResponse(user=_user_detail(db, u), invitation_token=token_plain)
 
 
+ADMIN_EDITABLE_STATUSES = ("Active", "Suspended", "Pending_Invitation")
+
+
 @router.put("/{user_id}", response_model=UserDetail)
 def update_user(
     user_id: uuid.UUID,
     payload: UserUpdate,
     db: Session = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant_id),
-    _=Depends(require_permission("users.edit")),
+    current: User = Depends(get_current_user),
+    _=Depends(require_permission("users.admin")),
 ):
     u = db.scalar(select(User).where(User.id == user_id, User.tenant_id == tenant_id))
     if u is None:
         raise HTTPException(404, "User not found")
     data = payload.model_dump(exclude_unset=True)
-    if "status" in data and data["status"] not in USER_STATUSES:
-        raise HTTPException(422, "Invalid status")
+
+    # ---- Validation ----
     if "user_type" in data and data["user_type"] not in USER_TYPES:
         raise HTTPException(422, "Invalid user_type")
-    if data.get("status") == "Archived" and u.status != "Archived":
-        data["archived_at"] = datetime.now(timezone.utc)
+
+    if "status" in data:
+        if data["status"] not in USER_STATUSES:
+            raise HTTPException(422, "Invalid status")
+        if data["status"] == "Archived":
+            raise HTTPException(400, "Use /scrub_pii to archive a user")
+        if data["status"] not in ADMIN_EDITABLE_STATUSES:
+            raise HTTPException(422, "Status not admin-editable; allowed: " + ", ".join(ADMIN_EDITABLE_STATUSES))
+        if u.id == current.id and u.status == "Active" and data["status"] != "Active":
+            raise HTTPException(400, "You cannot deactivate your own account")
+
+    # Email — unique per tenant, case-insensitive
+    if "email" in data and data["email"] is not None:
+        new_email = data["email"].strip().lower()
+        if not new_email or "@" not in new_email or len(new_email) > 255:
+            raise HTTPException(422, "Invalid email address")
+        if new_email != (u.email or "").lower():
+            collision = db.scalar(
+                select(User).where(
+                    User.tenant_id == tenant_id,
+                    func.lower(User.email) == new_email,
+                    User.id != u.id,
+                )
+            )
+            if collision is not None:
+                raise HTTPException(409, "Email already in use by another user in this tenant")
+        data["email"] = new_email
+
+    # ---- Apply changes + track diff ----
+    changed: list[str] = []
+    email_changed = False
     for k, v in data.items():
-        setattr(u, k, v)
-    db.commit()
+        if getattr(u, k, None) != v:
+            changed.append(k)
+            if k == "email":
+                email_changed = True
+            setattr(u, k, v)
+
+    if not changed:
+        return _user_detail(db, u)
+
+    # Force re-verification if email changed. Full re-verification flow
+    # lands with Prompt 1.3's email infrastructure; for now just flip the
+    # flag so downstream code knows.
+    if email_changed:
+        u.email_verified = False
+        u.email_verified_at = None
+
+    # Interim audit stamp (replaced by audit_events in Prompt 1.4).
+    stamp = (
+        f"[Edited by {current.email} ({current.id}) at "
+        f"{datetime.now(timezone.utc).isoformat()}: {', '.join(sorted(changed))}]"
+    )
+    u.admin_notes = f"{(u.admin_notes or '').rstrip()}\n{stamp}".strip()
+
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(409, "Email already in use by another user in this tenant")
     db.refresh(u)
+    logging.getLogger("syhomes.auth").info(
+        "user_edited actor=%s actor_id=%s target=%s target_id=%s fields=%s",
+        current.email, current.id, u.email, u.id, ",".join(sorted(changed)),
+    )
     return _user_detail(db, u)
 
 

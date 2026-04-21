@@ -13,6 +13,7 @@ import EntityEdit from "@/pages/EntityEdit";
 import UsersList from "@/pages/UsersList";
 import UserDetail from "@/pages/UserDetail";
 import UserNew from "@/pages/UserNew";
+import UserEdit from "@/pages/UserEdit";
 import { RolesList, RoleDetail, PermissionsList } from "@/pages/RolesAndPermissions";
 import ProfileSecurity from "@/pages/ProfileSecurity";
 
@@ -27,6 +28,7 @@ function ShellRoutes() {
                 <Route path="/entities/:id/edit" element={<EntityEdit />} />
                 <Route path="/users" element={<UsersList />} />
                 <Route path="/users/new" element={<UserNew />} />
+                <Route path="/users/:id/edit" element={<UserEdit />} />
                 <Route path="/users/:id" element={<UserDetail />} />
                 <Route path="/roles" element={<RolesList />} />
                 <Route path="/roles/:id" element={<RoleDetail />} />

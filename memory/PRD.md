@@ -80,7 +80,12 @@ SY Homes is a UK property development company. This platform replaces spreadshee
 
 ### 2026-04-19 — Prompt 1.2: Users, Roles, Permissions ✅
 
-### 2026-04-21 — Prompt 1.2 close-out patch ✅
+### 2026-04-21 — Prompt 1.2 close-out patch #2: Edit User ✅
+- **Backend**: `PUT /api/users/{id}` tightened to require `users.admin` (was `users.edit`). Schema now accepts `email` on top of the prior scalar fields; rejects Archived status (use `/scrub_pii`); only permits Active/Suspended/Pending_Invitation transitions. Email change flips `email_verified=false` + nulls `email_verified_at` and the user must re-verify on next login (full flow lands in 1.3). Email collision on the tenant returns 409 with a friendly message. Self-deactivation blocked with 400. Diff between before/after is tracked and only the changed fields stamp `admin_notes` (`[Edited by <email> (<id>) at <ts>: <fields>]`). Emits `INFO` on `syhomes.auth`.
+- **Frontend**: new `/users/:id/edit` page (`UserEdit.jsx`) with first/last name, email, phone, Active ↔ Suspended toggle. Inline validation (required + email regex + email-change warning banner + self-deactivation lockout), live "N changes" diff counter, Save button disabled until the form is valid and dirty. Edit buttons added to both UsersList (per-row action column) and UserDetail (header) — both gated on `users.admin`.
+- **Tests**: +7 cases (`test_user_edit.py`) covering success path, email collision 409, non-admin 403, email-change email_verified flip, suspended user can't log in + reactivation restores login, self-deactivation 400, Archived rejection. Full suite: **135 passed, 1 skipped, 0 failed**.
+
+### 2026-04-21 — Prompt 1.2 close-out patch ✅ (complexity + unlock)
 - **Password complexity**: added uppercase / lowercase / number / symbol rules to `validate_complexity` (on top of the existing 12-char min + 5-password history). `hash_password` calls validate; a new `hash_token` sibling is used for random invitation tokens which shouldn't have to meet user-password policy. Decoy-timing hash updated to a compliant string.
 - **Public policy endpoint**: `GET /api/auth/password-policy` returns the rule catalogue so the UI never drifts from the backend.
 - **ProfileSecurity UI**: the Change Password section now shows all 5 rules as a live-validated green-dot list beneath the "New password" field, plus a static reminder about the 5-password history window.

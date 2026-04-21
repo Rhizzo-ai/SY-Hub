@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Plus, Search, Loader2, ShieldCheck, ShieldAlert, Lock, Unlock } from "lucide-react";
+import { Plus, Search, Loader2, ShieldCheck, ShieldAlert, Lock, Unlock, Pencil } from "lucide-react";
 import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -161,22 +161,31 @@ export default function UsersList() {
                                         <td className="px-4 py-3 mono tabular text-slate-700">{u.role_count}</td>
                                         {canUnlock && (
                                             <td className="px-4 py-3 text-right">
-                                                {locked ? (
+                                                <div className="inline-flex items-center gap-1 justify-end">
+                                                    {locked ? (
+                                                        <Button
+                                                            variant="outline"
+                                                            size="sm"
+                                                            className="h-7 text-xs"
+                                                            disabled={unlockingId === u.id}
+                                                            onClick={(e) => onUnlock(e, u)}
+                                                            data-testid={`unlock-user-${u.id}`}
+                                                        >
+                                                            {unlockingId === u.id
+                                                                ? <Loader2 size={12} className="animate-spin" />
+                                                                : <><Unlock size={12} className="mr-1" /> Unlock</>}
+                                                        </Button>
+                                                    ) : null}
                                                     <Button
                                                         variant="outline"
                                                         size="sm"
                                                         className="h-7 text-xs"
-                                                        disabled={unlockingId === u.id}
-                                                        onClick={(e) => onUnlock(e, u)}
-                                                        data-testid={`unlock-user-${u.id}`}
+                                                        onClick={(e) => { e.stopPropagation(); nav(`/users/${u.id}/edit`); }}
+                                                        data-testid={`edit-user-${u.id}`}
                                                     >
-                                                        {unlockingId === u.id
-                                                            ? <Loader2 size={12} className="animate-spin" />
-                                                            : <><Unlock size={12} className="mr-1" /> Unlock</>}
+                                                        <Pencil size={12} className="mr-1" /> Edit
                                                     </Button>
-                                                ) : (
-                                                    <span className="text-slate-300 text-xs" data-testid={`unlock-user-${u.id}-na`}>—</span>
-                                                )}
+                                                </div>
                                             </td>
                                         )}
                                     </tr>
