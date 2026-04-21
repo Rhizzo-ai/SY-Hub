@@ -180,3 +180,77 @@ Other items in this document fit into Phase 3 onwards as capacity and business p
 ---
 
 _Document version 1.0 · April 2026 · Maintained alongside SY_Homes_Data_Model.xlsx and SY_Homes_Platform_Spec_v2.docx_
+
+
+---
+
+## Microsoft 365 Ecosystem Integration (Strategic — needs decision before Track 4)
+
+SY Homes operates on Microsoft 365: Outlook for email, Word/Excel for documents, 
+ToDo for tasks, SharePoint/OneDrive for file storage, Teams for communication. The 
+platform should integrate with this ecosystem rather than compete with it. Several 
+integration points identified:
+
+### SharePoint / OneDrive as Document Backend (High — affects Track 4 architecture)
+**Decision needed before Prompt 4.2.** Options:
+- (A) Native file store in the platform (simpler to build, duplicates storage SY 
+  Homes already pays for, files locked behind platform auth)
+- (B) SharePoint/OneDrive as the backend — platform stores metadata and 
+  SharePoint document IDs, actual files live in SharePoint. Users get native 
+  co-authoring, version history, offline sync, and Office apps open files 
+  natively. Access control via SharePoint permissions.
+- (C) Hybrid — native store for platform-internal docs (QA checklists, generated 
+  reports), SharePoint for user-uploaded files (drawings, contracts, 
+  specifications).
+
+Recommendation: (C) hybrid, with SharePoint as the default for user uploads. 
+Revisit when Track 4 is specced.
+
+### Microsoft Graph API (High — the single gateway)
+One API covers calendar, mail, tasks, SharePoint, OneDrive, Teams, Users. Using 
+Graph means OAuth once, then all of the above are available. Already half-built 
+into 1.3 via Microsoft SSO — extending it adds massive leverage.
+
+### Outlook Calendar Sync (Medium)
+- Programme milestones → Outlook calendar entries on assignees' calendars
+- Delivery schedule → site manager's calendar
+- Meeting scheduling for approvals, site visits, inspections
+- Two-way sync: platform reschedule updates calendar; calendar change prompts 
+  programme update
+
+### Microsoft ToDo Sync (Medium)
+- Platform tasks assigned to users appear in their ToDo list
+- Two-way sync: ticking in ToDo marks complete in platform
+- Works naturally on mobile (ToDo app on phone, no separate platform app needed 
+  for task-only users)
+
+### Excel Integration (Medium-High)
+- Export any grid (budgets, actuals, programme, reports) to Excel with one click
+- Import templates for bulk entry (historical actuals, programme tasks)
+- Excel add-in: live platform data in spreadsheets for finance director's models
+- Consider Excel Online embed for certain read-only views
+
+### Outlook Add-in (Medium)
+- Email → platform record conversion. Drag supplier invoice email → creates 
+  draft actual. Drag subcontractor query email → creates RFI. Attachments go 
+  to linked document record.
+- Saves the finance team's time on email triage.
+
+### Teams Integration (Lower priority)
+- Auto-create Teams channel per project
+- Platform notifications post to project Teams channel
+- File sharing via SharePoint already covered by document integration
+- Consider whether to do this or keep chat native to the platform (site users 
+  probably don't have Teams; office staff do)
+
+### Word Integration (Lower)
+- Generate contracts, RFIs, variations as Word documents from platform templates
+- Track changes back into the platform record
+
+---
+
+**Build order implication:** Microsoft Graph auth and the SharePoint/OneDrive 
+decision belong in or before Track 4. Calendar, ToDo, Excel add-in, Outlook 
+add-in can come later as standalone prompts once the Graph foundation is in.
+
+
