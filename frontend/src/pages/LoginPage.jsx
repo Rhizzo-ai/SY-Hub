@@ -11,6 +11,7 @@ export default function LoginPage() {
     const nav = useNavigate();
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
+    const [rememberMe, setRememberMe] = useState(false);
     const [mfaChallenge, setMfaChallenge] = useState(null);
     const [mfaCode, setMfaCode] = useState("");
     const [useBackup, setUseBackup] = useState(false);
@@ -30,12 +31,11 @@ export default function LoginPage() {
         e.preventDefault();
         setBusy(true);
         try {
-            const res = await login(email.trim().toLowerCase(), password);
+            const res = await login(email.trim().toLowerCase(), password, rememberMe);
             if (res.mfa_required) {
                 setMfaChallenge(res.challenge);
                 toast.info("Enter your 6-digit code from your authenticator app");
             } else if (res.mfa_enrollment_required) {
-                // AuthContext state flips to `pending_mfa`; effect above will redirect.
                 nav("/", { replace: true });
             } else {
                 nav("/entities", { replace: true });
@@ -51,7 +51,7 @@ export default function LoginPage() {
         e.preventDefault();
         setBusy(true);
         try {
-            await submitMfa(mfaChallenge, mfaCode.trim(), useBackup);
+            await submitMfa(mfaChallenge, mfaCode.trim(), useBackup, rememberMe);
             nav("/entities", { replace: true });
         } catch (e) {
             toast.error(e.friendlyMessage || "MFA verification failed");
@@ -150,6 +150,25 @@ export default function LoginPage() {
                                 {busy ? <Loader2 size={14} className="animate-spin mr-2" /> : null}
                                 Sign in
                             </Button>
+                            <div className="flex items-center justify-between pt-1">
+                                <label className="inline-flex items-center gap-2 text-xs text-slate-600 cursor-pointer select-none" data-testid="remember-me-label">
+                                    <input
+                                        type="checkbox"
+                                        checked={rememberMe}
+                                        onChange={(e) => setRememberMe(e.target.checked)}
+                                        className="h-3.5 w-3.5 rounded border-slate-300"
+                                        data-testid="remember-me-checkbox"
+                                    />
+                                    Keep me signed in (90 days)
+                                </label>
+                                <a
+                                    href="/forgot-password"
+                                    className="text-xs text-slate-600 underline decoration-dotted hover:text-slate-900"
+                                    data-testid="forgot-password-link"
+                                >
+                                    Forgot password?
+                                </a>
+                            </div>
                         </form>
                     ) : (
                         <form onSubmit={onMfa} className="space-y-5" data-testid="mfa-form">

@@ -21,8 +21,10 @@ from app.jobs.insurance_alerts import start_scheduler, stop_scheduler  # noqa: E
 from app.jobs.role_expiry import start_role_expiry_scheduler, stop_role_expiry_scheduler  # noqa: E402
 from app.routers.auth import router as auth_router  # noqa: E402
 from app.routers.entities import router as entities_router  # noqa: E402
+from app.routers.login_history import router as login_history_router  # noqa: E402
 from app.routers.meta import router as meta_router  # noqa: E402
 from app.routers.roles import roles_router, perms_router  # noqa: E402
+from app.routers.sessions import router as sessions_router  # noqa: E402
 from app.routers.users import router as users_router  # noqa: E402
 from app.seed import seed  # noqa: E402
 from app.seed_rbac import seed_rbac  # noqa: E402
@@ -85,6 +87,8 @@ def root():
 
 api_router.include_router(auth_router)
 api_router.include_router(users_router)
+api_router.include_router(sessions_router)
+api_router.include_router(login_history_router)
 api_router.include_router(roles_router)
 api_router.include_router(perms_router)
 api_router.include_router(entities_router)

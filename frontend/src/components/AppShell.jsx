@@ -2,7 +2,7 @@ import React from "react";
 import { NavLink, Link, useNavigate } from "react-router-dom";
 import {
     Building2, Users, Layers, Calculator, LineChart, Wallet,
-    CalendarDays, FileText, ShieldCheck, Landmark, Link2, LogOut, KeyRound, User as UserIcon, ShieldAlert, ChevronDown,
+    CalendarDays, FileText, ShieldCheck, Landmark, Link2, LogOut, KeyRound, Laptop, User as UserIcon, ShieldAlert, ChevronDown,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import {
@@ -124,6 +124,9 @@ export default function AppShell({ children }) {
                                 </DropdownMenuItem>
                                 <DropdownMenuItem onClick={() => nav("/profile/security")} data-testid="menu-change-password">
                                     <KeyRound size={14} className="mr-2" /> Change password
+                                </DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => nav("/profile/sessions")} data-testid="menu-sessions">
+                                    <Laptop size={14} className="mr-2" /> Active sessions
                                 </DropdownMenuItem>
                                 <DropdownMenuSeparator />
                                 <DropdownMenuItem

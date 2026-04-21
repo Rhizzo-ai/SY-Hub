@@ -13,7 +13,15 @@ from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.models.user import User
-from app.auth.tokens import decode_token
+from app.models.sessions import UserSession
+from app.services.sessions import (
+    decode_access_jwt,
+    revoke_session,
+    session_is_idle_expired,
+    touch_session,
+    log_event,
+    IDLE_TIMEOUT_MINUTES,
+)
 
 
 @dataclass
@@ -21,6 +29,7 @@ class Principal:
     user: User
     tenant_id: uuid.UUID
     token_type: str
+    session: Optional[UserSession] = None
 
 
 def _extract_token(request: Request, authorization: Optional[str]) -> Optional[str]:
@@ -41,7 +50,7 @@ def get_optional_principal(
     if not token:
         return None
     try:
-        payload = decode_token(token)
+        payload = decode_access_jwt(token)
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Token expired")
     except jwt.InvalidTokenError:
@@ -62,7 +71,39 @@ def get_optional_principal(
         raise HTTPException(status_code=401, detail="Tenant mismatch")
     if user.status in ("Suspended", "Archived"):
         raise HTTPException(status_code=403, detail=f"Account {user.status.lower()}")
-    return Principal(user=user, tenant_id=tenant_id, token_type=payload["type"])
+
+    # Session-bound tokens (issued by Prompt 1.3+) carry a `sid` claim.
+    session = None
+    sid_raw = payload.get("sid")
+    if sid_raw:
+        try:
+            sid = uuid.UUID(sid_raw)
+        except ValueError:
+            raise HTTPException(status_code=401, detail="Malformed session id")
+        session = db.get(UserSession, sid)
+        if session is None or session.user_id != user_id:
+            raise HTTPException(status_code=401, detail="Session not found")
+        if session.revoked_at is not None:
+            raise HTTPException(status_code=401, detail="Session revoked")
+        jti = payload.get("jti")
+        if jti and session.access_token_jti != jti:
+            # An older access token for this session — a newer one has replaced
+            # it via refresh rotation. Treat as unauthenticated.
+            raise HTTPException(status_code=401, detail="Session token rotated")
+        if session_is_idle_expired(session):
+            revoke_session(db, session, "Expiry")
+            log_event(
+                db, event_type="Session_Revoked",
+                email_attempted=user.email, user_id=user.id, session_id=session.id,
+                ip=request.client.host if request.client else "",
+                user_agent=request.headers.get("user-agent", ""),
+                metadata={"reason": "idle_timeout", "idle_minutes": IDLE_TIMEOUT_MINUTES},
+            )
+            db.commit()
+            raise HTTPException(status_code=401, detail="Session idle — please log in again")
+        touch_session(db, session)
+        db.commit()
+    return Principal(user=user, tenant_id=tenant_id, token_type=payload["type"], session=session)
 
 
 def get_current_principal(
@@ -95,15 +136,15 @@ def get_enrollment_principal(
     Used by endpoints that an enforced-role user must be able to reach while
     they still haven't completed MFA enrolment (e.g. /auth/me, /mfa/enroll/*,
     /password/change, /logout).
-    """
-    from app.auth.tokens import decode_token
-    import jwt
 
+    Does NOT enforce session idle-timeout because mfa_pending tokens aren't
+    backed by a user_session row — they're short-lived JWTs (15 min).
+    """
     token = _extract_token(request, authorization)
     if not token:
         raise HTTPException(status_code=401, detail="Not authenticated")
     try:
-        payload = decode_token(token)
+        payload = decode_access_jwt(token)
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Token expired")
     except jwt.InvalidTokenError:
@@ -124,7 +165,23 @@ def get_enrollment_principal(
         raise HTTPException(status_code=401, detail="Tenant mismatch")
     if user.status in ("Suspended", "Archived"):
         raise HTTPException(status_code=403, detail=f"Account {user.status.lower()}")
-    return Principal(user=user, tenant_id=tenant_id, token_type=payload["type"])
+
+    session = None
+    if payload.get("type") == "access":
+        sid_raw = payload.get("sid")
+        if sid_raw:
+            try:
+                sid = uuid.UUID(sid_raw)
+            except ValueError:
+                raise HTTPException(status_code=401, detail="Malformed session id")
+            session = db.get(UserSession, sid)
+            if session is None or session.user_id != user_id or session.revoked_at is not None:
+                raise HTTPException(status_code=401, detail="Session invalid")
+            jti = payload.get("jti")
+            if jti and session.access_token_jti != jti:
+                raise HTTPException(status_code=401, detail="Session token rotated")
+
+    return Principal(user=user, tenant_id=tenant_id, token_type=payload["type"], session=session)
 
 
 def get_enrollment_user(principal: Principal = Depends(get_enrollment_principal)) -> User:

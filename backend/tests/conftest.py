@@ -13,6 +13,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+import pytest
 from dotenv import load_dotenv
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
@@ -25,10 +26,18 @@ assert "DATABASE_URL" in os.environ, (
 
 
 # In-process per-session cache of TOTP secrets keyed by email.
-# Populated when login_with_auto_enroll runs the enrolment flow so that
-# follow-on logins (same session, different test module) can complete
-# the MFA challenge without a fresh enrolment.
 _MFA_SECRETS: dict[str, str] = {}
+
+
+@pytest.fixture(autouse=True)
+def _reset_rate_limiter():
+    """Clear the in-process rate limiter between tests so bursts of login
+    attempts in the suite don't trip the production limit. Tests that
+    specifically exercise the limit should call enforce() themselves.
+    """
+    from app.services.rate_limit import rate_limiter
+    rate_limiter.reset()
+    yield
 
 
 def login_with_auto_enroll(api_client, base_url: str, email: str, password: str) -> str:

@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate, useParams, Link } from "react-router-dom";
-import { ArrowLeft, ChevronRight, Loader2, Plus, Shield, Trash2, Unlock, UserX, Pencil } from "lucide-react";
+import { ArrowLeft, ChevronRight, History, Laptop, Loader2, Plus, Shield, Trash2, Unlock, UserX, Pencil } from "lucide-react";
 import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { displayEnum, formatDateTime, formatDate } from "@/lib/format";
@@ -85,13 +85,29 @@ export default function UserDetail() {
                 </div>
                 <div className="flex gap-2">
                     {hasPerm("users.admin") && (
-                        <Button
-                            variant="outline"
-                            onClick={() => nav(`/users/${id}/edit`)}
-                            data-testid="edit-user-button"
-                        >
-                            <Pencil size={14} className="mr-1.5" /> Edit
-                        </Button>
+                        <>
+                            <Button
+                                variant="outline"
+                                onClick={() => nav(`/users/${id}/sessions`)}
+                                data-testid="view-sessions-button"
+                            >
+                                <Laptop size={14} className="mr-1.5" /> Sessions
+                            </Button>
+                            <Button
+                                variant="outline"
+                                onClick={() => nav(`/users/${id}/login-history`)}
+                                data-testid="view-history-button"
+                            >
+                                <History size={14} className="mr-1.5" /> Login history
+                            </Button>
+                            <Button
+                                variant="outline"
+                                onClick={() => nav(`/users/${id}/edit`)}
+                                data-testid="edit-user-button"
+                            >
+                                <Pencil size={14} className="mr-1.5" /> Edit
+                            </Button>
+                        </>
                     )}
                     {locked && hasPerm("users.admin") && (
                         <Button variant="outline" onClick={onUnlock} data-testid="unlock-button">

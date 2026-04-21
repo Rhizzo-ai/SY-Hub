@@ -80,6 +80,64 @@ SY Homes is a UK property development company. This platform replaces spreadshee
 
 ### 2026-04-19 — Prompt 1.2: Users, Roles, Permissions ✅
 
+### 2026-04-21 — Prompt 1.3 stage 1b: Sessions + Refresh + Login History + Password Reset ✅
+
+**Schema (Alembic 0004 + 0005)**
+- `user_sessions`: id, user_id, access_token_jti, refresh_token_hash, previous_refresh_token_hash, ip_address, user_agent, device_name, location_{country,city,lat,long}, impersonator_user_id, remember_me, last_active_at, expires_at, revoked_at, revoked_reason (enum). 3 indexes (user+revoked, refresh_hash, expires, prev_refresh).
+- `user_login_history`: append-only — DB trigger raises on UPDATE/DELETE. 20-value `event_type` enum + 15-value `failure_reason` enum. 3 indexes (user+ts, email+ts, event+ts).
+- `email_send_log`: minimal deliverability trail — to_address, subject, template_id, status, error, provider_message_id, created_at.
+
+**Backend (endpoints)**
+- `POST /api/auth/login` — issues access + refresh; supports `remember_me` (30d default / 90d). Rate-limited 10/min per IP, 5/min per email.
+- `POST /api/auth/refresh` — rotates refresh token; presenting a previously-rotated token revokes ALL user's sessions + stamps `Suspicious_Activity_Detected`.
+- `POST /api/auth/logout` — revokes current session (via refresh cookie) with reason=Logout.
+- `POST /api/auth/password-reset/request` — always 200 (no enumeration); rate-limited 3/hr per email, 10/hr per IP; emails via Console provider.
+- `POST /api/auth/password-reset/complete` — validates token + 1-hr expiry, requires MFA code if MFA enabled, revokes ALL sessions, emails password_changed notice.
+- `POST /api/auth/password/change` — revokes all OTHER sessions (current survives), stamps MFA_Change history event, sends changed-email.
+- `GET /api/users/me/sessions`, `POST /api/users/me/sessions/{id}/revoke`, `POST /api/users/me/sessions/revoke-others`.
+- `GET /api/users/{id}/sessions` (users.admin), `POST /api/users/{id}/sessions/revoke-all` (sends session_revoked_email).
+- `GET /api/users/{id}/login-history` — paginated, filter by event_types[] + date range + success_only. `GET /api/users/{id}/login-history.csv` — CSV export.
+
+**Backend (infra)**
+- **Sessions service** (`app/services/sessions.py`): create/rotate/revoke + idle-timeout check. JWT now carries `sid` + `jti`; 15-min TTL.
+- **Session-aware auth deps**: `get_optional_principal` / `get_current_principal` look up the session row on every authed request, enforce `revoked_at`, match JWT `jti` to `access_token_jti`, check 60-min idle, touch `last_active_at` throttled to 1 write per 60s.
+- **Email infra** (`app/services/email.py` + `email_templates.py`): pluggable `EmailProvider` interface with `ConsoleEmailProvider` default. SendGrid path staged (commented) — flip in 4 lines when key supplied. Templates: password_reset_email, password_changed_email, session_revoked_email (inline-CSS SY Homes shell).
+- **Geolocation** (`app/services/geolocation.py`): MaxMind GeoLite2 wrapper; absent mmdb → `country=NULL` gracefully. Bootstrap script `scripts/download_geolite2.py` pulls ~60 MB tarball when `MAXMIND_LICENSE_KEY` set. Private/loopback IPs → `country='Local'`.
+- **Rate limiter** (`app/services/rate_limit.py`): in-process token bucket, thread-safe. `SYHOMES_RATE_LIMIT_DISABLED=1` flag for test runs (set in dev `.env`). Redis migration flagged for production deployment.
+
+**Frontend (pages / surfaces)**
+- `/forgot-password` + `/reset-password?token=…` — public pages with live 5-rule password checklist + MFA code field (shown conditionally).
+- `/profile/sessions` — table of every browser/device, Current pill, Revoke per row, "Revoke all other sessions" bulk action, Remember-me badge, IP redaction.
+- `/users/:id/sessions` (admin) — same shape + "Revoke all sessions" with email notification.
+- `/users/:id/login-history` (admin) — paginated 50/page, event-type multi-select, success/fail toggle, CSV export.
+- LoginPage — Remember me checkbox + Forgot password link + 90-day copy.
+- AuthContext — auto-refresh on 401 via single in-flight promise; idle-timer (55m warn / 60m force logout); LocalStorage-backed token pair with dispatched `syhomes:unauthorized` event for clean state teardown.
+- AppShell dropdown — added "Active sessions" item beside "Change password".
+- UserDetail header — new Sessions + Login history buttons (users.admin only).
+
+**Tests**: +25 new (`tests/test_sessions_history_reset.py`) covering:
+- Login returns session-bound access + refresh + device fingerprint from UA
+- remember_me extends expiry to 88–90 days
+- Refresh rotates; old refresh → replay → all sessions revoked + `new_access` also invalidated
+- Logout revokes session with reason=Logout
+- Password change revokes other sessions but keeps current alive
+- Login history records every event; trigger raises on UPDATE/DELETE
+- List-my-sessions marks current correctly; revoke-others keeps current alive
+- Admin list + revoke-all; email_send_log row written for password_reset_email
+- Password reset full flow: unknown email 200, known email 200, valid token completes, expired token 400, used token rejected 2nd time, weak password 422
+- Login history admin endpoint: list + forbidden for non-admin + CSV export
+
+Full suite: **160 passed, 1 skipped, 0 failed** (was 135 → +25).
+
+**Deferred to 1.3 stage 2**: invitation email delivery, SSO (Google/Microsoft/Apple), API keys, suspicious-activity alerts (new-country + impossible-travel detection), `/invitations` + `/api-keys` + `/profile/security/sso` UIs, rate limits on SSO callbacks.
+
+**Production config required before flipping to live**:
+- `SENDGRID_API_KEY` + `EMAIL_FROM_ADDRESS` + `EMAIL_FROM_NAME` + `EMAIL_REPLY_TO` (uncomment SendGridEmailProvider in `app/services/email.py`).
+- `MAXMIND_LICENSE_KEY` + run `scripts/download_geolite2.py` on a weekly cron.
+- DNS SPF/DKIM/DMARC on the sending domain (see `backend/README.md`).
+- Remove `SYHOMES_RATE_LIMIT_DISABLED=1` from `.env`.
+- Plan Redis migration for rate limiter when deploying multi-worker.
+
 ### 2026-04-21 — Prompt 1.2 close-out patch #2: Edit User ✅
 - **Backend**: `PUT /api/users/{id}` tightened to require `users.admin` (was `users.edit`). Schema now accepts `email` on top of the prior scalar fields; rejects Archived status (use `/scrub_pii`); only permits Active/Suspended/Pending_Invitation transitions. Email change flips `email_verified=false` + nulls `email_verified_at` and the user must re-verify on next login (full flow lands in 1.3). Email collision on the tenant returns 409 with a friendly message. Self-deactivation blocked with 400. Diff between before/after is tracked and only the changed fields stamp `admin_notes` (`[Edited by <email> (<id>) at <ts>: <fields>]`). Emits `INFO` on `syhomes.auth`.
 - **Frontend**: new `/users/:id/edit` page (`UserEdit.jsx`) with first/last name, email, phone, Active ↔ Suspended toggle. Inline validation (required + email regex + email-change warning banner + self-deactivation lockout), live "N changes" diff counter, Save button disabled until the form is valid and dirty. Edit buttons added to both UsersList (per-row action column) and UserDetail (header) — both gated on `users.admin`.

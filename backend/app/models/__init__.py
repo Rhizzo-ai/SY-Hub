@@ -27,6 +27,14 @@ from app.models.rbac import (
     PROJECT_SCOPES,
     USER_ROLE_STATUSES,
 )
+from app.models.sessions import (
+    UserSession,
+    UserLoginHistory,
+    EmailSendLog,
+    SESSION_REVOKED_REASONS,
+    LOGIN_HISTORY_EVENTS,
+    LOGIN_HISTORY_FAILURE_REASONS,
+)
 
 __all__ = [
     "Tenant",

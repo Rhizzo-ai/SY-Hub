@@ -1,13 +1,19 @@
-import React, { createContext, useCallback, useContext, useEffect, useState } from "react";
-import { api, setAuthToken, getAuthToken } from "@/lib/api";
+import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
+import { api, setTokenPair, clearTokens, getAuthToken } from "@/lib/api";
 import ForcedMfaEnroll from "@/pages/ForcedMfaEnroll";
 
 const AuthContext = createContext(null);
 
+// Idle-timeout UX: warn at 55 min, force logout at 60 min. Must align with
+// IDLE_TIMEOUT_MINUTES in backend app/services/sessions.py.
+const IDLE_WARN_MS = 55 * 60 * 1000;
+const IDLE_FORCE_MS = 60 * 60 * 1000;
+
 export function AuthProvider({ children }) {
-    // `state`: 'loading' | 'authed' | 'pending_mfa' | 'anon'
     const [state, setState] = useState(getAuthToken() ? "loading" : "anon");
     const [me, setMe] = useState(null);
+    const [idleWarning, setIdleWarning] = useState(false);
+    const lastActivityRef = useRef(Date.now());
 
     const fetchMe = useCallback(async () => {
         try {
@@ -16,7 +22,7 @@ export function AuthProvider({ children }) {
             setState(r.data?.token_type === "mfa_pending" ? "pending_mfa" : "authed");
             return r.data;
         } catch (e) {
-            setAuthToken(null);
+            clearTokens();
             setMe(null);
             setState("anon");
             return null;
@@ -26,7 +32,7 @@ export function AuthProvider({ children }) {
     useEffect(() => {
         if (state === "loading") fetchMe();
         const onUnauth = () => {
-            setAuthToken(null);
+            clearTokens();
             setMe(null);
             setState("anon");
         };
@@ -34,38 +40,60 @@ export function AuthProvider({ children }) {
         return () => window.removeEventListener("syhomes:unauthorized", onUnauth);
     }, [state, fetchMe]);
 
-    const login = useCallback(async (email, password) => {
-        const r = await api.post("/auth/login", { email, password });
+    // --- Idle-timeout tracking (authed only) ---
+    useEffect(() => {
+        if (state !== "authed") return;
+        const bump = () => { lastActivityRef.current = Date.now(); setIdleWarning(false); };
+        const events = ["mousemove", "keydown", "click", "scroll", "touchstart"];
+        events.forEach((e) => window.addEventListener(e, bump, { passive: true }));
+        const interval = setInterval(() => {
+            const idle = Date.now() - lastActivityRef.current;
+            if (idle >= IDLE_FORCE_MS) {
+                // Force-logout
+                clearTokens();
+                setMe(null);
+                setState("anon");
+            } else if (idle >= IDLE_WARN_MS && !idleWarning) {
+                setIdleWarning(true);
+            }
+        }, 30000);
+        return () => {
+            events.forEach((e) => window.removeEventListener(e, bump));
+            clearInterval(interval);
+        };
+    }, [state, idleWarning]);
+
+    const login = useCallback(async (email, password, remember_me = false) => {
+        const r = await api.post("/auth/login", { email, password, remember_me });
         if (r.data.mfa_required) {
             return { mfa_required: true, challenge: r.data.mfa_challenge_token };
         }
         if (r.data.mfa_enrollment_required && r.data.mfa_pending_token) {
-            // Enforced-role user, not yet enrolled — hard block path.
-            setAuthToken(r.data.mfa_pending_token);
+            // mfa_pending tokens are one-shot JWTs, no refresh rotation.
+            setTokenPair({ access_token: r.data.mfa_pending_token, refresh_token: null });
             await fetchMe();
             return {
                 mfa_enrollment_required: true,
                 enforced_role_name: r.data.enforced_role_name,
             };
         }
-        setAuthToken(r.data.access_token);
+        setTokenPair(r.data);
         await fetchMe();
         return { mfa_required: false };
     }, [fetchMe]);
 
-    const submitMfa = useCallback(async (challenge, code, useBackup = false) => {
+    const submitMfa = useCallback(async (challenge, code, useBackup = false, remember_me = false) => {
         const r = await api.post("/auth/mfa/verify", {
-            challenge_token: challenge,
-            code,
-            use_backup_code: useBackup,
+            challenge_token: challenge, code,
+            use_backup_code: useBackup, remember_me,
         });
-        setAuthToken(r.data.access_token);
+        setTokenPair(r.data);
         await fetchMe();
     }, [fetchMe]);
 
     const logout = useCallback(async () => {
         try { await api.post("/auth/logout"); } catch (_) {}
-        setAuthToken(null);
+        clearTokens();
         setMe(null);
         setState("anon");
     }, []);
@@ -78,7 +106,12 @@ export function AuthProvider({ children }) {
     const hasAnyPerm = useCallback((...codes) => codes.some((c) => hasPerm(c)), [hasPerm]);
 
     return (
-        <AuthContext.Provider value={{ state, me, login, submitMfa, logout, refresh: fetchMe, hasPerm, hasAnyPerm }}>
+        <AuthContext.Provider
+            value={{
+                state, me, login, submitMfa, logout, refresh: fetchMe, hasPerm, hasAnyPerm,
+                idleWarning, dismissIdleWarning: () => setIdleWarning(false),
+            }}
+        >
             {children}
         </AuthContext.Provider>
     );
@@ -104,7 +137,6 @@ export function ProtectedRoute({ children }) {
         return null;
     }
     if (state === "pending_mfa") {
-        // Render forced-enrolment gate instead of the app shell.
         return <ForcedMfaEnroll />;
     }
     return children;
