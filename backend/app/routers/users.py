@@ -22,6 +22,7 @@ from app.models.rbac import (
 )
 from app.auth import (
     hash_password,
+    hash_token,
     get_current_user,
     require_permission,
 )
@@ -43,6 +44,8 @@ class UserSummary(BaseModel):
     mfa_enabled: bool
     last_login_at: Optional[datetime] = None
     role_count: int = 0
+    locked_until: Optional[datetime] = None
+    failed_login_attempts: int = 0
 
 
 class UserDetail(BaseModel):
@@ -265,6 +268,8 @@ def list_users(
             display_name=u.display_name or f"{u.first_name} {u.last_name}",
             user_type=u.user_type, status=u.status, mfa_enabled=u.mfa_enabled,
             last_login_at=u.last_login_at, role_count=cnt,
+            locked_until=u.locked_until,
+            failed_login_attempts=u.failed_login_attempts or 0,
         ))
     return UserListResponse(items=items, total=total, page=page, page_size=page_size)
 
@@ -300,8 +305,10 @@ def invite_user(
         raise HTTPException(409, "Email already exists for this tenant")
 
     token_plain = secrets.token_urlsafe(32)
-    # Store hashed invitation token (argon2) — user presents plain token on accept
-    token_hash = hash_password(token_plain)
+    # Store hashed invitation token (argon2). Bypasses user-password complexity
+    # rules because a random 256-bit token has no meaningful "uppercase /
+    # symbol" constraints — its entropy lives elsewhere.
+    token_hash = hash_token(token_plain)
 
     u = User(
         tenant_id=tenant_id,
@@ -360,15 +367,36 @@ def unlock_user(
     user_id: uuid.UUID,
     db: Session = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant_id),
+    current: User = Depends(get_current_user),
     _=Depends(require_permission("users.admin")),
 ):
     u = db.scalar(select(User).where(User.id == user_id, User.tenant_id == tenant_id))
     if u is None:
         raise HTTPException(404, "User not found")
+
+    was_locked = (
+        (u.locked_until is not None and u.locked_until > datetime.now(timezone.utc))
+        or (u.failed_login_attempts or 0) > 0
+        or (u.lockout_level or 0) > 0
+    )
+    if not was_locked:
+        raise HTTPException(400, "User is not locked")
+
     u.failed_login_attempts = 0
     u.locked_until = None
     u.lockout_level = 0
+    # Until Prompt 1.4's audit_events table lands, stamp the actor into
+    # admin_notes so the action is still traceable in-place.
+    stamp = (
+        f"[Unlocked by {current.email} ({current.id}) at "
+        f"{datetime.now(timezone.utc).isoformat()}]"
+    )
+    u.admin_notes = f"{(u.admin_notes or '').rstrip()}\n{stamp}".strip()
     db.commit()
+    logging.getLogger("syhomes.auth").info(
+        "user_unlocked actor=%s actor_id=%s target=%s target_id=%s",
+        current.email, current.id, u.email, u.id,
+    )
 
 
 @router.post("/{user_id}/scrub_pii", status_code=204)

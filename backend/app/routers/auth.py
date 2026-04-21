@@ -24,6 +24,7 @@ from app.auth import (
     issue_access_token,
     needs_rehash,
     PASSWORD_HISTORY_SIZE,
+    PASSWORD_RULES,
     PasswordPolicyError,
     verify_password,
 )
@@ -195,7 +196,9 @@ def login(
 
     # Constant-ish timing: always run a hash-verify even if user missing.
     if user is None:
-        hash_password("decoy-password-for-timing")
+        # Use a policy-compliant decoy (new complexity rules would reject
+        # a plain lowercase string). Any argon2 hash call takes ~350ms.
+        hash_password("Decoy-Password-For-Timing-2026!")
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
     if user.status == "Archived":
@@ -430,6 +433,17 @@ def logout(response: Response):
     # Intentionally unauthenticated: clearing local/cookie token is enough,
     # and this also lets an mfa_pending user cleanly sign out.
     response.delete_cookie("access_token", path="/")
+
+
+@router.get("/password-policy")
+def password_policy():
+    """Public — UI pulls the active password rules from here so the list
+    never drifts from what the backend actually enforces.
+    """
+    return {
+        "rules": [{"code": code, "label": label} for code, label in PASSWORD_RULES],
+        "history_size": PASSWORD_HISTORY_SIZE,
+    }
 
 
 @router.get("/me", response_model=MeResponse)

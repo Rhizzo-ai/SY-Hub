@@ -80,6 +80,22 @@ SY Homes is a UK property development company. This platform replaces spreadshee
 
 ### 2026-04-19 — Prompt 1.2: Users, Roles, Permissions ✅
 
+### 2026-04-21 — Prompt 1.2 close-out patch ✅
+- **Password complexity**: added uppercase / lowercase / number / symbol rules to `validate_complexity` (on top of the existing 12-char min + 5-password history). `hash_password` calls validate; a new `hash_token` sibling is used for random invitation tokens which shouldn't have to meet user-password policy. Decoy-timing hash updated to a compliant string.
+- **Public policy endpoint**: `GET /api/auth/password-policy` returns the rule catalogue so the UI never drifts from the backend.
+- **ProfileSecurity UI**: the Change Password section now shows all 5 rules as a live-validated green-dot list beneath the "New password" field, plus a static reminder about the 5-password history window.
+- **Admin unlock**:
+  - `POST /api/users/{id}/unlock` now refuses with 400 if the user isn't actually locked (previously silently succeeded).
+  - Audit breadcrumb appended to `admin_notes` (`[Unlocked by <email> (<id>) at <timestamp>]`) until Prompt 1.4's `audit_events` table lands. Also emits an `INFO` log line on `syhomes.auth`.
+  - UsersList shows a red "LOCKED" badge + an inline "Unlock" action column (only rendered when the viewer holds `users.admin`, and only enabled per-row when the target is actually locked).
+  - UserSummary API response now carries `locked_until` + `failed_login_attempts` so the list view can gate the button without a per-row detail fetch.
+- **Tests**: +9 new cases (`test_password_complexity.py`) covering the policy endpoint, each of the 5 rules (reject weak / accept strong), and the unlock endpoint's 204 success / 400 not-locked / 403 forbidden paths. Older test that assumed idempotent unlock on an already-unlocked user updated to lock first via failed logins. Full suite: **128 passed, 1 skipped, 0 failed**.
+
+### Lockout policy (confirmed, unchanged in this patch)
+- **Threshold**: 5 failed logins
+- **Lockout**: **time-based** — 15 min on 1st offence, 30 min on 2nd, 60 min on 3rd+ (escalates via `lockout_level`, persists across lockouts)
+- **Counter reset**: `failed_login_attempts` is reset to 0 on **any** successful login (`_clear_lockout` in `auth.py`); `locked_until` is also cleared then. `lockout_level` is **not** reset on success — so a user who has tripped the lockout three times this year still gets the 60-min penalty on offence #4. Admin unlock clears `lockout_level` back to 0.
+
 ### 2026-04-19 — Prompt 1.2 addendum: MFA security gap closures ✅
 - **Alembic 0003**: `users.mfa_enforced_at` → `mfa_enrolled_at` (name reflects intent: moment of enrolment, not policy enforcement).
 - **Gap 1 — Disable MFA requires password re-auth**: `POST /api/auth/mfa/disable` now takes `{current_password}`. Wrong password → 400. Closes the session-hijack-strips-MFA vector.

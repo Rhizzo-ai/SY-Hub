@@ -1,11 +1,12 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Plus, Search, Loader2, ShieldCheck, ShieldAlert } from "lucide-react";
+import { Plus, Search, Loader2, ShieldCheck, ShieldAlert, Lock, Unlock } from "lucide-react";
 import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useAuth } from "@/context/AuthContext";
 import { formatDateTime, displayEnum } from "@/lib/format";
+import { toast } from "sonner";
 
 const USER_TYPES = [
     "Internal", "External_Subcontractor", "External_Consultant",
@@ -30,11 +31,16 @@ function StatusBadge({ status }) {
     );
 }
 
+function isLocked(u) {
+    return u.locked_until && new Date(u.locked_until) > new Date();
+}
+
 export default function UsersList() {
     const nav = useNavigate();
     const { hasPerm } = useAuth();
     const [data, setData] = useState({ items: [], total: 0 });
     const [loading, setLoading] = useState(true);
+    const [unlockingId, setUnlockingId] = useState(null);
     const [q, setQ] = useState("");
     const [type, setType] = useState("");
     const [status, setStatus] = useState("");
@@ -52,6 +58,22 @@ export default function UsersList() {
 
     useEffect(() => { load(); /* eslint-disable-next-line */ }, [type, status]);
     const onSearch = (e) => { e.preventDefault(); load(); };
+
+    const onUnlock = async (e, u) => {
+        e.stopPropagation();
+        setUnlockingId(u.id);
+        try {
+            await api.post(`/users/${u.id}/unlock`);
+            toast.success(`Unlocked ${u.display_name || u.email}`);
+            await load();
+        } catch (err) {
+            toast.error(err.friendlyMessage || "Unlock failed");
+        } finally {
+            setUnlockingId(null);
+        }
+    };
+
+    const canUnlock = hasPerm("users.admin");
 
     return (
         <div className="space-y-6" data-testid="users-list-page">
@@ -102,27 +124,64 @@ export default function UsersList() {
                                 <th className="text-left px-4 py-3">MFA</th>
                                 <th className="text-left px-4 py-3">Last Login</th>
                                 <th className="text-left px-4 py-3">Roles</th>
+                                {canUnlock && <th className="text-right px-4 py-3">Actions</th>}
                             </tr>
                         </thead>
                         <tbody>
                             {!loading && data.items.length === 0 && (
-                                <tr><td colSpan={7} className="px-4 py-16 text-center text-slate-500">No users found.</td></tr>
+                                <tr><td colSpan={canUnlock ? 8 : 7} className="px-4 py-16 text-center text-slate-500">No users found.</td></tr>
                             )}
-                            {data.items.map((u) => (
-                                <tr key={u.id} onClick={() => nav(`/users/${u.id}`)} className="border-b border-slate-200 hover:bg-slate-50/80 cursor-pointer" data-testid={`user-row-${u.id}`}>
-                                    <td className="px-4 py-3 font-medium text-slate-900">{u.display_name || `${u.first_name} ${u.last_name}`}</td>
-                                    <td className="px-4 py-3 mono text-slate-700">{u.email}</td>
-                                    <td className="px-4 py-3 text-slate-700">{displayEnum(u.user_type)}</td>
-                                    <td className="px-4 py-3"><StatusBadge status={u.status} /></td>
-                                    <td className="px-4 py-3">
-                                        {u.mfa_enabled
-                                            ? <span className="inline-flex items-center gap-1 text-emerald-700 text-xs"><ShieldCheck size={12} /> TOTP</span>
-                                            : <span className="inline-flex items-center gap-1 text-slate-500 text-xs"><ShieldAlert size={12} /> Off</span>}
-                                    </td>
-                                    <td className="px-4 py-3 mono tabular text-slate-700">{u.last_login_at ? formatDateTime(u.last_login_at) : "—"}</td>
-                                    <td className="px-4 py-3 mono tabular text-slate-700">{u.role_count}</td>
-                                </tr>
-                            ))}
+                            {data.items.map((u) => {
+                                const locked = isLocked(u);
+                                return (
+                                    <tr key={u.id} onClick={() => nav(`/users/${u.id}`)} className="border-b border-slate-200 hover:bg-slate-50/80 cursor-pointer" data-testid={`user-row-${u.id}`}>
+                                        <td className="px-4 py-3 font-medium text-slate-900">
+                                            <div className="inline-flex items-center gap-2">
+                                                {locked && (
+                                                    <span
+                                                        className="inline-flex items-center gap-1 text-[10px] uppercase tracking-widest font-semibold text-rose-700 bg-rose-50 border border-rose-200 rounded-sm px-1.5 py-0.5"
+                                                        title={`Locked until ${formatDateTime(u.locked_until)}`}
+                                                        data-testid={`user-lock-badge-${u.id}`}
+                                                    >
+                                                        <Lock size={10} /> Locked
+                                                    </span>
+                                                )}
+                                                {u.display_name || `${u.first_name} ${u.last_name}`}
+                                            </div>
+                                        </td>
+                                        <td className="px-4 py-3 mono text-slate-700">{u.email}</td>
+                                        <td className="px-4 py-3 text-slate-700">{displayEnum(u.user_type)}</td>
+                                        <td className="px-4 py-3"><StatusBadge status={u.status} /></td>
+                                        <td className="px-4 py-3">
+                                            {u.mfa_enabled
+                                                ? <span className="inline-flex items-center gap-1 text-emerald-700 text-xs"><ShieldCheck size={12} /> TOTP</span>
+                                                : <span className="inline-flex items-center gap-1 text-slate-500 text-xs"><ShieldAlert size={12} /> Off</span>}
+                                        </td>
+                                        <td className="px-4 py-3 mono tabular text-slate-700">{u.last_login_at ? formatDateTime(u.last_login_at) : "—"}</td>
+                                        <td className="px-4 py-3 mono tabular text-slate-700">{u.role_count}</td>
+                                        {canUnlock && (
+                                            <td className="px-4 py-3 text-right">
+                                                {locked ? (
+                                                    <Button
+                                                        variant="outline"
+                                                        size="sm"
+                                                        className="h-7 text-xs"
+                                                        disabled={unlockingId === u.id}
+                                                        onClick={(e) => onUnlock(e, u)}
+                                                        data-testid={`unlock-user-${u.id}`}
+                                                    >
+                                                        {unlockingId === u.id
+                                                            ? <Loader2 size={12} className="animate-spin" />
+                                                            : <><Unlock size={12} className="mr-1" /> Unlock</>}
+                                                    </Button>
+                                                ) : (
+                                                    <span className="text-slate-300 text-xs" data-testid={`unlock-user-${u.id}-na`}>—</span>
+                                                )}
+                                            </td>
+                                        )}
+                                    </tr>
+                                );
+                            })}
                         </tbody>
                     </table>
                 </div>

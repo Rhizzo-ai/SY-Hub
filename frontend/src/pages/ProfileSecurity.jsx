@@ -29,6 +29,7 @@ export default function ProfileSecurity() {
     const [showRegenConfirm, setShowRegenConfirm] = useState(false);
     const [regenCodes, setRegenCodes] = useState(null);
     const [busy, setBusy] = useState(false);
+    const [policy, setPolicy] = useState(null);
 
     // Re-auth form state — disable MFA
     const [disablePassword, setDisablePassword] = useState("");
@@ -42,6 +43,11 @@ export default function ProfileSecurity() {
     const [pwConfirm, setPwConfirm] = useState("");
 
     useEffect(() => { refresh(); /* eslint-disable-next-line */ }, []);
+    useEffect(() => {
+        api.get("/auth/password-policy")
+            .then((r) => setPolicy(r.data))
+            .catch(() => {});
+    }, []);
 
     if (!me) return <div className="flex items-center gap-2 text-slate-500"><Loader2 size={14} className="animate-spin" /> Loading…</div>;
 
@@ -88,7 +94,10 @@ export default function ProfileSecurity() {
     const onChangePassword = async (e) => {
         e.preventDefault();
         if (pwNew !== pwConfirm) { toast.error("New passwords do not match"); return; }
-        if (pwNew.length < 12) { toast.error("New password must be at least 12 characters"); return; }
+        if (!passwordChecks.every((c) => c.ok)) {
+            toast.error("Password does not meet all requirements");
+            return;
+        }
         setBusy(true);
         try {
             await api.post("/auth/password/change", { current_password: pwCurrent, new_password: pwNew });
@@ -101,6 +110,17 @@ export default function ProfileSecurity() {
     };
 
     const onSignOut = async () => { await logout(); nav("/login"); };
+
+    // Mirror of backend complexity regex set — used to render the rule list
+    // and to short-circuit obviously-invalid submissions client-side.
+    const passwordChecks = [
+        { code: "length", label: "At least 12 characters", ok: pwNew.length >= 12 },
+        { code: "uppercase", label: "At least one uppercase letter (A–Z)", ok: /[A-Z]/.test(pwNew) },
+        { code: "lowercase", label: "At least one lowercase letter (a–z)", ok: /[a-z]/.test(pwNew) },
+        { code: "number", label: "At least one number (0–9)", ok: /[0-9]/.test(pwNew) },
+        { code: "symbol", label: "At least one symbol (e.g. ! @ # $ % ^ & *)", ok: /[^A-Za-z0-9]/.test(pwNew) },
+    ];
+    const historySize = policy?.history_size ?? 5;
 
     return (
         <div className="space-y-6 max-w-3xl" data-testid="profile-security-page">
@@ -187,7 +207,7 @@ export default function ProfileSecurity() {
                 )}
             </Section>
 
-            <Section title="Change password" description="Minimum 12 characters. Cannot match your previous 5 passwords." testid="section-password">
+            <Section title="Change password" description={`Must meet all rules below. Cannot match your previous ${historySize} passwords.`} testid="section-password">
                 <form onSubmit={onChangePassword} className="space-y-4 max-w-md" data-testid="password-change-form">
                     <div>
                         <label className="block text-[11px] uppercase tracking-widest font-semibold text-slate-500 mb-1.5">Current password</label>
@@ -196,6 +216,22 @@ export default function ProfileSecurity() {
                     <div>
                         <label className="block text-[11px] uppercase tracking-widest font-semibold text-slate-500 mb-1.5">New password</label>
                         <Input type="password" value={pwNew} onChange={(e) => setPwNew(e.target.value)} className="bg-white h-9" data-testid="pw-new" required />
+                        <ul className="mt-2 space-y-1" data-testid="password-rules">
+                            {passwordChecks.map((c) => (
+                                <li
+                                    key={c.code}
+                                    className={`text-xs flex items-center gap-1.5 ${c.ok ? "text-emerald-700" : "text-slate-500"}`}
+                                    data-testid={`password-rule-${c.code}-${c.ok ? "ok" : "fail"}`}
+                                >
+                                    <span className={`inline-block h-1.5 w-1.5 rounded-full ${c.ok ? "bg-emerald-500" : "bg-slate-300"}`} />
+                                    {c.label}
+                                </li>
+                            ))}
+                            <li className="text-xs flex items-center gap-1.5 text-slate-500">
+                                <span className="inline-block h-1.5 w-1.5 rounded-full bg-slate-300" />
+                                Cannot match any of your last {historySize} passwords
+                            </li>
+                        </ul>
                     </div>
                     <div>
                         <label className="block text-[11px] uppercase tracking-widest font-semibold text-slate-500 mb-1.5">Confirm new password</label>

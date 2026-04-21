@@ -1,5 +1,6 @@
 from app.auth.passwords import (
     hash_password,
+    hash_token,
     verify_password,
     validate_complexity,
     is_in_history,
@@ -7,6 +8,7 @@ from app.auth.passwords import (
     PasswordPolicyError,
     MIN_PASSWORD_LENGTH,
     PASSWORD_HISTORY_SIZE,
+    PASSWORD_RULES,
 )
 from app.auth.tokens import issue_access_token, decode_token
 from app.auth.deps import (
@@ -26,6 +28,7 @@ from app.auth.permissions import (
 
 __all__ = [
     "hash_password",
+    "hash_token",
     "verify_password",
     "validate_complexity",
     "is_in_history",
@@ -33,6 +36,7 @@ __all__ = [
     "PasswordPolicyError",
     "MIN_PASSWORD_LENGTH",
     "PASSWORD_HISTORY_SIZE",
+    "PASSWORD_RULES",
     "issue_access_token",
     "decode_token",
     "Principal",

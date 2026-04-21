@@ -47,6 +47,30 @@ def test_finance_token(api_client):
     return login_with_auto_enroll(api_client, BASE_URL, TEST_FINANCE_EMAIL, TEST_PASSWORD)
 
 
+def _db_reset_mfa(email: str) -> None:
+    """Force MFA state to 'not enrolled' at the DB level so tests that
+    validate the hard-block path can run regardless of whether a previous
+    test already auto-enrolled the user.
+    """
+    import os as _os
+    from dotenv import load_dotenv
+    from sqlalchemy import create_engine, text
+    load_dotenv("/app/backend/.env")
+    e = create_engine(_os.environ["DATABASE_URL"])
+    with e.begin() as c:
+        c.execute(
+            text(
+                "UPDATE users SET mfa_enabled=false, mfa_secret_encrypted=NULL, "
+                "mfa_backup_codes_encrypted=NULL, mfa_enrolled_at=NULL, "
+                "mfa_method=NULL WHERE email=:em"
+            ),
+            {"em": email},
+        )
+    # Also clear cached secret so login_with_auto_enroll will re-enrol.
+    from tests.conftest import _MFA_SECRETS
+    _MFA_SECRETS.pop(email, None)
+
+
 # ============================================================
 # MFA Enrollment Required Tests
 # ============================================================
@@ -57,23 +81,7 @@ class TestMfaEnrollmentRequired:
     def test_super_admin_mfa_enrollment_required_true(self, api_client):
         """An un-enrolled super_admin login returns an mfa_pending token, and
         /auth/me on that token reports mfa_enrollment_required=true."""
-        # Reset MFA on test-admin via the disable endpoint (needs existing
-        # auto-enrolled token first), then re-login to get the pending token.
-        # Simpler: use a fresh request that bypasses fixture caching.
-        from tests.conftest import _MFA_SECRETS
-        # Make sure we have a known secret cached to allow clean re-enrol.
-        # If the user is already enrolled (common after test_admin_token
-        # fixture runs), disable via cached secret first.
-        if TEST_ADMIN_EMAIL in _MFA_SECRETS:
-            # Log in with the auto-enrol helper to get a full token, then disable.
-            from tests.conftest import login_with_auto_enroll
-            tok = login_with_auto_enroll(api_client, BASE_URL, TEST_ADMIN_EMAIL, TEST_PASSWORD)
-            api_client.post(
-                f"{BASE_URL}/api/auth/mfa/disable",
-                headers={"Authorization": f"Bearer {tok}"},
-                json={"current_password": TEST_PASSWORD},
-            )
-            _MFA_SECRETS.pop(TEST_ADMIN_EMAIL, None)
+        _db_reset_mfa(TEST_ADMIN_EMAIL)
 
         login_response = api_client.post(f"{BASE_URL}/api/auth/login", json={
             "email": TEST_ADMIN_EMAIL,
@@ -98,17 +106,7 @@ class TestMfaEnrollmentRequired:
 
     def test_director_mfa_enrollment_required_true(self, api_client):
         """Director login without MFA returns mfa_pending + enforced_role_name."""
-        from tests.conftest import _MFA_SECRETS
-        if TEST_DIRECTOR_EMAIL in _MFA_SECRETS:
-            from tests.conftest import login_with_auto_enroll
-            tok = login_with_auto_enroll(api_client, BASE_URL, TEST_DIRECTOR_EMAIL, TEST_PASSWORD)
-            api_client.post(
-                f"{BASE_URL}/api/auth/mfa/disable",
-                headers={"Authorization": f"Bearer {tok}"},
-                json={"current_password": TEST_PASSWORD},
-            )
-            _MFA_SECRETS.pop(TEST_DIRECTOR_EMAIL, None)
-
+        _db_reset_mfa(TEST_DIRECTOR_EMAIL)
         r = api_client.post(f"{BASE_URL}/api/auth/login", json={
             "email": TEST_DIRECTOR_EMAIL, "password": TEST_PASSWORD,
         })
@@ -119,17 +117,7 @@ class TestMfaEnrollmentRequired:
 
     def test_finance_mfa_enrollment_required_true(self, api_client):
         """Finance login without MFA returns mfa_pending + enforced_role_name."""
-        from tests.conftest import _MFA_SECRETS
-        if TEST_FINANCE_EMAIL in _MFA_SECRETS:
-            from tests.conftest import login_with_auto_enroll
-            tok = login_with_auto_enroll(api_client, BASE_URL, TEST_FINANCE_EMAIL, TEST_PASSWORD)
-            api_client.post(
-                f"{BASE_URL}/api/auth/mfa/disable",
-                headers={"Authorization": f"Bearer {tok}"},
-                json={"current_password": TEST_PASSWORD},
-            )
-            _MFA_SECRETS.pop(TEST_FINANCE_EMAIL, None)
-
+        _db_reset_mfa(TEST_FINANCE_EMAIL)
         r = api_client.post(f"{BASE_URL}/api/auth/login", json={
             "email": TEST_FINANCE_EMAIL, "password": TEST_PASSWORD,
         })

@@ -128,15 +128,24 @@ class TestAuthLogin:
             assert data["user"]["email"] == SUPER_ADMIN_EMAIL
     
     def test_login_test_admin_success(self, api_client):
-        """POST /api/auth/login with test-admin returns access_token"""
+        """POST /api/auth/login with test-admin returns a valid token path"""
         response = api_client.post(f"{BASE_URL}/api/auth/login", json={
             "email": TEST_ADMIN_EMAIL,
             "password": TEST_PASSWORD
         })
         assert response.status_code == 200
         data = response.json()
-        assert "access_token" in data
-        assert data["user"]["email"] == TEST_ADMIN_EMAIL
+        # test-admin holds super_admin (MFA-enforced). Depending on enrolment
+        # state this is either mfa_required=True, mfa_enrollment_required=True,
+        # or a straight access_token path.
+        if data.get("mfa_required"):
+            assert data["mfa_challenge_token"]
+        elif data.get("mfa_enrollment_required"):
+            assert data["mfa_pending_token"]
+            assert data["user"]["email"] == TEST_ADMIN_EMAIL
+        else:
+            assert "access_token" in data
+            assert data["user"]["email"] == TEST_ADMIN_EMAIL
     
     def test_login_invalid_password_returns_401(self, api_client):
         """Wrong password returns 401"""
@@ -575,18 +584,26 @@ class TestUnlock:
     """User unlock tests"""
     
     def test_super_admin_can_unlock_user(self, api_client, super_admin_token):
-        """super_admin can POST /api/users/{id}/unlock"""
+        """super_admin can POST /api/users/{id}/unlock on a locked user"""
         # Get a user
         users_response = api_client.get(
             f"{BASE_URL}/api/users",
             headers={"Authorization": f"Bearer {super_admin_token}"}
         )
         users = users_response.json()["items"]
-        test_user = next((u for u in users if u["email"] == TEST_ADMIN_EMAIL), None)
+        # Use test-readonly so we can lock it via 5 bad logins without MFA.
+        test_user = next((u for u in users if u["email"] == TEST_READONLY_EMAIL), None)
         if test_user is None:
-            pytest.skip("test-admin user not found")
-        
-        # Unlock (even if not locked, should succeed)
+            pytest.skip("test-readonly user not found")
+
+        # Trigger lockout: 5 failed logins
+        for _ in range(5):
+            api_client.post(
+                f"{BASE_URL}/api/auth/login",
+                json={"email": TEST_READONLY_EMAIL, "password": "wrong"},
+            )
+
+        # Unlock should succeed now
         response = api_client.post(
             f"{BASE_URL}/api/users/{test_user['id']}/unlock",
             headers={"Authorization": f"Bearer {super_admin_token}"}
