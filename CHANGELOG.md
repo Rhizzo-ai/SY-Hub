@@ -147,3 +147,38 @@ chats in the project.
 **Known gaps acceptable at this stage:**
 - No role/permission editing UI (use seed file + redeploy)
 - Invitations require manual token copy-paste until 1.3 wires email
+
+
+## Prompt 1.3 — Sessions, Login History, Invitations, SSO, API Keys (IN PROGRESS)
+
+Scope proved larger than a single Emergent build cycle. Staged delivery:
+
+**Stage 1 (this session):**
+- Session management (JWT access 15min + opaque refresh 30d/90d remember-me, rotation, replay detection)
+- Idle timeout (60 min)
+- Retroactive rewire of 1.2 auth to new token model
+- Login history table (append-only, 2+ year retention)
+- /profile/sessions, /users/:id/sessions, /users/:id/login-history UIs
+- Email infrastructure (EmailProvider abstraction + ConsoleEmailProvider default; SendGrid implementation wired but disabled without API key)
+- Password reset flow: self-service + admin-initiated
+- /forgot-password + /reset-password UIs
+- Geolocation via MaxMind GeoLite2 (fallback to NULL country if .mmdb absent)
+- In-process rate limiting on login + password reset endpoints
+- Fernet encryption key auto-generated on first boot
+
+**Deferred to Stage 2 (next session):**
+- Email-delivered invitations (Section E)
+- SSO: Google, Microsoft, Apple (Section G) — Microsoft primary test provider (SY Homes is M365-heavy)
+- API keys for service accounts (Section H)
+- Suspicious activity detection: new-country alerts, impossible travel (Section I)
+- /invitations, /api-keys, /profile/security/sso UIs
+
+**Deliberate deferrals (unchanged):**
+- HIBP breach check → Polish Pass
+- WebAuthn / FIDO2 → Phase 6
+- SMS/Email MFA → Prompt 1.7
+- IP allow-listing → Future Tasks
+- Manual lock button → 1.4
+- Role/permission management UI → Polish Pass
+
+- 
