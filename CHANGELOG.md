@@ -90,3 +90,27 @@ during build — log here, address in one focused polish pass.
   navy #1F2D3D (primary dark).
 - Select and apply production font stack.
 - Unified component styling pass across all 10 modules.
+
+
+### 2026-04-20 — Scope expansion decision: full company OS
+
+After completing Prompts 1.1 and 1.2, paused to clarify the long-term
+vision. Decision made: SY Hub is to become a full company operating
+system covering site operations (daily logs, clocking, chat, QA
+checklists, contractor/labourer portals), not only the financial-
+control platform the original 25-prompt brief described.
+
+Implications:
+- Build expands from 25 prompts to ~35-40 prompts
+- Realistic timeline: 10-14 months at 20-25 hours/week (was 4-6 months)
+- Realistic cost: £8-15k including possible designer + Xero developer
+- Foundation track (Prompts 1.3 through 1.7) continues as specced
+- Tracks 2-5 to be re-specced after Foundation complete
+- Commercial decision: build for SY Homes only, accept rebuild cost
+  if commercialised later (Rhizzo-ai)
+
+See SY_Hub_Scope_Expansion_Memo.md for full details.
+
+Project Instructions document also created (held in Claude Project,
+not in this repo) governing how Claude operates across all future
+chats in the project.
