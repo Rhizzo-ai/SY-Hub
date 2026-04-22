@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { ArrowLeft, ChevronRight, Download, Loader2 } from "lucide-react";
-import { api, API_BASE, getAuthToken } from "@/lib/api";
+import { api, API_BASE, authedFetch } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatDateTime } from "@/lib/format";
@@ -74,10 +74,9 @@ export default function AdminLoginHistory() {
     };
 
     const onExport = async () => {
-        // Fetch with auth header then trigger download — CSV endpoint is
-        // behind require_permission so cookies alone aren't enough.
-        const tok = getAuthToken();
-        const res = await fetch(exportUrl(), { headers: { Authorization: `Bearer ${tok}` } });
+        // Cookie-based fetch — the HttpOnly access_token cookie rides
+        // automatically with credentials:"include". No Authorization header.
+        const res = await authedFetch(exportUrl());
         const blob = await res.blob();
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
