@@ -1,0 +1,32 @@
+{
+  "summary": "Phase 1 Prompt 1.2 MFA Gap Closure — full end-to-end validation (backend + frontend). All 3 security gaps are closed and wired through: (1) disable MFA requires current_password, (2) regenerate backup codes requires password + current TOTP, (3) enforced-role users without MFA are hard-blocked at login via a short-lived mfa_pending token. 21/21 new backend tests pass. Forced-MFA gate UI, role name rendering, direct-URL bypass protection, logout buttons, and ProfileSecurity disable/regenerate modals all pass. mfa_enrolled_at column rename verified via information_schema.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": { "ui_bugs": [], "integration_issues": [], "design_issues": [] },
+  "test_report_links": [
+    "/app/backend/tests/test_mfa_gap_closure.py",
+    "/app/test_reports/pytest/pytest_mfa_gap.xml"
+  ],
+  "action_items": [
+    "Pre-existing tests /app/backend/tests/test_auth_rbac.py and /app/backend/tests/test_entities_api.py now fail because their fixtures log in as test-admin/test-director/test-finance and expect a normal access_token. Under the new hard-block these users receive an mfa_pending token (correct per spec) and calls to /api/entities return 401. These fixtures should be updated to either (a) enrol MFA first via pyotp before hitting protected endpoints, or (b) use non-enforced users (test-readonly / test-pm). This is a test-code regression only — the product behaviour is correct.",
+    "Optional: consider returning 403 (instead of 401) for mfa_pending tokens hitting non-whitelisted endpoints, since the caller IS authenticated — would disambiguate from expired/missing tokens on the client. (Low priority; spec allows 401/403.)"
+  ],
+  "critical_code_review_comments": [
+    "auth.py login: mfa_pending lifetime is 15 min — reasonable; cookie is also set for full access only, not for pending (correct, avoids accidental session persistence pre-enrolment).",
+    "auth.py mfa_enroll_confirm: on mfa_pending callers it correctly issues a full access token AND sets the httpOnly cookie — token swap complete.",
+    "mfa_disable clears mfa_enrolled_at (verified via DB SELECT). mfa_enroll_confirm stamps it (verified).",
+    "get_enrollment_principal correctly whitelists only access/mfa_pending token types; other types (mfa_challenge) → 401.",
+    "Seniority ordering uses roles.priority ASC; super_admin (priority 1) correctly surfaces as 'Super Administrator' for the gate text.",
+    "ForcedMfaEnroll.jsx: logout on intro and mid-setup both navigate cleanly to /login; QR data-URI renders and secret reveal element exists.",
+    "Direct URL navigation to /entities while on pending-gate is correctly kept on the gate (ProtectedRoute wrapping)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_mfa_gap_closure.py"
+  ],
+  "success_rate": { "backend": "100% (21/21 new gap-closure tests)", "frontend": "100% (8/8 UI flows validated)" },
+  "test_credentials": "See /app/memory/test_credentials.md — all test users use TestUser-Dev-2026!",
+  "seed_data_creation": "Ran python scripts/seed_test_users.py at start and end of the session (idempotent). Each test class resets target user's MFA state directly via SQL (_reset_user_mfa helper) so tests are hermetic.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "test_mfa_gap_closure.py is the authoritative regression for the Prompt 1.2 addendum. It covers login hard-block, pending-token gating, enrolment promotion, disable password-gate, regenerate password+TOTP-gate, and DB column rename. Run with: cd /app/backend && python -m pytest tests/test_mfa_gap_closure.py -v. The old test_auth_rbac.py / test_entities_api.py fixtures are stale re: enforced-role tokens and should be updated before re-running the full suite. ForcedMfaEnroll UI test uses data-testid selectors: forced-mfa-gate, forced-mfa-role, forced-mfa-setup-btn, forced-mfa-qr, forced-mfa-logout-btn, forced-mfa-logout-mid.",
+  "rca_of_the_issue": "N/A — no product bugs found. Only stale test-file regressions in test_auth_rbac.py / test_entities_api.py flagged as action item."
+}

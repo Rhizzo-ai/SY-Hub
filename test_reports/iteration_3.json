@@ -1,0 +1,105 @@
+{
+  "summary": "Completed comprehensive testing of SY Homes Prompt 1.2 (Users, Roles, Permissions). All 85 backend tests passed (32 auth/RBAC + 31 entities + 22 insurance alerts). Frontend login, navigation, Users/Roles/Permissions pages, entity scope filtering, and sensitive field stripping all working correctly.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "issue": "Entity model was missing created_by_user_id column definition (migration had it but model didn't)",
+        "resolution": "Added created_by_user_id field to /app/backend/app/models/entity.py"
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "LoginPage.jsx",
+        "issues": ["Console warning: Cannot update a component while rendering a different component - minor React warning, not affecting functionality"]
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_auth_rbac.py",
+    "/app/backend/tests/test_entities_api.py",
+    "/app/backend/tests/test_insurance_alerts.py",
+    "/app/test_reports/pytest/pytest_auth_rbac.xml",
+    "/app/test_reports/pytest/pytest_entities.xml",
+    "/app/test_reports/pytest/pytest_insurance.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Auth flow working correctly: login returns JWT, /me returns 87 permissions for super_admin",
+    "Unauthenticated requests to protected endpoints return 401",
+    "Archived user login returns 403 'Account archived'",
+    "10 roles seeded with correct permission counts (super_admin=87, director=84, project_manager=35, finance=29, read_only=7)",
+    "87 permissions registered across 24 resources",
+    "Entity scope filtering working: test-pm sees only Shrewsbury entity, test-director sees all 3",
+    "Sensitive field stripping working: test-readonly sees 'Restricted' placeholders for Banking/Xero sections",
+    "Role assignment with entity_scope='Specific' creates user_role + user_role_entities rows correctly",
+    "User invite returns one-time invitation_token",
+    "Logout clears session and redirects to login page"
+  ],
+  "updated_files": [
+    "/app/backend/app/models/entity.py",
+    "/app/backend/tests/test_auth_rbac.py",
+    "/app/backend/tests/test_entities_api.py"
+  ],
+  "success_rate": {
+    "backend": "100% (85/85 tests passed - 32 auth/RBAC + 31 entities + 22 insurance)",
+    "frontend": "100% (all manual tests passed)"
+  },
+  "test_credentials": "See /app/memory/test_credentials.md - test users use password TestUser-Dev-2026!, real super_admin is rhys@syhomes.co.uk",
+  "seed_data_creation": "Test users seeded via /app/backend/scripts/seed_test_users.py",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Backend tests in /app/backend/tests/ (test_auth_rbac.py, test_entities_api.py, test_insurance_alerts.py). All tests require authentication - use test-admin@example.test with password TestUser-Dev-2026!. Entity model now has created_by_user_id field. Alembic migration 0002_users_rbac adds RBAC tables. Test users are idempotently seeded by seed_test_users.py.",
+  "tests_executed": {
+    "backend_auth_rbac_tests": [
+      "POST /api/auth/login with super_admin returns access_token ✓",
+      "POST /api/auth/login with test-admin returns access_token ✓",
+      "POST /api/auth/login with wrong password returns 401 ✓",
+      "POST /api/auth/login with archived user returns 403 ✓",
+      "POST /api/auth/login with nonexistent user returns 401 ✓",
+      "GET /api/auth/me with super_admin returns is_super_admin=true, 87 permissions ✓",
+      "GET /api/auth/me without token returns 401 ✓",
+      "GET /api/entities without auth returns 401 ✓",
+      "GET /api/users without auth returns 401 ✓",
+      "GET /api/roles without auth returns 401 ✓",
+      "GET /api/roles returns 10 seeded roles with correct permission counts ✓",
+      "GET /api/permissions returns 87 permissions ✓",
+      "GET /api/users with super_admin returns user list ✓",
+      "GET /api/users/{id} returns user detail with roles ✓",
+      "POST /api/users (invite) returns invitation_token ✓",
+      "test-readonly cannot POST /api/users (403) ✓",
+      "test-pm sees only Shrewsbury entity (scope filtering) ✓",
+      "test-pm cannot access non-Shrewsbury entity (403) ✓",
+      "test-director sees all 3 entities ✓",
+      "test-readonly sees all 3 entities ✓",
+      "test-readonly cannot POST /api/entities (403) ✓",
+      "test-readonly GET entity has bank_name=null (sensitive stripped) ✓",
+      "test-finance can see sensitive fields ✓",
+      "POST /api/entities stores created_by_user_id ✓",
+      "POST /api/users/{id}/roles with entity_scope='Specific' creates assignment ✓",
+      "POST /api/users/{id}/unlock succeeds ✓",
+      "GET /api/health returns phase 1.2 ✓"
+    ],
+    "backend_entities_tests": [
+      "All 31 Prompt 1.1 entity tests pass with authentication ✓"
+    ],
+    "backend_insurance_tests": [
+      "All 22 insurance alert sweep tests pass ✓"
+    ],
+    "frontend_tests": [
+      "Login page renders correctly ✓",
+      "Invalid credentials show toast error ✓",
+      "Valid credentials redirect to /entities ✓",
+      "AppShell shows current user email in topbar ✓",
+      "Logout button works and redirects to login ✓",
+      "Users nav navigates to /users list ✓",
+      "Roles nav navigates to /roles, shows 10 roles ✓",
+      "Permissions nav shows 87 permissions grouped by resource ✓",
+      "Entity detail for readonly user shows 'Restricted' for Banking/Xero sections ✓"
+    ]
+  }
+}

@@ -1,0 +1,105 @@
+"""SY Homes Operations Platform — FastAPI entrypoint."""
+from __future__ import annotations
+
+import logging
+import os
+from contextlib import asynccontextmanager
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+ROOT_DIR = Path(__file__).parent
+load_dotenv(ROOT_DIR / ".env")
+
+from fastapi import APIRouter, FastAPI  # noqa: E402
+from starlette.middleware.cors import CORSMiddleware  # noqa: E402
+
+from alembic import command as alembic_command  # noqa: E402
+from alembic.config import Config as AlembicConfig  # noqa: E402
+
+from app.jobs.insurance_alerts import start_scheduler, stop_scheduler  # noqa: E402
+from app.jobs.role_expiry import start_role_expiry_scheduler, stop_role_expiry_scheduler  # noqa: E402
+from app.routers.auth import router as auth_router  # noqa: E402
+from app.routers.entities import router as entities_router  # noqa: E402
+from app.routers.login_history import router as login_history_router  # noqa: E402
+from app.routers.meta import router as meta_router  # noqa: E402
+from app.routers.roles import roles_router, perms_router  # noqa: E402
+from app.routers.sessions import router as sessions_router  # noqa: E402
+from app.routers.users import router as users_router  # noqa: E402
+from app.seed import seed  # noqa: E402
+from app.seed_rbac import seed_rbac  # noqa: E402
+from app import models  # noqa: F401, E402
+
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+)
+log = logging.getLogger("syhomes")
+
+
+def _run_migrations() -> None:
+    cfg = AlembicConfig(str(ROOT_DIR / "alembic.ini"))
+    cfg.set_main_option("script_location", str(ROOT_DIR / "alembic"))
+    cfg.set_main_option("sqlalchemy.url", os.environ["DATABASE_URL"])
+    alembic_command.upgrade(cfg, "head")
+    log.info("Alembic migrations up to date.")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    _run_migrations()
+    try:
+        seed()
+    except Exception:
+        log.exception("Tenant/entity seed failed")
+    try:
+        seed_rbac()
+    except Exception:
+        log.exception("RBAC seed failed")
+    start_scheduler()
+    start_role_expiry_scheduler()
+    try:
+        yield
+    finally:
+        stop_scheduler()
+        stop_role_expiry_scheduler()
+
+
+app = FastAPI(
+    title="SY Homes Operations Platform",
+    version="0.2.0-phase1-prompt1.2",
+    lifespan=lifespan,
+)
+
+api_router = APIRouter(prefix="/api")
+
+
+@api_router.get("/health")
+def health():
+    return {"status": "ok", "module": "users+rbac", "phase": "1.2"}
+
+
+@api_router.get("/")
+def root():
+    return {"service": "SY Homes Operations Platform", "phase": "1.2-users"}
+
+
+api_router.include_router(auth_router)
+api_router.include_router(users_router)
+api_router.include_router(sessions_router)
+api_router.include_router(login_history_router)
+api_router.include_router(roles_router)
+api_router.include_router(perms_router)
+api_router.include_router(entities_router)
+api_router.include_router(meta_router)
+
+app.include_router(api_router)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_credentials=True,
+    allow_origins=os.environ.get("CORS_ORIGINS", "*").split(","),
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
