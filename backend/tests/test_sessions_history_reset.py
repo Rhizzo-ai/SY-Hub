@@ -1,6 +1,9 @@
 """Backend tests for sessions + refresh tokens + login history + password reset.
 
-Prompt 1.3 stage 1b.
+Prompt 1.3 stage 1b, migrated to cookies-only transport (audit remediation C1).
+Sessions are represented by `requests.Session` objects whose cookie jars
+carry `access_token` + `refresh_token`. Raw token strings are read via
+`session.cookies.get(...)` when a test needs to hash them for DB lookups.
 """
 from __future__ import annotations
 
@@ -14,7 +17,7 @@ import requests
 from dotenv import load_dotenv
 from sqlalchemy import create_engine, text
 
-from tests.conftest import login_with_auto_enroll
+from tests.conftest import login_with_auto_enroll, plain_login
 
 
 BASE_URL = (
@@ -30,31 +33,53 @@ engine = create_engine(os.environ["DATABASE_URL"])
 
 
 @pytest.fixture(scope="module")
-def api_client():
+def anon_client():
+    """Shared unauthenticated client — used for calls that don't need a session."""
     s = requests.Session()
     s.headers.update({"Content-Type": "application/json"})
     return s
 
 
-def _login_readonly(api_client, remember_me=False):
-    r = api_client.post(
-        f"{BASE_URL}/api/auth/login",
-        json={"email": READONLY_EMAIL, "password": TEST_PASSWORD, "remember_me": remember_me},
-    )
-    assert r.status_code == 200, r.text
-    return r.json()
+# Kept as a fixture for backward compat with test_entities_api etc. that import
+# api_client from this module. Not used here.
+@pytest.fixture(scope="module")
+def api_client(anon_client):
+    return anon_client
+
+
+def _login_readonly(remember_me: bool = False):
+    """Log in as test-readonly under the cookies contract.
+
+    Returns a dict shaped like:
+      {
+        "client": requests.Session,   # cookies set
+        "access_token": str,          # raw JWT (for hash lookups)
+        "refresh_token": str,         # raw token (for hash lookups)
+        "body": dict,                 # login response metadata
+      }
+    """
+    s = plain_login(BASE_URL, READONLY_EMAIL, TEST_PASSWORD, remember_me=remember_me)
+    return {
+        "client": s,
+        "access_token": s.cookies.get("access_token"),
+        "refresh_token": s.cookies.get("refresh_token"),
+        "body": s.login_body,
+    }
 
 
 class TestLoginIssuesSession:
-    def test_login_returns_access_and_refresh_tokens(self, api_client):
-        d = _login_readonly(api_client)
-        assert d["access_token"]
-        assert d["refresh_token"]
-        assert d["token_type"] == "bearer"
-        assert d["access_token_expires_in"] == 900  # 15 min
+    def test_login_sets_access_and_refresh_cookies(self):
+        d = _login_readonly()
+        assert d["access_token"], "access_token cookie not set"
+        assert d["refresh_token"], "refresh_token cookie not set"
+        assert d["body"]["token_type"] == "bearer"
+        assert d["body"]["access_token_expires_in"] == 900  # 15 min
+        # Audit C1: no tokens in JSON body.
+        assert "access_token" not in d["body"]
+        assert "refresh_token" not in d["body"]
 
-    def test_session_row_created_with_hashed_refresh(self, api_client):
-        d = _login_readonly(api_client)
+    def test_session_row_created_with_hashed_refresh(self):
+        d = _login_readonly()
         refresh_hash = hashlib.sha256(d["refresh_token"].encode()).hexdigest()
         with engine.connect() as c:
             row = c.execute(
@@ -66,8 +91,8 @@ class TestLoginIssuesSession:
         assert row[1]  # device_name populated from UA
         assert row[2] is False
 
-    def test_remember_me_extends_expiry_to_90d(self, api_client):
-        d = _login_readonly(api_client, remember_me=True)
+    def test_remember_me_extends_expiry_to_90d(self):
+        d = _login_readonly(remember_me=True)
         refresh_hash = hashlib.sha256(d["refresh_token"].encode()).hexdigest()
         with engine.connect() as c:
             row = c.execute(
@@ -80,46 +105,55 @@ class TestLoginIssuesSession:
 
 
 class TestRefreshRotation:
-    def test_refresh_rotates_token(self, api_client):
-        d = _login_readonly(api_client)
-        r = api_client.post(f"{BASE_URL}/api/auth/refresh",
-                            json={"refresh_token": d["refresh_token"]})
-        assert r.status_code == 200
-        d2 = r.json()
-        assert d2["access_token"]
-        assert d2["refresh_token"]
-        assert d2["refresh_token"] != d["refresh_token"]
+    def test_refresh_rotates_cookie(self):
+        d = _login_readonly()
+        old_refresh = d["refresh_token"]
+        r = d["client"].post(f"{BASE_URL}/api/auth/refresh")
+        assert r.status_code == 204, r.text
+        # Cookie jar now carries the rotated tokens.
+        new_refresh = d["client"].cookies.get("refresh_token")
+        new_access = d["client"].cookies.get("access_token")
+        assert new_refresh and new_refresh != old_refresh
+        assert new_access
 
-    def test_old_refresh_after_rotate_is_replay(self, api_client):
-        d = _login_readonly(api_client)
-        # First rotate
-        r = api_client.post(f"{BASE_URL}/api/auth/refresh",
-                            json={"refresh_token": d["refresh_token"]})
-        assert r.status_code == 200
-        new_access = r.json()["access_token"]
-        # Replay old refresh → should revoke ALL sessions
-        r2 = api_client.post(f"{BASE_URL}/api/auth/refresh",
-                             json={"refresh_token": d["refresh_token"]})
+    def test_old_refresh_after_rotate_is_replay(self):
+        d = _login_readonly()
+        old_refresh = d["refresh_token"]
+        # First rotate — success.
+        r = d["client"].post(f"{BASE_URL}/api/auth/refresh")
+        assert r.status_code == 204
+        # Copy the post-rotation access cookie so we can assert it dies too.
+        rotated_access = d["client"].cookies.get("access_token")
+        # Replay the OLD refresh on a separate client to simulate a stolen token.
+        attacker = requests.Session()
+        attacker.headers.update({"Content-Type": "application/json"})
+        attacker.cookies.set("refresh_token", old_refresh)
+        r2 = attacker.post(f"{BASE_URL}/api/auth/refresh")
         assert r2.status_code == 401
         assert "replay" in r2.json()["detail"].lower()
-        # The new access should ALSO now fail (session revoked)
-        r3 = api_client.get(f"{BASE_URL}/api/auth/me",
-                            headers={"Authorization": f"Bearer {new_access}"})
-        assert r3.status_code == 401
+        # The rotated access should ALSO now fail (session revoked).
+        r3 = d["client"].get(f"{BASE_URL}/api/auth/me")
+        assert r3.status_code == 401, (
+            f"Expected rotated access_token to be revoked, got {r3.status_code}"
+        )
 
-    def test_invalid_refresh_returns_401(self, api_client):
-        r = api_client.post(f"{BASE_URL}/api/auth/refresh",
-                            json={"refresh_token": "not-a-real-token-xxxxxxxxxxxxxx"})
+    def test_missing_refresh_cookie_returns_401(self, anon_client):
+        r = anon_client.post(f"{BASE_URL}/api/auth/refresh")
+        assert r.status_code == 401
+
+    def test_invalid_refresh_cookie_returns_401(self):
+        s = requests.Session()
+        s.headers.update({"Content-Type": "application/json"})
+        s.cookies.set("refresh_token", "not-a-real-token-xxxxxxxxxxxxxx")
+        r = s.post(f"{BASE_URL}/api/auth/refresh")
         assert r.status_code == 401
 
 
 class TestLogoutRevokesSession:
-    def test_logout_clears_cookies_and_revokes(self, api_client):
-        d = _login_readonly(api_client)
+    def test_logout_clears_cookies_and_revokes(self):
+        d = _login_readonly()
         refresh_hash = hashlib.sha256(d["refresh_token"].encode()).hexdigest()
-        s = requests.Session()
-        s.cookies.set("refresh_token", d["refresh_token"])
-        r = s.post(f"{BASE_URL}/api/auth/logout")
+        r = d["client"].post(f"{BASE_URL}/api/auth/logout")
         assert r.status_code == 204
         with engine.connect() as c:
             row = c.execute(
@@ -131,31 +165,29 @@ class TestLogoutRevokesSession:
 
 
 class TestPasswordChangeRevokesOthers:
-    def test_password_change_revokes_other_sessions(self, api_client):
-        # Session A
-        a = _login_readonly(api_client)
-        # Session B (fresh login)
-        b = _login_readonly(api_client)
+    def test_password_change_revokes_other_sessions(self):
+        # Two independent sessions for the same user.
+        a = _login_readonly()
+        b = _login_readonly()
         assert a["refresh_token"] != b["refresh_token"]
 
-        # Change password from session B
+        # Change password from session B.
         new_pw = "NewPwd-Change-Revokes-2026!"
-        r = api_client.post(f"{BASE_URL}/api/auth/password/change",
-                            json={"current_password": TEST_PASSWORD, "new_password": new_pw},
-                            headers={"Authorization": f"Bearer {b['access_token']}"})
+        r = b["client"].post(
+            f"{BASE_URL}/api/auth/password/change",
+            json={"current_password": TEST_PASSWORD, "new_password": new_pw},
+        )
         assert r.status_code == 204
 
-        # Session A is now revoked; /me should 401
-        r2 = api_client.get(f"{BASE_URL}/api/auth/me",
-                            headers={"Authorization": f"Bearer {a['access_token']}"})
+        # Session A is now revoked; /me should 401.
+        r2 = a["client"].get(f"{BASE_URL}/api/auth/me")
         assert r2.status_code == 401
 
-        # Session B survives (current session kept alive per spec)
-        r3 = api_client.get(f"{BASE_URL}/api/auth/me",
-                            headers={"Authorization": f"Bearer {b['access_token']}"})
+        # Session B survives (current session kept alive per spec).
+        r3 = b["client"].get(f"{BASE_URL}/api/auth/me")
         assert r3.status_code == 200
 
-        # Restore original password via DB
+        # Restore original password via DB.
         with engine.begin() as c:
             from app.auth.passwords import hash_password
             c.execute(
@@ -166,9 +198,9 @@ class TestPasswordChangeRevokesOthers:
 
 
 class TestLoginHistoryRecords:
-    def test_login_failed_creates_row_without_user_id(self, api_client):
-        api_client.post(f"{BASE_URL}/api/auth/login",
-                        json={"email": "nobody-xyz-123@example.test", "password": "x"})
+    def test_login_failed_creates_row_without_user_id(self, anon_client):
+        anon_client.post(f"{BASE_URL}/api/auth/login",
+                         json={"email": "nobody-xyz-123@example.test", "password": "x"})
         with engine.connect() as c:
             r = c.execute(
                 text("SELECT user_id, failure_reason, event_type FROM user_login_history "
@@ -180,15 +212,14 @@ class TestLoginHistoryRecords:
         assert r[1] == "Unknown_Email"
         assert r[2] == "Login_Failed"
 
-    def test_login_success_creates_row(self, api_client):
+    def test_login_success_creates_row(self):
         before = _count_history(READONLY_EMAIL, "Login_Success")
-        _login_readonly(api_client)
+        _login_readonly()
         after = _count_history(READONLY_EMAIL, "Login_Success")
         assert after == before + 1
 
     def test_login_history_append_only(self):
         with engine.begin() as c:
-            # UPDATE should raise
             with pytest.raises(Exception) as exc:
                 c.execute(text("UPDATE user_login_history SET event_type='Login_Failed' "
                                "WHERE id = (SELECT id FROM user_login_history LIMIT 1)"))
@@ -211,125 +242,96 @@ def _count_history(email: str, event_type: str) -> int:
 
 
 class TestSessionEndpoints:
-    def test_list_my_sessions_marks_current(self, api_client):
-        d = _login_readonly(api_client)
-        r = api_client.get(f"{BASE_URL}/api/users/me/sessions",
-                           headers={"Authorization": f"Bearer {d['access_token']}"})
+    def test_list_my_sessions_marks_current(self):
+        d = _login_readonly()
+        r = d["client"].get(f"{BASE_URL}/api/users/me/sessions")
         assert r.status_code == 200
         rows = r.json()
         assert len(rows) >= 1
-        current = [r for r in rows if r["is_current"]]
+        current = [row for row in rows if row["is_current"]]
         assert len(current) == 1
 
-    def test_revoke_other_session(self, api_client):
-        a = _login_readonly(api_client)
-        b = _login_readonly(api_client)
-        # List from B
-        rows = api_client.get(
-            f"{BASE_URL}/api/users/me/sessions",
-            headers={"Authorization": f"Bearer {b['access_token']}"},
-        ).json()
-        a_session = [r for r in rows if not r["is_current"] and r["revoked_at"] is None]
+    def test_revoke_other_session(self):
+        a = _login_readonly()
+        b = _login_readonly()
+        # List from B.
+        rows = b["client"].get(f"{BASE_URL}/api/users/me/sessions").json()
+        a_session = [row for row in rows if not row["is_current"] and row["revoked_at"] is None]
         assert a_session, "Expected a session belonging to login A"
         target = a_session[0]
-        r = api_client.post(
-            f"{BASE_URL}/api/users/me/sessions/{target['id']}/revoke",
-            headers={"Authorization": f"Bearer {b['access_token']}"},
-        )
+        r = b["client"].post(f"{BASE_URL}/api/users/me/sessions/{target['id']}/revoke")
         assert r.status_code == 204
-        # A token is now invalid
-        r2 = api_client.get(f"{BASE_URL}/api/auth/me",
-                            headers={"Authorization": f"Bearer {a['access_token']}"})
+        # A's access is now invalid.
+        r2 = a["client"].get(f"{BASE_URL}/api/auth/me")
         assert r2.status_code == 401
 
-    def test_revoke_others_keeps_current(self, api_client):
-        a = _login_readonly(api_client)
-        b = _login_readonly(api_client)
-        # From B, revoke others
-        r = api_client.post(f"{BASE_URL}/api/users/me/sessions/revoke-others",
-                            headers={"Authorization": f"Bearer {b['access_token']}"})
+    def test_revoke_others_keeps_current(self):
+        a = _login_readonly()
+        b = _login_readonly()
+        r = b["client"].post(f"{BASE_URL}/api/users/me/sessions/revoke-others")
         assert r.status_code == 204
-        # Current (B) still works
-        assert api_client.get(f"{BASE_URL}/api/auth/me",
-                              headers={"Authorization": f"Bearer {b['access_token']}"}).status_code == 200
-        # Older (A) is dead
-        assert api_client.get(f"{BASE_URL}/api/auth/me",
-                              headers={"Authorization": f"Bearer {a['access_token']}"}).status_code == 401
+        # Current (B) still works.
+        assert b["client"].get(f"{BASE_URL}/api/auth/me").status_code == 200
+        # Older (A) is dead.
+        assert a["client"].get(f"{BASE_URL}/api/auth/me").status_code == 401
 
-    def test_admin_revoke_all(self, api_client):
-        # Ensure readonly has at least one active session
-        _login_readonly(api_client)
-        admin = login_with_auto_enroll(api_client, BASE_URL, ADMIN_EMAIL, TEST_PASSWORD)
-        # Find readonly id
-        lst = api_client.get(f"{BASE_URL}/api/users",
-                             headers={"Authorization": f"Bearer {admin}"}).json()
+    def test_admin_revoke_all(self, anon_client):
+        # Ensure readonly has at least one active session.
+        _login_readonly()
+        admin = login_with_auto_enroll(None, BASE_URL, ADMIN_EMAIL, TEST_PASSWORD)
+        lst = admin.get(f"{BASE_URL}/api/users").json()
         ro = next(u for u in lst["items"] if u["email"] == READONLY_EMAIL)
-        r = api_client.post(f"{BASE_URL}/api/users/{ro['id']}/sessions/revoke-all",
-                            headers={"Authorization": f"Bearer {admin}"})
+        r = admin.post(f"{BASE_URL}/api/users/{ro['id']}/sessions/revoke-all")
         assert r.status_code == 204
-        # Confirm all readonly sessions now revoked
-        sess = api_client.get(f"{BASE_URL}/api/users/{ro['id']}/sessions",
-                              headers={"Authorization": f"Bearer {admin}"}).json()
+        # Confirm all readonly sessions now revoked.
+        sess = admin.get(f"{BASE_URL}/api/users/{ro['id']}/sessions").json()
         active = [s for s in sess if s["revoked_at"] is None]
         assert active == []
 
 
 class TestLoginHistoryAdminView:
-    def test_admin_can_list_history(self, api_client):
-        admin = login_with_auto_enroll(api_client, BASE_URL, ADMIN_EMAIL, TEST_PASSWORD)
-        lst = api_client.get(f"{BASE_URL}/api/users",
-                             headers={"Authorization": f"Bearer {admin}"}).json()
+    def test_admin_can_list_history(self):
+        admin = login_with_auto_enroll(None, BASE_URL, ADMIN_EMAIL, TEST_PASSWORD)
+        lst = admin.get(f"{BASE_URL}/api/users").json()
         ro = next(u for u in lst["items"] if u["email"] == READONLY_EMAIL)
-        r = api_client.get(
-            f"{BASE_URL}/api/users/{ro['id']}/login-history?page_size=20",
-            headers={"Authorization": f"Bearer {admin}"},
-        )
+        r = admin.get(f"{BASE_URL}/api/users/{ro['id']}/login-history?page_size=20")
         assert r.status_code == 200
         j = r.json()
         assert "items" in j and "total" in j
         assert j["total"] >= 1
 
-    def test_non_admin_forbidden(self, api_client):
-        d = _login_readonly(api_client)
-        lst = api_client.get(f"{BASE_URL}/api/users",
-                             headers={"Authorization": f"Bearer {d['access_token']}"})
-        # Readonly may or may not be able to GET /users — what matters is the
-        # history endpoint itself requires users.admin.
-        # Use own id regardless.
-        me = api_client.get(f"{BASE_URL}/api/auth/me",
-                            headers={"Authorization": f"Bearer {d['access_token']}"}).json()
-        r = api_client.get(f"{BASE_URL}/api/users/{me['id']}/login-history",
-                           headers={"Authorization": f"Bearer {d['access_token']}"})
+    def test_non_admin_forbidden(self):
+        d = _login_readonly()
+        me = d["client"].get(f"{BASE_URL}/api/auth/me").json()
+        r = d["client"].get(f"{BASE_URL}/api/users/{me['id']}/login-history")
         assert r.status_code == 403
 
-    def test_csv_export_downloads(self, api_client):
-        admin = login_with_auto_enroll(api_client, BASE_URL, ADMIN_EMAIL, TEST_PASSWORD)
-        lst = api_client.get(f"{BASE_URL}/api/users",
-                             headers={"Authorization": f"Bearer {admin}"}).json()
+    def test_csv_export_downloads(self):
+        admin = login_with_auto_enroll(None, BASE_URL, ADMIN_EMAIL, TEST_PASSWORD)
+        lst = admin.get(f"{BASE_URL}/api/users").json()
         ro = next(u for u in lst["items"] if u["email"] == READONLY_EMAIL)
-        r = api_client.get(f"{BASE_URL}/api/users/{ro['id']}/login-history.csv",
-                           headers={"Authorization": f"Bearer {admin}"})
+        r = admin.get(f"{BASE_URL}/api/users/{ro['id']}/login-history.csv")
         assert r.status_code == 200
         assert r.headers["content-type"].startswith("text/csv")
         assert "timestamp_utc,event_type" in r.text
 
 
 class TestPasswordResetSelfService:
-    def test_request_returns_200_for_unknown_email(self, api_client):
-        r = api_client.post(f"{BASE_URL}/api/auth/password-reset/request",
-                            json={"email": "nobody@example.test"})
+    def test_request_returns_200_for_unknown_email(self, anon_client):
+        r = anon_client.post(f"{BASE_URL}/api/auth/password-reset/request",
+                             json={"email": "nobody@example.test"})
         assert r.status_code == 200
         assert r.json() == {"ok": True}
 
-    def test_request_returns_200_for_known_email(self, api_client):
-        r = api_client.post(f"{BASE_URL}/api/auth/password-reset/request",
-                            json={"email": READONLY_EMAIL})
+    def test_request_returns_200_for_known_email(self, anon_client):
+        r = anon_client.post(f"{BASE_URL}/api/auth/password-reset/request",
+                             json={"email": READONLY_EMAIL})
         assert r.status_code == 200
 
-    def test_complete_valid_token_resets_password_and_revokes_sessions(self, api_client):
-        # Log in to have a live session
-        session_tok = _login_readonly(api_client)["access_token"]
-        # Seed a known reset token via DB
+    def test_complete_valid_token_resets_password_and_revokes_sessions(self, anon_client):
+        # Log in to have a live session.
+        live = _login_readonly()
+        # Seed a known reset token via DB.
         raw = secrets.token_urlsafe(32)
         th = hashlib.sha256(raw.encode()).hexdigest()
         with engine.begin() as c:
@@ -340,18 +342,17 @@ class TestPasswordResetSelfService:
                  "em": READONLY_EMAIL},
             )
         new_pw = "Reset-Complete-TestPw-2026!"
-        r = api_client.post(f"{BASE_URL}/api/auth/password-reset/complete",
-                            json={"token": raw, "new_password": new_pw})
+        r = anon_client.post(f"{BASE_URL}/api/auth/password-reset/complete",
+                             json={"token": raw, "new_password": new_pw})
         assert r.status_code == 204
-        # Existing session dead
-        r2 = api_client.get(f"{BASE_URL}/api/auth/me",
-                            headers={"Authorization": f"Bearer {session_tok}"})
+        # Existing session dead.
+        r2 = live["client"].get(f"{BASE_URL}/api/auth/me")
         assert r2.status_code == 401
-        # New pw works
-        r3 = api_client.post(f"{BASE_URL}/api/auth/login",
-                             json={"email": READONLY_EMAIL, "password": new_pw})
+        # New pw works.
+        r3 = anon_client.post(f"{BASE_URL}/api/auth/login",
+                              json={"email": READONLY_EMAIL, "password": new_pw})
         assert r3.status_code == 200
-        # Restore for other tests
+        # Restore for other tests.
         from app.auth.passwords import hash_password
         with engine.begin() as c:
             c.execute(
@@ -360,7 +361,7 @@ class TestPasswordResetSelfService:
                 {"h": hash_password(TEST_PASSWORD), "em": READONLY_EMAIL},
             )
 
-    def test_expired_token_rejected(self, api_client):
+    def test_expired_token_rejected(self, anon_client):
         raw = secrets.token_urlsafe(32)
         th = hashlib.sha256(raw.encode()).hexdigest()
         with engine.begin() as c:
@@ -370,12 +371,12 @@ class TestPasswordResetSelfService:
                 {"h": th, "exp": datetime.now(timezone.utc) - timedelta(minutes=5),
                  "em": READONLY_EMAIL},
             )
-        r = api_client.post(f"{BASE_URL}/api/auth/password-reset/complete",
-                            json={"token": raw, "new_password": "Valid-NewPw-2026!"})
+        r = anon_client.post(f"{BASE_URL}/api/auth/password-reset/complete",
+                             json={"token": raw, "new_password": "Valid-NewPw-2026!"})
         assert r.status_code == 400
         assert "expired" in r.json()["detail"].lower()
 
-    def test_used_token_rejected_second_time(self, api_client):
+    def test_used_token_rejected_second_time(self, anon_client):
         raw = secrets.token_urlsafe(32)
         th = hashlib.sha256(raw.encode()).hexdigest()
         with engine.begin() as c:
@@ -385,14 +386,14 @@ class TestPasswordResetSelfService:
                 {"h": th, "exp": datetime.now(timezone.utc) + timedelta(hours=1),
                  "em": READONLY_EMAIL},
             )
-        r = api_client.post(f"{BASE_URL}/api/auth/password-reset/complete",
-                            json={"token": raw, "new_password": "Valid-NewPw-2026-X!"})
+        r = anon_client.post(f"{BASE_URL}/api/auth/password-reset/complete",
+                             json={"token": raw, "new_password": "Valid-NewPw-2026-X!"})
         assert r.status_code == 204
-        # Second attempt
-        r2 = api_client.post(f"{BASE_URL}/api/auth/password-reset/complete",
-                             json={"token": raw, "new_password": "Different-NewPw-2026-Y!"})
+        # Second attempt.
+        r2 = anon_client.post(f"{BASE_URL}/api/auth/password-reset/complete",
+                              json={"token": raw, "new_password": "Different-NewPw-2026-Y!"})
         assert r2.status_code == 400
-        # Restore
+        # Restore.
         from app.auth.passwords import hash_password
         with engine.begin() as c:
             c.execute(
@@ -401,7 +402,7 @@ class TestPasswordResetSelfService:
                 {"h": hash_password(TEST_PASSWORD), "em": READONLY_EMAIL},
             )
 
-    def test_complete_weak_password_rejected(self, api_client):
+    def test_complete_weak_password_rejected(self, anon_client):
         raw = secrets.token_urlsafe(32)
         th = hashlib.sha256(raw.encode()).hexdigest()
         with engine.begin() as c:
@@ -411,15 +412,15 @@ class TestPasswordResetSelfService:
                 {"h": th, "exp": datetime.now(timezone.utc) + timedelta(hours=1),
                  "em": READONLY_EMAIL},
             )
-        r = api_client.post(f"{BASE_URL}/api/auth/password-reset/complete",
-                            json={"token": raw, "new_password": "too-weak"})
+        r = anon_client.post(f"{BASE_URL}/api/auth/password-reset/complete",
+                             json={"token": raw, "new_password": "too-weak"})
         assert r.status_code == 422
 
 
 class TestEmailSendLog:
-    def test_password_reset_request_logs_email(self, api_client):
-        api_client.post(f"{BASE_URL}/api/auth/password-reset/request",
-                        json={"email": READONLY_EMAIL})
+    def test_password_reset_request_logs_email(self, anon_client):
+        anon_client.post(f"{BASE_URL}/api/auth/password-reset/request",
+                         json={"email": READONLY_EMAIL})
         with engine.connect() as c:
             row = c.execute(
                 text("SELECT template_id, status FROM email_send_log "

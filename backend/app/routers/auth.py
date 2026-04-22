@@ -88,12 +88,18 @@ class LoginResponse(BaseModel):
 
     The body carries the metadata the frontend needs to hydrate
     AuthContext without a follow-up `GET /auth/me`.
+
+    Exception: `mfa_challenge_token` is NOT a session-bearing access token.
+    It is a short-lived (5-min) opaque artifact whose sole purpose is to
+    identify the half-authenticated flow on the next /mfa/verify call.
+    The /mfa/verify endpoint is unauthenticated (no cookie yet) and must
+    receive the challenge id in the body — this is standard for MFA
+    hand-off and is out of scope for C1 (no access/refresh leak).
     """
     token_type: str = "bearer"
     mfa_required: bool = False
     mfa_challenge_token: Optional[str] = None
     mfa_enrollment_required: bool = False
-    mfa_pending_token: Optional[str] = None
     enforced_role_name: Optional[str] = None
     user: Optional[dict] = None
     access_token_expires_in: int = ACCESS_TOKEN_MINUTES * 60
@@ -117,9 +123,14 @@ class MfaEnrollConfirmRequest(BaseModel):
 
 
 class MfaEnrollConfirmResponse(BaseModel):
+    """Cookies-only transport: a successful enrolment from a `mfa_pending`
+    token sets the full `access_token` + `refresh_token` cookies on the way
+    out (see _set_cookies below). The body carries only the backup codes
+    and a boolean indicating that a full session was issued — never the
+    tokens themselves (audit remediation C1).
+    """
     backup_codes: list[str]
-    access_token: Optional[str] = None
-    refresh_token: Optional[str] = None
+    session_issued: bool = False
 
 
 class MfaDisableRequest(BaseModel):
@@ -141,9 +152,11 @@ class PasswordChangeRequest(BaseModel):
 
 
 class RefreshRequest(BaseModel):
-    """Kept for backward compatibility but ignored — the refresh token is
-    read from the httpOnly cookie set at login. Clients that still send a
-    body will get their body silently dropped.
+    """Cookies-only: refresh token is read from the httpOnly cookie.
+    Bodies are ignored; kept as an empty model so clients sending a stale
+    `{"refresh_token": "..."}` payload don't get a 422 from Pydantic.
+
+    Any extra fields are silently discarded (Pydantic default extra='ignore').
     """
     pass
 
@@ -392,10 +405,9 @@ def login(
             token_type="mfa_pending", lifetime_minutes=MFA_PENDING_LIFETIME_MINUTES,
         )
         db.commit()
+        _set_pending_cookie(response, pending)
         return LoginResponse(
-            access_token=pending,
             mfa_enrollment_required=True,
-            mfa_pending_token=pending,
             enforced_role_name=enforced_role.name,
             user=_serialise_user_public(user),
         )
@@ -417,8 +429,7 @@ def login(
               session_id=session.id, ip=ip, user_agent=ua)
     db.commit()
     _set_cookies(response, access, refresh, payload.remember_me)
-    return LoginResponse(access_token=access, refresh_token=refresh,
-                        user=_serialise_user_public(user))
+    return LoginResponse(user=_serialise_user_public(user))
 
 
 @router.post("/mfa/verify", response_model=LoginResponse)
@@ -480,8 +491,7 @@ def mfa_verify(
               metadata={"mfa": "totp" if not payload.use_backup_code else "backup_code"})
     db.commit()
     _set_cookies(response, access, refresh, payload.remember_me)
-    return LoginResponse(access_token=access, refresh_token=refresh,
-                        user=_serialise_user_public(user))
+    return LoginResponse(user=_serialise_user_public(user))
 
 
 @router.post("/mfa/enroll/start", response_model=MfaEnrollStartResponse)
@@ -519,6 +529,7 @@ def mfa_enroll_confirm(
 
     access_token = None
     refresh_token = None
+    session_issued = False
     if principal.token_type == "mfa_pending":
         session, access_token, refresh_token = create_session(
             db, user_id=current.id, email=current.email, tenant_id=current.tenant_id,
@@ -528,10 +539,11 @@ def mfa_enroll_confirm(
                   user_id=current.id, session_id=session.id, ip=ip, user_agent=ua,
                   metadata={"via": "mfa_enrolment"})
         _set_cookies(response, access_token, refresh_token, remember_me=False)
+        session_issued = True
 
     db.commit()
     return MfaEnrollConfirmResponse(
-        backup_codes=codes, access_token=access_token, refresh_token=refresh_token,
+        backup_codes=codes, session_issued=session_issued,
     )
 
 
@@ -619,19 +631,27 @@ def password_change(
     db.commit()
 
 
-@router.post("/refresh", response_model=RefreshResponse)
+@router.post("/refresh", status_code=204)
 def refresh(
-    payload: RefreshRequest,
     request: Request,
     response: Response,
     db: Session = Depends(get_db),
 ):
-    """Rotate refresh token. Replay detection: if the presented hash matches a
-    session whose refresh was already rotated, revoke ALL sessions for the user.
+    """Rotate refresh token. Reads refresh-token from the httpOnly cookie
+    (audit remediation C1 — no body transport). Replay detection: if the
+    presented hash matches a session whose refresh was already rotated,
+    revoke ALL sessions for the user.
     """
     ip = _client_ip(request)
     ua = _ua(request)
-    presented_hash = hash_refresh(payload.refresh_token)
+    presented = request.cookies.get("refresh_token")
+    if not presented:
+        log_event(db, event_type="Refresh_Failed", email_attempted="",
+                  ip=ip, user_agent=ua, failure_reason="Refresh_Token_Invalid",
+                  metadata={"reason": "no_cookie"})
+        db.commit()
+        raise HTTPException(status_code=401, detail="Missing refresh cookie")
+    presented_hash = hash_refresh(presented)
 
     # Normal rotation path
     session = db.scalar(
@@ -699,7 +719,6 @@ def refresh(
               user_id=user.id, session_id=session.id, ip=ip, user_agent=ua)
     db.commit()
     _set_cookies(response, access, raw_refresh, remember_me=session.remember_me)
-    return RefreshResponse(access_token=access, refresh_token=raw_refresh)
 
 
 @router.post("/logout", status_code=204)

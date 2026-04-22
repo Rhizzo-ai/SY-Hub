@@ -1,14 +1,14 @@
 """Backend tests for password complexity rules (Prompt 1.2 close-out patch).
 
-Covers: policy endpoint, each complexity rule (length, uppercase, lowercase,
-number, symbol) rejects weak, accepts strong. Uses a non-enforced role
-(test-readonly) so the token path is clean.
+Migrated to cookies-only transport (audit remediation C1 — Feb 2026).
 """
 from __future__ import annotations
 
 import os
 import pytest
 import requests
+
+from tests.conftest import plain_login, login_with_auto_enroll
 
 
 BASE_URL = (
@@ -17,41 +17,32 @@ BASE_URL = (
 )
 
 READONLY_EMAIL = "test-readonly@example.test"
-DEFAULT_PASSWORD = "TestUser-Dev-2026!"  # deterministic seed password
-# Must be policy-compliant (12+, mixed, digit, symbol):
-TEMP_STRONG = "TempDev-Password-Change-2026!"
+ADMIN_EMAIL = "test-admin@example.test"
+DEFAULT_PASSWORD = "TestUser-Dev-2026!"
 
 
 @pytest.fixture(scope="module")
-def api_client():
+def anon_client():
     s = requests.Session()
     s.headers.update({"Content-Type": "application/json"})
     return s
 
 
 @pytest.fixture(scope="module")
-def readonly_token(api_client):
-    """Login as test-readonly (no MFA enforcement) → plain access token."""
-    r = api_client.post(
-        f"{BASE_URL}/api/auth/login",
-        json={"email": READONLY_EMAIL, "password": DEFAULT_PASSWORD},
-    )
-    if r.status_code != 200:
-        pytest.skip(f"Login failed: {r.text}")
-    return r.json()["access_token"]
+def readonly(anon_client):
+    return plain_login(BASE_URL, READONLY_EMAIL, DEFAULT_PASSWORD)
 
 
-def _try_change(api_client, token, current, new):
-    return api_client.post(
+def _try_change(session, current, new):
+    return session.post(
         f"{BASE_URL}/api/auth/password/change",
         json={"current_password": current, "new_password": new},
-        headers={"Authorization": f"Bearer {token}"},
     )
 
 
 class TestPasswordPolicyEndpoint:
-    def test_policy_endpoint_lists_5_rules(self, api_client):
-        r = api_client.get(f"{BASE_URL}/api/auth/password-policy")
+    def test_policy_endpoint_lists_5_rules(self, anon_client):
+        r = anon_client.get(f"{BASE_URL}/api/auth/password-policy")
         assert r.status_code == 200
         data = r.json()
         codes = {rule["code"] for rule in data["rules"]}
@@ -62,40 +53,36 @@ class TestPasswordPolicyEndpoint:
 class TestPasswordComplexity:
     """Each weak example breaks exactly one rule the policy enforces."""
 
-    def test_too_short_rejects(self, api_client, readonly_token):
-        r = _try_change(api_client, readonly_token, DEFAULT_PASSWORD, "Ab1!xyz")
+    def test_too_short_rejects(self, readonly):
+        r = _try_change(readonly, DEFAULT_PASSWORD, "Ab1!xyz")
         assert r.status_code == 422
         assert "12 characters" in r.json()["detail"]
 
-    def test_missing_uppercase_rejects(self, api_client, readonly_token):
-        # password123456 — no uppercase, no symbol. Expect the uppercase error
-        # (first rule checked after length).
-        r = _try_change(api_client, readonly_token, DEFAULT_PASSWORD, "password123456")
+    def test_missing_uppercase_rejects(self, readonly):
+        r = _try_change(readonly, DEFAULT_PASSWORD, "password123456")
         assert r.status_code == 422
         assert "uppercase" in r.json()["detail"].lower()
 
-    def test_missing_lowercase_rejects(self, api_client, readonly_token):
-        r = _try_change(api_client, readonly_token, DEFAULT_PASSWORD, "PASSWORD1234!")
+    def test_missing_lowercase_rejects(self, readonly):
+        r = _try_change(readonly, DEFAULT_PASSWORD, "PASSWORD1234!")
         assert r.status_code == 422
         assert "lowercase" in r.json()["detail"].lower()
 
-    def test_missing_number_rejects(self, api_client, readonly_token):
-        r = _try_change(api_client, readonly_token, DEFAULT_PASSWORD, "PasswordNoNums!")
+    def test_missing_number_rejects(self, readonly):
+        r = _try_change(readonly, DEFAULT_PASSWORD, "PasswordNoNums!")
         assert r.status_code == 422
         assert "number" in r.json()["detail"].lower()
 
-    def test_missing_symbol_rejects(self, api_client, readonly_token):
-        r = _try_change(api_client, readonly_token, DEFAULT_PASSWORD, "Password123456")
+    def test_missing_symbol_rejects(self, readonly):
+        r = _try_change(readonly, DEFAULT_PASSWORD, "Password123456")
         assert r.status_code == 422
         assert "symbol" in r.json()["detail"].lower()
 
-    def test_strong_password_accepts(self, api_client, readonly_token):
-        # MyStr0ng!Pass — exactly 13 chars, meets every rule.
-        r = _try_change(api_client, readonly_token, DEFAULT_PASSWORD, "MyStr0ng!Pass")
+    def test_strong_password_accepts(self, readonly):
+        r = _try_change(readonly, DEFAULT_PASSWORD, "MyStr0ng!Pass")
         assert r.status_code == 204
 
-        # Revert to the deterministic seed password via an intermediate (the
-        # history table would otherwise block DEFAULT_PASSWORD on the way back).
+        # Revert to the deterministic seed password via DB (bypassing history).
         import os as _os
         from sqlalchemy import create_engine, text
         from dotenv import load_dotenv
@@ -114,62 +101,39 @@ class TestUnlockEndpoint:
     and audit stamp on admin_notes.
     """
 
-    def test_unlock_locked_user_succeeds(self, api_client):
-        # 1. Lock test-readonly via 5 failed logins
+    def test_unlock_locked_user_succeeds(self, anon_client):
+        # 1. Lock test-readonly via 5 failed logins (anon client).
         for _ in range(5):
-            api_client.post(
+            anon_client.post(
                 f"{BASE_URL}/api/auth/login",
                 json={"email": READONLY_EMAIL, "password": "wrong"},
             )
 
-        # 2. Get an admin token (auto-enrol MFA via conftest helper)
-        from tests.conftest import login_with_auto_enroll
-        admin_token = login_with_auto_enroll(
-            api_client, BASE_URL, "test-admin@example.test", DEFAULT_PASSWORD,
-        )
+        # 2. Admin session (auto-enrol MFA).
+        admin = login_with_auto_enroll(None, BASE_URL, ADMIN_EMAIL, DEFAULT_PASSWORD)
 
-        # 3. Find test-readonly in the list and confirm it's locked
-        lst = api_client.get(
-            f"{BASE_URL}/api/users",
-            headers={"Authorization": f"Bearer {admin_token}"},
-        ).json()
+        # 3. Find test-readonly in the list and confirm it's locked.
+        lst = admin.get(f"{BASE_URL}/api/users").json()
         ro = next(u for u in lst["items"] if u["email"] == READONLY_EMAIL)
         assert ro["locked_until"] is not None
 
-        # 4. Unlock
-        r = api_client.post(
-            f"{BASE_URL}/api/users/{ro['id']}/unlock",
-            headers={"Authorization": f"Bearer {admin_token}"},
-        )
+        # 4. Unlock.
+        r = admin.post(f"{BASE_URL}/api/users/{ro['id']}/unlock")
         assert r.status_code == 204
 
-        # 5. Verify list + detail now show the user unlocked
-        detail = api_client.get(
-            f"{BASE_URL}/api/users/{ro['id']}",
-            headers={"Authorization": f"Bearer {admin_token}"},
-        ).json()
+        # 5. Verify list + detail now show the user unlocked.
+        detail = admin.get(f"{BASE_URL}/api/users/{ro['id']}").json()
         assert detail["locked_until"] is None
         assert detail["failed_login_attempts"] == 0
         assert "Unlocked by" in (detail["admin_notes"] or "")
 
-        # 6. Second unlock now returns 400 (user is not locked)
-        r2 = api_client.post(
-            f"{BASE_URL}/api/users/{ro['id']}/unlock",
-            headers={"Authorization": f"Bearer {admin_token}"},
-        )
+        # 6. Second unlock now returns 400 (user is not locked).
+        r2 = admin.post(f"{BASE_URL}/api/users/{ro['id']}/unlock")
         assert r2.status_code == 400
         assert "not locked" in r2.json()["detail"].lower()
 
-    def test_unlock_without_permission_forbidden(self, api_client, readonly_token):
-        # Readonly account has no users.admin; try unlocking anyone.
-        from app.auth.passwords import hash_password  # noqa: F401
-        # Get another user's id via self /me
-        me = api_client.get(
-            f"{BASE_URL}/api/auth/me",
-            headers={"Authorization": f"Bearer {readonly_token}"},
-        ).json()
-        r = api_client.post(
-            f"{BASE_URL}/api/users/{me['id']}/unlock",
-            headers={"Authorization": f"Bearer {readonly_token}"},
-        )
+    def test_unlock_without_permission_forbidden(self, readonly):
+        # Readonly has no users.admin; try unlocking self.
+        me = readonly.get(f"{BASE_URL}/api/auth/me").json()
+        r = readonly.post(f"{BASE_URL}/api/users/{me['id']}/unlock")
         assert r.status_code == 403
