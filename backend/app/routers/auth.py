@@ -84,8 +84,11 @@ class LoginRequest(BaseModel):
 
 
 class LoginResponse(BaseModel):
-    access_token: Optional[str] = None
-    refresh_token: Optional[str] = None
+    """Cookies-only transport: tokens go in Set-Cookie, never the body.
+
+    The body carries the metadata the frontend needs to hydrate
+    AuthContext without a follow-up `GET /auth/me`.
+    """
     token_type: str = "bearer"
     mfa_required: bool = False
     mfa_challenge_token: Optional[str] = None
@@ -138,14 +141,18 @@ class PasswordChangeRequest(BaseModel):
 
 
 class RefreshRequest(BaseModel):
-    refresh_token: str
+    """Kept for backward compatibility but ignored — the refresh token is
+    read from the httpOnly cookie set at login. Clients that still send a
+    body will get their body silently dropped.
+    """
+    pass
 
 
 class RefreshResponse(BaseModel):
-    access_token: str
-    refresh_token: str
-    token_type: str = "bearer"
-    access_token_expires_in: int = ACCESS_TOKEN_MINUTES * 60
+    """Cookies-only — kept as an empty model to preserve router shape; the
+    real response is `204 No Content` with rotated Set-Cookie headers.
+    """
+    pass
 
 
 class PasswordResetRequestPayload(BaseModel):
@@ -214,12 +221,21 @@ def _is_locked(u: User) -> bool:
 
 
 def _most_senior_enforced_role(db: Session, user: User) -> Optional[Role]:
+    """Returns the most-senior MFA-enforced role the user currently holds.
+
+    Must match `compute_effective_permissions` (app/auth/permissions.py) so
+    that MFA enforcement never sees a role that the permission resolver would
+    treat as expired. Seniority uses roles.priority ASC (lower = more senior).
+    """
+    from sqlalchemy import or_
+    now = datetime.now(timezone.utc)
     return db.scalars(
         select(Role)
         .join(UserRole, UserRole.role_id == Role.id)
         .where(
             UserRole.user_id == user.id,
             UserRole.status == "Active",
+            or_(UserRole.expires_at.is_(None), UserRole.expires_at > now),
             Role.code.in_(MFA_ENFORCED_ROLES),
         )
         .order_by(Role.priority.asc())
@@ -238,24 +254,48 @@ def _ua(req: Request) -> str:
     return req.headers.get("user-agent", "")
 
 
-def _set_cookies(response: Response, access: str, refresh: str, remember_me: bool) -> None:
-    """Access cookie matches token TTL; refresh cookie matches session TTL."""
+def _is_secure_env() -> bool:
+    """Secure flag everywhere except the test harness (which runs http)."""
     import os
+    return os.environ.get("APP_ENV", "") != "test"
+
+
+def _set_cookies(response: Response, access: str, refresh: str, remember_me: bool) -> None:
+    """Access + refresh cookies, Path=/ on both so nothing breaks if a client
+    reads the refresh cookie from a path other than /auth. HttpOnly + SameSite=Lax
+    always; Secure off only in APP_ENV=test.
+    """
     access_max_age = ACCESS_TOKEN_MINUTES * 60
     refresh_days = 90 if remember_me else 30
     refresh_max_age = refresh_days * 86400
+    secure = _is_secure_env()
     response.set_cookie(
-        key="access_token", value=access, httponly=True, secure=False,
+        key="access_token", value=access, httponly=True, secure=secure,
         samesite="lax", max_age=access_max_age, path="/",
     )
     response.set_cookie(
-        key="refresh_token", value=refresh, httponly=True, secure=False,
-        samesite="lax", max_age=refresh_max_age, path="/api/auth",
+        key="refresh_token", value=refresh, httponly=True, secure=secure,
+        samesite="lax", max_age=refresh_max_age, path="/",
     )
+
+
+def _set_pending_cookie(response: Response, pending_token: str) -> None:
+    """mfa_pending token travels via the `access_token` cookie so every auth
+    dependency keeps using one transport. Short Max-Age matches JWT TTL.
+    """
+    response.set_cookie(
+        key="access_token", value=pending_token, httponly=True,
+        secure=_is_secure_env(), samesite="lax",
+        max_age=MFA_PENDING_LIFETIME_MINUTES * 60, path="/",
+    )
+    # Defensive: ensure no stale refresh cookie leaks across an enrolment flow.
+    response.delete_cookie("refresh_token", path="/")
 
 
 def _clear_cookies(response: Response) -> None:
     response.delete_cookie("access_token", path="/")
+    response.delete_cookie("refresh_token", path="/")
+    # Legacy path from the pre-remediation release — delete defensively.
     response.delete_cookie("refresh_token", path="/api/auth")
 
 

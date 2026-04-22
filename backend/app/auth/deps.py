@@ -33,11 +33,15 @@ class Principal:
 
 
 def _extract_token(request: Request, authorization: Optional[str]) -> Optional[str]:
-    # Prefer Authorization: Bearer <token>; fall back to httpOnly cookie.
-    if authorization:
-        parts = authorization.split()
-        if len(parts) == 2 and parts[0].lower() == "bearer":
-            return parts[1]
+    """Access tokens are read ONLY from the httpOnly `access_token` cookie.
+
+    The previous `Authorization: Bearer <token>` fallback was intentionally
+    removed as part of the audit remediation (C1) so that a successful XSS
+    can't exfiltrate a bearable token: tokens never touch JS-reachable
+    storage. The `authorization` parameter is retained in the signature so
+    existing endpoint decorators keep their shape; it is deliberately
+    ignored here.
+    """
     return request.cookies.get("access_token")
 
 

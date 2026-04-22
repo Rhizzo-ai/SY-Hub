@@ -96,10 +96,31 @@ api_router.include_router(meta_router)
 
 app.include_router(api_router)
 
+
+def _resolve_cors_origins() -> list[str]:
+    """Guard against the classic CORS-with-credentials wildcard footgun.
+
+    Allowing credentials + any origin is unsafe: any site the user visits
+    could issue authenticated cross-origin requests. We fail startup fast
+    with an informative error rather than silently serving a permissive policy.
+    """
+    raw = os.environ.get("CORS_ORIGINS", "")
+    parts = [p.strip() for p in raw.split(",") if p.strip()]
+    if not parts or "*" in parts:
+        raise RuntimeError(
+            "CORS misconfiguration: allow_credentials=True is incompatible "
+            "with a wildcard CORS_ORIGINS. Set CORS_ORIGINS to an explicit "
+            "comma-separated list of origins, e.g. "
+            "'https://app.syhomes.co.uk,https://preview.emergentagent.com'. "
+            f"Currently CORS_ORIGINS={raw!r}."
+        )
+    return parts
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
-    allow_origins=os.environ.get("CORS_ORIGINS", "*").split(","),
+    allow_origins=_resolve_cors_origins(),
     allow_methods=["*"],
     allow_headers=["*"],
 )
