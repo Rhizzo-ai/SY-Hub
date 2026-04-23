@@ -36,6 +36,11 @@ from app.models.sessions import (
     LOGIN_HISTORY_FAILURE_REASONS,
 )
 from app.models.audit import AuditLog, AUDIT_ACTIONS
+from app.models.projects import (
+    Project, ProjectTeamMember,
+    PROJECT_TYPES, PROJECT_STAGES, PROJECT_STATUSES, TEAM_ROLES,
+    LAND_OWNERSHIP, TENURES, LAND_TYPES, PLANNING_TYPES, PLANNING_STATUSES,
+)
 
 __all__ = [
     "Tenant",

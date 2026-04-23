@@ -206,7 +206,7 @@ ROLE_PERMISSIONS["director"] = set(ALL_PERMISSION_CODES) - {
 
 # project_manager
 ROLE_PERMISSIONS["project_manager"] = {
-    "projects.view", "projects.view_sensitive", "projects.edit",
+    "projects.view", "projects.view_sensitive", "projects.create", "projects.edit",
     "appraisals.view", "appraisals.create", "appraisals.edit", "appraisals.approve",
     "budgets.view", "budgets.view_sensitive", "budgets.edit",
     "actuals.view", "actuals.create", "actuals.edit",
