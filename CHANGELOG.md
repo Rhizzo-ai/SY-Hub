@@ -23,7 +23,7 @@ Each entry: date, prompt reference (if applicable), change, rationale.
 
 - Full vertical slice delivered: schema, migration, API, React UI, validation, seed data, scheduler.
 - 8/8 acceptance criteria fully passing.
-- Tenants table added (multi-tenant ready, single-tenant live); all other tables include tenant_id.
+- Tenants table added (multi-tenant ready, single-tenant live). - Tenant scoping as built (corrected 2026-04-22): tenant-scoped tables are `entities` and `users` only; global catalogue (`tenants`, `roles`, `permissions`, `role_permissions`); derivable via FK chain (`user_roles`, `user_role_entities`, `user_role_projects`, `user_sessions`, `user_login_history`, `email_send_log`). The original CHANGELOG claim that "all other tables include tenant_id" was inaccurate — architecture is defensible, docs are now correct.
 - Alembic migration 0001_initial_entities: tenants + entities + 5 enums + partial unique indexes + set_updated_at trigger + per-table triggers.
 - APScheduler daily 06:00 UTC insurance expiry sweep; exact-day threshold logic (60/30/14/7/0) with expired daily-loop.
 - 53 backend tests passing (31 API + 22 threshold sweep).
@@ -39,11 +39,6 @@ Each entry: date, prompt reference (if applicable), change, rationale.
 - Cosmetic React warning (`<span>` in `<option>`) to fix in Prompt 1.2
 - Suggested 30-min polish when Prompt 1.7 lands: surface insurance urgency dot on Entities list once notifications table exists
 
-### 2026-05-02 — Prompt 1.2 Users
-- Added preferred_name field to users table not specified in brief.
-  Rationale: Several team members use different daily name vs legal name.
-- Changed mfa_method default from TOTP to Email for easier initial onboarding.
-  Spec says TOTP should be preferred; will revert after onboarding complete.
 
 ### 2026-04-20 — Prompt 1.2 retrofit: MFA enrolment UI
 
@@ -159,12 +154,12 @@ Scope proved larger than a single Emergent build cycle. Staged delivery:
 - Retroactive rewire of 1.2 auth to new token model
 - Login history table (append-only, 2+ year retention)
 - /profile/sessions, /users/:id/sessions, /users/:id/login-history UIs
-- Email infrastructure (EmailProvider abstraction + ConsoleEmailProvider default; SendGrid implementation wired but disabled without API key)
+- Email infrastructure (EmailProvider abstraction + ConsoleEmailProvider default; SendGrid implementation drafted but commented out pending credentials — ConsoleEmailProvider is the only active provider)
 - Password reset flow: self-service + admin-initiated
 - /forgot-password + /reset-password UIs
 - Geolocation via MaxMind GeoLite2 (fallback to NULL country if .mmdb absent)
 - In-process rate limiting on login + password reset endpoints
-- Fernet encryption key auto-generated on first boot
+- Fernet encryption key **required via `MFA_ENCRYPTION_KEY` env var — backend refuses to start without it. Generate with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` and store in `.env` before first boot. Losing the key renders stored MFA secrets un-decryptable.**
 
 **Deferred to Stage 2 (next session):**
 - Email-delivered invitations (Section E)
@@ -181,4 +176,97 @@ Scope proved larger than a single Emergent build cycle. Staged delivery:
 - Manual lock button → 1.4
 - Role/permission management UI → Polish Pass
 
-- 
+### 2026-04-22 — Prompt 1.3 Stage 1b close-out patch (audit remediation) ✅
+
+**Four audit findings closed in a single build cycle:**
+
+- **(I6) MFA enforcement honours role expiry** — `_most_senior_enforced_role`
+  now filters `user_roles` on `(status='Active' AND (expires_at IS NULL OR
+  expires_at > now()))`, aligning MFA gate with `compute_effective_permissions`.
+  An enforced role that has expired no longer forces the user into MFA
+  enrolment on login.
+
+- **(M8) CORS startup guard** — `_resolve_cors_origins()` in `server.py`
+  raises `RuntimeError` when `CORS_ORIGINS` is empty or contains `*`.
+  Paired with `allow_credentials=True`, a wildcard origin is a classic
+  CSRF footgun; the server now refuses to start rather than quietly
+  serving a permissive policy.
+
+- **(I3) Rate-limit bypass hardening** — `SYHOMES_RATE_LIMIT_DISABLED=1`
+  is only honoured when `APP_ENV=test` is also set. A stray disable flag
+  in production logs at `ERROR` and leaves the limiter active. `.env`
+  now explicitly sets `APP_ENV=test` for the dev pod.
+
+- **(C1, critical) Frontend auth moved to HttpOnly cookies** — access and
+  refresh tokens no longer appear in ANY JSON response body. `/auth/login`,
+  `/auth/refresh` (now 204), and `/auth/mfa/enroll/confirm` set and rotate
+  cookies server-side; frontend runs with `withCredentials: true` and zero
+  localStorage token state. Bearer fallback removed from `_extract_token`
+  — a successful XSS can no longer exfiltrate a bearable session.
+
+**Backend residuals discovered and fixed during the patch:**
+
+- `/auth/refresh` was crashing (`AttributeError: 'RefreshRequest' object
+  has no attribute 'refresh_token'`) because an earlier C1 patch stripped
+  the field from the Pydantic model but left `payload.refresh_token` in
+  the handler. Endpoint now reads `request.cookies.get("refresh_token")`,
+  returns 401 + a `Refresh_Failed` login-history row on missing cookie.
+- `MfaEnrollConfirmResponse` still exposed `access_token`/`refresh_token`
+  in the body; replaced with `{backup_codes, session_issued}`.
+- `LoginResponse.mfa_pending_token` field removed; the pending JWT rides
+  only via the `access_token` cookie. Frontend detects pending state via
+  `mfa_enrollment_required: true` + `enforced_role_name`.
+- `LoginResponse`/`RefreshResponse` constructor calls cleaned up to stop
+  passing kwargs the Pydantic models don't declare (silently dropped).
+
+**Frontend rewrite** (`/app/frontend/src/`):
+- `lib/api.js` — no localStorage, no Bearer interceptor, 204-aware refresh,
+  `authedFetch` helper for blob downloads.
+- `context/AuthContext.jsx` — hydrates `me` from login body; `/auth/me` only
+  called once on boot for cookie-survival detection.
+- `pages/ForcedMfaEnroll.jsx` — drops token read from enrol-confirm body.
+- `pages/AdminLoginHistory.jsx` — CSV export via cookie-based fetch.
+
+**Test suite migrated to cookies-only** (`/app/backend/tests/`):
+- `conftest.py::login_with_auto_enroll` now returns a `requests.Session`
+  with cookies set instead of a raw bearer string. New `plain_login` helper
+  for non-MFA roles. Session jars model the production frontend.
+- All seven prior test files migrated: `test_auth_rbac.py`,
+  `test_entities_api.py`, `test_mfa.py`, `test_mfa_gap_closure.py`,
+  `test_password_complexity.py`, `test_sessions_history_reset.py`,
+  `test_user_edit.py`. `test_insurance_alerts.py` unchanged (no auth).
+- **+19 new regression tests** in `tests/test_audit_remediation.py`:
+  Patch 1 (2), Patch 2 (4), Patch 3 (4), Patch 4 (4), residuals (5).
+
+**Full suite: 179 passed, 0 failed, 0 skipped** (was 160 → +19).
+
+**Deliberately simplified:** None.
+
+**Production deployment notes:**
+- Set `APP_ENV=production` (not `test`) — this flips cookie `Secure=True`
+  and ensures the rate-limit disable flag is inert.
+- `CORS_ORIGINS` must list explicit origins, no `*`.
+
+**Preview environment caveat:**
+- The Emergent preview uses an ephemeral Postgres. Pod cycles wipe the
+  DB including MFA enrolment, forcing re-enrolment when users return.
+  Not a bug — production deployment requires persistent storage
+  (managed Postgres / RDS / equivalent).
+
+  ---
+
+### 2026-04-22 — Schema and design notes (audit-driven corrections)
+
+**Schema note — `user_sessions.access_token_jti`:**
+Stores the JWT ID claim as a session-to-token binding, not a hash of the access token. The JWT is already signed by `JWT_SECRET` and therefore tamper-proof without needing a DB hash; the JTI lets us revoke specific access tokens by session. The original Prompt 1.3 brief specified `access_token_hash`; the JTI approach is a deliberate simplification with equivalent security properties.
+
+**Schema additions not previously documented (Prompts 1.2 and 1.3):**
+- `users.email_verified_at` (timestamp, nullable)
+- `users.phone_verified` (boolean, default false)
+- `users.avatar_url` (text, nullable)
+- `users.lockout_level` (int, default 0) — drives 15/30/60 min escalation
+- `users.mfa_enforced_at` renamed to `users.mfa_enrolled_at` (migration 0003)
+- `user_sessions.previous_refresh_token_hash` — for single-hop replay detection
+- `user_sessions.remember_me` (boolean) — extends refresh TTL to 90 days when true
+- `user_sessions.location_latitude`, `user_sessions.location_longitude` (decimal) — MaxMind geo data
+- `user_login_history` event_type enum expanded with `Refresh_Success`, `Refresh_Failed`, `SSO_Link`, `SSO_Unlink`, `Impersonation_Start`, `Impersonation_End`, `Session_Revoked`, `Suspicious_Activity_Detected` (most Stage 2 values pre-seeded)
