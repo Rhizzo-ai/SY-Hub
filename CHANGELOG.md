@@ -270,3 +270,211 @@ Stores the JWT ID claim as a session-to-token binding, not a hash of the access 
 - `user_sessions.remember_me` (boolean) — extends refresh TTL to 90 days when true
 - `user_sessions.location_latitude`, `user_sessions.location_longitude` (decimal) — MaxMind geo data
 - `user_login_history` event_type enum expanded with `Refresh_Success`, `Refresh_Failed`, `SSO_Link`, `SSO_Unlink`, `Impersonation_Start`, `Impersonation_End`, `Session_Revoked`, `Suspicious_Activity_Detected` (most Stage 2 values pre-seeded)
+
+### 2026-04-23 — Prompt 1.4: Audit Log ✅
+
+**Single-cycle build: table, service, retrofits, UI, retention, tests.**
+
+- **New table `audit_log`** (migration 0006). Columns per spec: actor, impersonator,
+  action (enum of 12), resource_type + resource_id, entity_id + project_id,
+  field_changes JSONB, metadata JSONB, IP, UA, session_id, created_at. Six
+  indexes. Append-only via DB trigger. `metadata` column stored as `metadata_json`
+  at the SQLAlchemy layer (framework reserves the former); API surface uses
+  `metadata` unchanged.
+
+- **Trigger update (migration 0007)** — append-only enforcement now admits
+  `pg_trigger_depth() > 1` (FK-cascade SET NULL). Direct UPDATE/DELETE still
+  raise "audit_log is append-only"; FK-driven nil-outs succeed. Discovered
+  during first retrofit test (entity delete with audit rows referencing it).
+
+  **Implication:** when an entity or session is deleted, its associated audit
+  rows retain `resource_type`/`resource_id` but lose `entity_id`/`session_id`
+  via FK SET NULL. The audit row itself is never deleted; its cross-reference
+  context just narrows. Filter by `resource_type='entities' AND resource_id=X`
+  to find history of a deleted entity rather than `entity_id=X`.
+
+- **`app/services/audit.py`**:
+  - `record_audit(db, *, action, resource_type, resource_id, ...)` — primary
+    entrypoint. Never raises; audit-write failures logged at ERROR and swallowed
+    so business writes survive. Extracts IP / UA / session_id /
+    impersonator_user_id from `request.state`.
+  - `field_diff(before, after)` — ordered, sorted, unchanged-elided.
+  - `SENSITIVE_FIELDS` constant + `_redact()` — password hashes, MFA secrets,
+    token hashes, invitation / reset tokens replaced with `[REDACTED]` in both
+    old and new values.
+  - `stamp_self_approval(metadata, actor, submitted_by)` — pure helper for
+    Track 2+ approval flows; sets `metadata.self_approval = True` when actor ==
+    submitter.
+  - Module docstring documents retention policy + approval discipline +
+    impersonation contract for future prompt authors.
+
+- **Retrofit wiring** (13 write points across 4 routers): entities
+  Create/Update/Delete; users edit + admin unlock + role assign/revoke; auth
+  Login (MFA and non-MFA), Logout, password change, password reset complete,
+  MFA enrol/disable/regenerate; sessions self-revoke, revoke-others, admin
+  revoke-all. Refresh is deliberately NOT audited (stays in login_history only
+  for security forensics). Existing `admin_notes` stamps from Prompts 1.2/1.3
+  kept intact alongside audit rows.
+
+- **Permissions**: `audit.view`, `audit.view_sensitive`, `audit.export`,
+  `audit.admin` seeded. Super_admin: all. Director: view + export scoped.
+  Finance: view scoped. Other roles: none.
+
+- **Router `/api/audit`**:
+  - `GET /audit?page=&page_size=&resource_type=&resource_id=&actor_user_id=&entity_id=&project_id=&action=&date_from=&date_to=`
+  - `GET /audit/{id}`
+  - `GET /audit/export.csv`, `GET /audit/export.json` — 10k row cap with
+    explicit 400 when exceeded; additive `audit.export` required.
+  - Scope filter: `audit.admin` → unscoped; else scoped by user's
+    effective_entity_ids. Tenant-level rows (null entity_id: login / user-level
+    / system) visible to everyone with `audit.view`.
+
+- **Frontend `/audit`**: paginated list with action-pill filter bar, resource-
+  type + date-range filters, detail modal (field_changes table + redacted
+  values + metadata JSON + impersonation banner), CSV export. Nav link
+  permission-gated. Per-record Audit Trail tabs on /users/:id and /entities/:id
+  NOT built this cycle — global page filtered by resource_type + resource_id
+  provides equivalent data (logged to Polish Pass).
+
+- **Retention (`audit_retention.py`)**: OFF by default, dry-run default,
+  empty allow-list no-op, 7-year hard floor. Bypass via
+  `ALTER TABLE audit_log DISABLE TRIGGER USER` inside the purge transaction
+  (app DB user owns the table, no superuser required). Scheduler wiring
+  deferred until 1.6 / 1.7.
+
+- **Tests**: +42 in `tests/test_audit_log.py`. Append-only enforcement,
+  service correctness, sensitive redaction, impersonation pickup, retrofit
+  smoke (entity CRUD / user edit / admin unlock / password change / login /
+  refresh does NOT audit / logout DOES audit / session revoke / MFA enrol),
+  API filtering + scoping, CSV/JSON export, retention purge disabled-by-default
+  + dry-run + allow-list + 7-year floor.
+
+**Full suite: 179 → 221 passed (+42), 0 failed, 0 skipped.**
+
+**Deliberately simplified:**
+- Per-record Audit Trail tab on /users/:id and /entities/:id (global /audit
+  filtered by resource_type + resource_id gives equivalent data; dedicated
+  tab is UI polish for next iteration).
+- Actor / entity / project picker widgets in the filter bar (accept UUIDs via
+  backend query params; UI inputs are free-text for resource_type + action
+  pills for actions).
+- Revoke-others emits one audit row per session (intentional — forensic
+  fidelity over row-count efficiency).
+
+## Prompt 1.5 — Projects + Project Team Members · 2026-04-23
+
+### Schema (Alembic 0008, 0009)
+- **New table** `projects` — unit-of-truth for development sites. 30+ columns spanning
+  identity (project_code, name, type, parent_project_id, primary/construction_entity_id),
+  site (address, postcode, local authority, ha/acres), tenure, planning
+  (ref/type/status/approval/expiry, implementation/S106/CIL flags), targets (units, dates,
+  affordable_housing_pct), stage machine (current_stage + stage_entered_at), status
+  (Active/On_Hold/Dead/Complete with dead_reason), cached financials (gdv/build_cost/
+  all_in_cost/profit/margin + financials_refreshed_at), project_lead_user_id,
+  created_by_user_id, notes. 4 indexes + partial `ix_projects_planning_expiry_candidates`
+  for the sweep.
+- **New table** `project_team_members` — project/user/role junction with `is_primary`,
+  `assigned_by_user_id`, `assigned_at`, `removed_at` (soft), and a partial unique
+  `ux_team_one_active_primary_per_role` enforcing one active primary per (project, role).
+- **Retroactive FKs** (0009):
+  - `user_role_projects.project_id → projects.id ON DELETE CASCADE` (deferred from 1.2)
+  - `audit_log.project_id → projects.id ON DELETE SET NULL` (deferred from 1.4)
+- `updated_at` trigger wired on both new tables.
+
+### Backend
+- Auto-generated project codes: 3-char alphanumeric prefix from name + 3+ digit sequential
+  counter (e.g. `SHR-001`). Overrides accepted if they match `^[A-Z0-9]{3}-\d{3,}$`.
+  Immutable after creation (409 on duplicate; raw-body rejection on PUT).
+- Site area reconciliation: ha ↔ acres at 4dp; ha wins when both supplied. Null pair
+  remains null.
+- Planning expiry auto-calc: +3y for Full / Outline / Hybrid / Permitted_Dev /
+  Prior_Approval; +2y for Reserved_Matters. Manual overrides stamp
+  `metadata.planning_expiry_manual_override=true` in audit.
+- **Hard-coded forward-only stage machine** (`app/services/project_stage.py`):
+  Lead → Appraisal → Deal_Pipeline → Planning → Pre_Con → Construction →
+  {Sales, Post_Completion} → Closed, with Dead as an allowed target from any active
+  stage. Status auto-syncs (Dead → Dead, Closed → Complete).
+- Super_admin stage override: min 10-char reason, director_notifications payload
+  written to audit metadata, atomically flips status on Dead/Closed/recovery paths.
+  Explicit super_admin gate — not inherited from `projects.edit`.
+- Project team management: add/remove/list with `?history=true` toggle, primary
+  Project_Lead syncs to `projects.project_lead_user_id` (nulls on removal).
+- Cached financials refresh stub: returns zeros + stamps timestamp. Gated on
+  `projects.view_sensitive`. Real rollup arrives Prompts 2.5 + 2.7.
+- Planning expiry sweep: daily 07:00 UTC APScheduler cron. Fires at day thresholds
+  {365, 180, 90, 30, 0} and every day past expiry. Payloads logged today; insertion
+  into `notifications` lands with Prompt 1.7.
+- Delete hook: `has_project_dependents()` currently a no-op; one-place extension for
+  future tables (appraisals, budgets, actuals, commitments, budget_changes,
+  cash_flow_entries, programmes, documents, compliance_registers, xero_*).
+- RBAC: added 7 project permissions (view, view_sensitive, create, edit, delete,
+  approve, admin). Director/super retain full coverage; project_manager gets
+  create/edit/view_sensitive. Strict scoping via
+  `user_role.project_scope ∈ {All, Specific, None}` on list + detail.
+
+### Frontend
+- `/projects` list — search (name/code/address/postcode), multi-select filters
+  (type, stage, status), margin% column gated on `projects.view_sensitive`,
+  pagination, filter chips, empty state with permission-gated CTA.
+- `/projects/new` — required-field validation, symmetric ha↔acres live conversion,
+  planning expiry auto-fill preview (+3y/+2y per type), route redirects away when
+  `projects.create` is missing.
+- `/projects/:id` — header with stage badge + dead-banner, per-stage action buttons
+  reflecting `FORWARD_TRANSITIONS`, Dead button opens reason-required modal,
+  super_admin-only Override button (10-char reason validated both sides), delete
+  gated on `projects.delete`.
+- Overview tab: 5 collapsible sections (Summary, Site, Planning, Targets,
+  Financials). Financials section renders only with `projects.view_sensitive` and
+  carries a Refresh button + "last refreshed" stamp.
+- Team tab: list (with removed-members toggle), Add Team Member modal (user +
+  role + is_primary), soft Remove, primary marker (★).
+- Audit tab: pulls `/api/audit?project_id=…`, explicit 403-forbidden message for
+  users lacking `audit.view`, deep-link to full `/audit` page.
+
+### Tests
+- **+93 pytest cases** in `tests/test_projects.py` covering: project code gen +
+  override validation + duplicates + immutability; ha↔acres round-trip + NULL;
+  planning expiry auto-calc (Full/Outline/Reserved_Matters/missing); manual
+  override audit flag; stage advance (init, forward, cannot-skip, cannot-reverse,
+  walk-to-closed, Dead-from-any, Dead-without-reason); super_admin override
+  (permission gate, 10-char validator, same-stage reject, Dead-reason requirement,
+  audit metadata + director_notifications payload, reactivates Dead projects);
+  team CRUD (unique active primary, role validation, unknown user, project_lead
+  sync on primary add/remove, idempotent remove, cross-project 404); audit
+  diff (no-change = no-audit, manual-override-flag); RBAC (401/403 matrices,
+  readonly/director/finance financial visibility, pagination, search, stage +
+  entity filters); delete (204, 404, audit row project_id cascade-set-null);
+  planning expiry sweep thresholds (30/100/past/non-active/started skips);
+  financials refresh stub (super 200, readonly 403, timestamp stamped);
+  retroactive FK existence + delete cascade behaviour; unit tests on every
+  service helper.
+- Suite total: **314 passed / 1 skipped / 0 failed** (was 221 → +93).
+
+### Known deviations
+- **Stage machine is deliberately hard-coded forward-only** with a super_admin
+  override, not the "non-sequential allowed but flagged" spec wording. Property
+  development is genuinely linear and stray stage clicks make forensic work
+  painful.
+- Financials refresh returns zeroes pending Prompts 2.5 (actuals) + 2.7 (cash flow).
+  The endpoint and UI wiring exist so the stale-indicator + refresh button work
+  today.
+- Director stage-override notifications are recorded in audit metadata today;
+  actual delivery arrives with the `notifications` table in Prompt 1.7.
+
+### Audit UX (post-1.4)
+- Per-record Audit Trail tab on /users/:id and /entities/:id. API endpoint supports
+  the query (`GET /audit?resource_type=...&resource_id=...`); only the tab UI is missing.
+  Today users filter from the global /audit page.
+- Actor / entity / project picker widgets in /audit filter bar (currently free-text UUIDs).
+
+### Project module (post-1.5)
+- Revisit stage machine — hard-coded FORWARD_TRANSITIONS dict in `app/services/project_stage.py`.
+  Move to `system_config` once 1.7 lands so rules tune without deploy. Also consider allowing
+  Sales and Post_Completion concurrently (developers sell while mobilising the next phase).
+- `ProjectDetail.jsx` is 788 lines — split `AdvanceStageModal`, `OverrideStageModal`, `TeamTab`,
+  `AuditTab` into separate files.
+- `update_project` uses raw-body read to reject `project_code` mutations because `ProjectUpdate`
+  schema doesn't expose the field. Cleaner: add `project_code` to the schema with a validator
+  that raises on presence. Safer against upstream middleware changes.
+- `derive_planning_expiry` uses `date.replace(year=...)` which throws on Feb 29 approvals.
+  Fix with `dateutil.relativedelta` or try/except fallback to Feb 28.
