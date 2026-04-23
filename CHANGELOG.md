@@ -86,6 +86,23 @@ during build — log here, address in one focused polish pass.
 - Select and apply production font stack.
 - Unified component styling pass across all 10 modules.
 
+### Audit UX (post-1.4)
+- Per-record Audit Trail tab on /users/:id and /entities/:id. API endpoint supports
+  the query (`GET /audit?resource_type=...&resource_id=...`); only the tab UI is missing.
+  Today users filter from the global /audit page.
+- Actor / entity / project picker widgets in /audit filter bar (currently free-text UUIDs).
+
+### Project module (post-1.5)
+- Revisit stage machine — hard-coded FORWARD_TRANSITIONS dict in `app/services/project_stage.py`.
+  Move to `system_config` once 1.7 lands so rules tune without deploy. Also consider allowing
+  Sales and Post_Completion concurrently (developers sell while mobilising the next phase).
+- `ProjectDetail.jsx` is 788 lines — split `AdvanceStageModal`, `OverrideStageModal`, `TeamTab`,
+  `AuditTab` into separate files.
+- `update_project` uses raw-body read to reject `project_code` mutations because `ProjectUpdate`
+  schema doesn't expose the field. Cleaner: add `project_code` to the schema with a validator
+  that raises on presence. Safer against upstream middleware changes.
+- `derive_planning_expiry` uses `date.replace(year=...)` which throws on Feb 29 approvals.
+  Fix with `dateutil.relativedelta` or try/except fallback to Feb 28.
 
 ### 2026-04-20 — Scope expansion decision: full company OS
 
@@ -361,7 +378,7 @@ Stores the JWT ID claim as a session-to-token binding, not a hash of the access 
 - Revoke-others emits one audit row per session (intentional — forensic
   fidelity over row-count efficiency).
 
-## Prompt 1.5 — Projects + Project Team Members · 2026-04-23
+### 2026-04-23 — Prompt 1.5: Projects + Project Team Members ✅
 
 ### Schema (Alembic 0008, 0009)
 - **New table** `projects` — unit-of-truth for development sites. 30+ columns spanning
@@ -461,20 +478,3 @@ Stores the JWT ID claim as a session-to-token binding, not a hash of the access 
 - Director stage-override notifications are recorded in audit metadata today;
   actual delivery arrives with the `notifications` table in Prompt 1.7.
 
-### Audit UX (post-1.4)
-- Per-record Audit Trail tab on /users/:id and /entities/:id. API endpoint supports
-  the query (`GET /audit?resource_type=...&resource_id=...`); only the tab UI is missing.
-  Today users filter from the global /audit page.
-- Actor / entity / project picker widgets in /audit filter bar (currently free-text UUIDs).
-
-### Project module (post-1.5)
-- Revisit stage machine — hard-coded FORWARD_TRANSITIONS dict in `app/services/project_stage.py`.
-  Move to `system_config` once 1.7 lands so rules tune without deploy. Also consider allowing
-  Sales and Post_Completion concurrently (developers sell while mobilising the next phase).
-- `ProjectDetail.jsx` is 788 lines — split `AdvanceStageModal`, `OverrideStageModal`, `TeamTab`,
-  `AuditTab` into separate files.
-- `update_project` uses raw-body read to reject `project_code` mutations because `ProjectUpdate`
-  schema doesn't expose the field. Cleaner: add `project_code` to the schema with a validator
-  that raises on presence. Safer against upstream middleware changes.
-- `derive_planning_expiry` uses `date.replace(year=...)` which throws on Feb 29 approvals.
-  Fix with `dateutil.relativedelta` or try/except fallback to Feb 28.
