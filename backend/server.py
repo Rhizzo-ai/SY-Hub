@@ -19,6 +19,7 @@ from alembic.config import Config as AlembicConfig  # noqa: E402
 
 from app.jobs.insurance_alerts import start_scheduler, stop_scheduler  # noqa: E402
 from app.jobs.role_expiry import start_role_expiry_scheduler, stop_role_expiry_scheduler  # noqa: E402
+from app.routers.audit import router as audit_router  # noqa: E402
 from app.routers.auth import router as auth_router  # noqa: E402
 from app.routers.entities import router as entities_router  # noqa: E402
 from app.routers.login_history import router as login_history_router  # noqa: E402
@@ -93,6 +94,7 @@ api_router.include_router(roles_router)
 api_router.include_router(perms_router)
 api_router.include_router(entities_router)
 api_router.include_router(meta_router)
+api_router.include_router(audit_router)
 
 app.include_router(api_router)
 

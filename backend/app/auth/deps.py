@@ -107,6 +107,12 @@ def get_optional_principal(
             raise HTTPException(status_code=401, detail="Session idle — please log in again")
         touch_session(db, session)
         db.commit()
+    # Stash for audit.py: populated even when session is None (values stay
+    # None) so callers can rely on the state attrs existing.
+    request.state.current_session_id = session.id if session else None
+    request.state.impersonator_user_id = (
+        session.impersonator_user_id if session else None
+    )
     return Principal(user=user, tenant_id=tenant_id, token_type=payload["type"], session=session)
 
 

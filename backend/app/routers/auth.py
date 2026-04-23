@@ -65,6 +65,7 @@ from app.services.sessions import (
     rotate_session,
     session_is_active,
 )
+from app.services.audit import record_audit
 
 log = logging.getLogger("syhomes.auth")
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -427,6 +428,11 @@ def login(
     )
     log_event(db, event_type="Login_Success", email_attempted=email, user_id=user.id,
               session_id=session.id, ip=ip, user_agent=ua)
+    record_audit(
+        db, action="Login", resource_type="users", resource_id=user.id,
+        actor_user_id=user.id, session_id=session.id, request=request,
+        metadata={"mfa": "none"},
+    )
     db.commit()
     _set_cookies(response, access, refresh, payload.remember_me)
     return LoginResponse(user=_serialise_user_public(user))
@@ -489,6 +495,11 @@ def mfa_verify(
     log_event(db, event_type="Login_Success", email_attempted=user.email, user_id=user.id,
               session_id=session.id, ip=ip, user_agent=ua,
               metadata={"mfa": "totp" if not payload.use_backup_code else "backup_code"})
+    record_audit(
+        db, action="Login", resource_type="users", resource_id=user.id,
+        actor_user_id=user.id, session_id=session.id, request=request,
+        metadata={"mfa": "totp" if not payload.use_backup_code else "backup_code"},
+    )
     db.commit()
     _set_cookies(response, access, refresh, payload.remember_me)
     return LoginResponse(user=_serialise_user_public(user))
@@ -526,6 +537,12 @@ def mfa_enroll_confirm(
 
     log_event(db, event_type="MFA_Enrolled", email_attempted=current.email, user_id=current.id,
               ip=ip, user_agent=ua)
+    record_audit(
+        db, action="Update", resource_type="users", resource_id=current.id,
+        actor_user_id=current.id,
+        metadata={"mfa_action": "enrol"},
+        request=request,
+    )
 
     access_token = None
     refresh_token = None
@@ -563,12 +580,19 @@ def mfa_disable(
     current.mfa_enrolled_at = None
     log_event(db, event_type="MFA_Disabled", email_attempted=current.email,
               user_id=current.id, ip=_client_ip(request), user_agent=_ua(request))
+    record_audit(
+        db, action="Update", resource_type="users", resource_id=current.id,
+        actor_user_id=current.id,
+        metadata={"mfa_action": "disable"},
+        request=request,
+    )
     db.commit()
 
 
 @router.post("/mfa/backup-codes/regenerate", response_model=RegenerateBackupCodesResponse)
 def regenerate_backup_codes(
     payload: RegenerateBackupCodesRequest,
+    request: Request,
     current: User = Depends(get_enrollment_user),
     db: Session = Depends(get_db),
 ):
@@ -581,6 +605,12 @@ def regenerate_backup_codes(
         raise HTTPException(status_code=400, detail="Invalid authenticator code")
     codes = generate_backup_codes()
     current.mfa_backup_codes_encrypted = encrypt_backup_codes(codes)
+    record_audit(
+        db, action="Update", resource_type="users", resource_id=current.id,
+        actor_user_id=current.id,
+        metadata={"mfa_action": "regenerate"},
+        request=request,
+    )
     db.commit()
     return RegenerateBackupCodesResponse(backup_codes=codes)
 
@@ -621,6 +651,13 @@ def password_change(
     ip = _client_ip(request)
     log_event(db, event_type="Password_Change", email_attempted=current.email,
               user_id=current.id, ip=ip, user_agent=_ua(request))
+    record_audit(
+        db, action="Update", resource_type="users", resource_id=current.id,
+        actor_user_id=current.id,
+        field_changes=[{"field": "password_hash", "old": "[REDACTED]", "new": "[REDACTED]"}],
+        metadata={"initiator": "self"},
+        request=request,
+    )
 
     subj, html, text = password_changed_email(
         recipient_name=current.display_name or current.first_name,
@@ -754,6 +791,11 @@ def logout(
         log_event(db, event_type="Logout", email_attempted="",
                   user_id=session.user_id, session_id=session.id,
                   ip=_client_ip(request), user_agent=_ua(request))
+        record_audit(
+            db, action="Logout", resource_type="users", resource_id=session.user_id,
+            actor_user_id=session.user_id, session_id=session.id,
+            request=request,
+        )
         db.commit()
 
     _clear_cookies(response)
@@ -873,6 +915,13 @@ def password_reset_complete(
     revoke_all_user_sessions(db, user.id, "Password_Reset")
     log_event(db, event_type="Password_Reset_Completed", email_attempted=user.email,
               user_id=user.id, ip=ip, user_agent=ua)
+    record_audit(
+        db, action="Update", resource_type="users", resource_id=user.id,
+        actor_user_id=user.id,
+        field_changes=[{"field": "password_hash", "old": "[REDACTED]", "new": "[REDACTED]"}],
+        metadata={"reset_initiator": "self"},
+        request=request,
+    )
 
     subj, html, text = password_changed_email(
         recipient_name=user.display_name or user.first_name,

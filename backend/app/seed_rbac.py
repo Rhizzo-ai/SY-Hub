@@ -236,6 +236,7 @@ ROLE_PERMISSIONS["finance"] = {
     "xero_bills.view", "xero_invoices.view", "xero_sync.admin", "xero_sync.view",
     "reports.view", "reports.export",
     "users.view",
+    "audit.view",
 }
 
 # site_manager

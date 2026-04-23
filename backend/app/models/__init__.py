@@ -35,6 +35,7 @@ from app.models.sessions import (
     LOGIN_HISTORY_EVENTS,
     LOGIN_HISTORY_FAILURE_REASONS,
 )
+from app.models.audit import AuditLog, AUDIT_ACTIONS
 
 __all__ = [
     "Tenant",

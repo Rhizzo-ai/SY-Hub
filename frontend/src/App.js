@@ -19,6 +19,7 @@ import ProfileSecurity from "@/pages/ProfileSecurity";
 import ProfileSessions from "@/pages/ProfileSessions";
 import AdminUserSessions from "@/pages/AdminUserSessions";
 import AdminLoginHistory from "@/pages/AdminLoginHistory";
+import AuditLog from "@/pages/AuditLog";
 import ForgotPassword from "@/pages/ForgotPassword";
 import ResetPassword from "@/pages/ResetPassword";
 
@@ -43,6 +44,7 @@ function ShellRoutes() {
                 <Route path="/profile" element={<Navigate to="/profile/security" replace />} />
                 <Route path="/profile/security" element={<ProfileSecurity />} />
                 <Route path="/profile/sessions" element={<ProfileSessions />} />
+                <Route path="/audit" element={<AuditLog />} />
                 <Route path="*" element={
                     <div className="text-slate-600" data-testid="not-found-page">
                         <h1 className="font-heading text-2xl font-bold text-slate-900">Not found</h1>

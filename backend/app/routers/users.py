@@ -7,7 +7,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status as http_status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status as http_status
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.exc import IntegrityError
@@ -26,6 +26,7 @@ from app.auth import (
     get_current_user,
     require_permission,
 )
+from app.services.audit import record_audit, field_diff
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/users", tags=["users"])
@@ -345,6 +346,7 @@ ADMIN_EDITABLE_STATUSES = ("Active", "Suspended", "Pending_Invitation")
 def update_user(
     user_id: uuid.UUID,
     payload: UserUpdate,
+    request: Request,
     db: Session = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant_id),
     current: User = Depends(get_current_user),
@@ -389,9 +391,12 @@ def update_user(
     # ---- Apply changes + track diff ----
     changed: list[str] = []
     email_changed = False
+    field_change_entries: list[dict] = []
     for k, v in data.items():
-        if getattr(u, k, None) != v:
+        old_v = getattr(u, k, None)
+        if old_v != v:
             changed.append(k)
+            field_change_entries.append({"field": k, "old": old_v, "new": v})
             if k == "email":
                 email_changed = True
             setattr(u, k, v)
@@ -414,10 +419,20 @@ def update_user(
     u.admin_notes = f"{(u.admin_notes or '').rstrip()}\n{stamp}".strip()
 
     try:
-        db.commit()
+        db.flush()
     except IntegrityError:
         db.rollback()
         raise HTTPException(409, "Email already in use by another user in this tenant")
+
+    record_audit(
+        db,
+        action="Update", resource_type="users", resource_id=u.id,
+        actor_user_id=current.id,
+        field_changes=field_change_entries,
+        metadata={"edited_fields": sorted(changed)},
+        request=request,
+    )
+    db.commit()
     db.refresh(u)
     logging.getLogger("syhomes.auth").info(
         "user_edited actor=%s actor_id=%s target=%s target_id=%s fields=%s",
@@ -429,6 +444,7 @@ def update_user(
 @router.post("/{user_id}/unlock", status_code=204)
 def unlock_user(
     user_id: uuid.UUID,
+    request: Request,
     db: Session = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant_id),
     current: User = Depends(get_current_user),
@@ -456,6 +472,13 @@ def unlock_user(
         f"{datetime.now(timezone.utc).isoformat()}]"
     )
     u.admin_notes = f"{(u.admin_notes or '').rstrip()}\n{stamp}".strip()
+    record_audit(
+        db,
+        action="Status_Change", resource_type="users", resource_id=u.id,
+        actor_user_id=current.id,
+        metadata={"reason": "admin_unlock"},
+        request=request,
+    )
     db.commit()
     logging.getLogger("syhomes.auth").info(
         "user_unlocked actor=%s actor_id=%s target=%s target_id=%s",
@@ -501,6 +524,7 @@ def scrub_user_pii(
 def assign_role(
     user_id: uuid.UUID,
     payload: RoleAssignmentCreate,
+    request: Request,
     db: Session = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant_id),
     current: User = Depends(get_current_user),
@@ -547,6 +571,24 @@ def assign_role(
         for pid in payload.project_ids:
             db.execute(user_role_projects.insert().values(user_role_id=ur.id, project_id=pid))
 
+    record_audit(
+        db,
+        action="Permission_Change", resource_type="users", resource_id=u.id,
+        actor_user_id=current.id,
+        metadata={
+            "kind": "role_assignment",
+            "user_role_id": str(ur.id),
+            "role_code": role.code,
+            "role_id": str(role.id),
+            "entity_scope": payload.entity_scope,
+            "project_scope": payload.project_scope,
+            "entity_ids": [str(e) for e in (payload.entity_ids or [])],
+            "project_ids": [str(p) for p in (payload.project_ids or [])],
+            "view_overrides": list(payload.view_overrides or []),
+            "expires_at": payload.expires_at.isoformat() if payload.expires_at else None,
+        },
+        request=request,
+    )
     db.commit()
     db.refresh(ur)
     return _serialise_role_assignment(db, ur)
@@ -556,6 +598,7 @@ def assign_role(
 def revoke_role(
     user_id: uuid.UUID,
     user_role_id: uuid.UUID,
+    request: Request,
     reason: Optional[str] = None,
     db: Session = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant_id),
@@ -570,5 +613,18 @@ def revoke_role(
     ur.status = "Revoked"
     ur.revoked_at = datetime.now(timezone.utc)
     ur.revoked_by_user_id = current.id
+    role = db.get(Role, ur.role_id)
+    record_audit(
+        db,
+        action="Permission_Change", resource_type="users", resource_id=user_id,
+        actor_user_id=current.id,
+        metadata={
+            "kind": "role_revocation",
+            "user_role_id": str(ur.id),
+            "role_code": role.code if role else None,
+            "reason": reason,
+        },
+        request=request,
+    )
     ur.revoked_reason = reason
     db.commit()
