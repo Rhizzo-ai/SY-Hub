@@ -18,12 +18,16 @@ from alembic import command as alembic_command  # noqa: E402
 from alembic.config import Config as AlembicConfig  # noqa: E402
 
 from app.jobs.insurance_alerts import start_scheduler, stop_scheduler  # noqa: E402
+from app.jobs.planning_expiry import (  # noqa: E402
+    start_planning_expiry_scheduler, stop_planning_expiry_scheduler,
+)
 from app.jobs.role_expiry import start_role_expiry_scheduler, stop_role_expiry_scheduler  # noqa: E402
 from app.routers.audit import router as audit_router  # noqa: E402
 from app.routers.auth import router as auth_router  # noqa: E402
 from app.routers.entities import router as entities_router  # noqa: E402
 from app.routers.login_history import router as login_history_router  # noqa: E402
 from app.routers.meta import router as meta_router  # noqa: E402
+from app.routers.projects import router as projects_router  # noqa: E402
 from app.routers.roles import roles_router, perms_router  # noqa: E402
 from app.routers.sessions import router as sessions_router  # noqa: E402
 from app.routers.users import router as users_router  # noqa: E402
@@ -60,11 +64,13 @@ async def lifespan(app: FastAPI):
         log.exception("RBAC seed failed")
     start_scheduler()
     start_role_expiry_scheduler()
+    start_planning_expiry_scheduler()
     try:
         yield
     finally:
         stop_scheduler()
         stop_role_expiry_scheduler()
+        stop_planning_expiry_scheduler()
 
 
 app = FastAPI(
@@ -93,6 +99,7 @@ api_router.include_router(login_history_router)
 api_router.include_router(roles_router)
 api_router.include_router(perms_router)
 api_router.include_router(entities_router)
+api_router.include_router(projects_router)
 api_router.include_router(meta_router)
 api_router.include_router(audit_router)
 

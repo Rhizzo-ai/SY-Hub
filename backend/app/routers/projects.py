@@ -371,7 +371,7 @@ def get_project(
 
 
 @router.put("/{project_id}")
-def update_project(
+async def update_project(
     project_id: uuid.UUID,
     payload: ProjectUpdate,
     request: Request,
@@ -380,7 +380,13 @@ def update_project(
     perms: UserPermissions = Depends(require_permission("projects.edit")),
     db: Session = Depends(get_db),
 ):
-    if "project_code" in payload.model_dump(exclude_unset=True):
+    # project_code is immutable — reject at the raw body level because
+    # ProjectUpdate pydantic schema deliberately doesn't expose it.
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if isinstance(body, dict) and "project_code" in body:
         raise HTTPException(400, "project_code is immutable after creation")
     p = _get_or_403(db, project_id, current, tenant_id, perms)
     before = {k: getattr(p, k) for k in payload.model_dump(exclude_unset=True).keys()}
