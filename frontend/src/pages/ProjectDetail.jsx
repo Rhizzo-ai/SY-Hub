@@ -523,15 +523,32 @@ function AddTeamMemberModal({ projectId, onClose, onSuccess }) {
 function AuditTab({ projectId }) {
     const [data, setData] = useState({ items: [], total: 0, page: 1, page_size: 50 });
     const [loading, setLoading] = useState(true);
+    const [forbidden, setForbidden] = useState(false);
 
     useEffect(() => {
         setLoading(true);
+        setForbidden(false);
         api.get("/audit", {
             params: { project_id: projectId, page: 1, page_size: 50 },
         })
         .then((r) => setData(r.data))
+        .catch((err) => {
+            if (err?.response?.status === 403) setForbidden(true);
+            else toast.error(err.friendlyMessage || "Failed to load audit");
+        })
         .finally(() => setLoading(false));
     }, [projectId]);
+
+    if (forbidden) {
+        return (
+            <div className="border border-slate-200 rounded-md bg-white p-8 text-center text-sm text-slate-600"
+                 data-testid="audit-forbidden">
+                <AlertTriangle size={18} className="mx-auto text-amber-500 mb-2" />
+                You don't have permission to view audit events. Ask an administrator
+                for <span className="mono">audit.view</span>.
+            </div>
+        );
+    }
 
     return (
         <div className="space-y-4" data-testid="audit-tab">

@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ArrowLeft, Loader2 } from "lucide-react";
 import { api } from "@/lib/api";
+import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
@@ -24,8 +25,17 @@ const HA_TO_ACRES = 2.47105;
 
 export default function ProjectNew() {
     const nav = useNavigate();
+    const { me } = useAuth();
+    const canCreate = (me?.permissions || []).includes("projects.create") || me?.is_super_admin;
     const [saving, setSaving] = useState(false);
     const [entities, setEntities] = useState([]);
+
+    useEffect(() => {
+        if (me && !canCreate) {
+            toast.error("You don't have permission to create projects.");
+            nav("/projects", { replace: true });
+        }
+    }, [me, canCreate, nav]);
 
     const [form, setForm] = useState({
         name: "",
@@ -67,9 +77,11 @@ export default function ProjectNew() {
     };
     const onAcresChange = (v) => {
         set("site_area_acres", v);
-        if (v && !Number.isNaN(parseFloat(v)) && !form.site_area_ha) {
+        if (v && !Number.isNaN(parseFloat(v))) {
             const ha = (parseFloat(v) / HA_TO_ACRES).toFixed(4);
             set("site_area_ha", ha);
+        } else {
+            set("site_area_ha", "");
         }
     };
 
