@@ -104,6 +104,9 @@ during build — log here, address in one focused polish pass.
 - `derive_planning_expiry` uses `date.replace(year=...)` which throws on Feb 29 approvals.
   Fix with `dateutil.relativedelta` or try/except fallback to Feb 28.
 
+### Test infra (post-Patch #2)
+- `pyproject.toml` lives at `/app/backend/pyproject.toml` not repo root. If a future top-level pyproject.toml is added (e.g. for monorepo packaging), pytest discovery may resolve to the wrong one. Add a comment in the file or a CI assertion.
+
 ### 2026-04-20 — Scope expansion decision: full company OS
 
 After completing Prompts 1.1 and 1.2, paused to clarify the long-term
@@ -478,3 +481,110 @@ Stores the JWT ID claim as a session-to-token binding, not a hash of the access 
 - Director stage-override notifications are recorded in audit metadata today;
   actual delivery arrives with the `notifications` table in Prompt 1.7.
 
+### 2026-04-23 — Audit Remediation Patch #2 ✅
+
+Pre-existing audit-coverage gaps surfaced by Claude Code's review of
+Prompts 1.4 + 1.5. None introduced by 1.5; all five fixes ship together.
+
+**I1 — User invite endpoint now writes an audit row**
+- `POST /api/users` previously committed a new user row with
+  `status='Pending_Invitation'` without recording anything in
+  `audit_log`. Forensic blind spot since Prompt 1.2.
+- Wired `record_audit(action='Create', resource_type='users')` between
+  `db.flush()` and `db.commit()` so the user and audit rows commit
+  atomically. `field_changes` carries `email`, `user_type`,
+  `primary_entity_id`, `status`. Sensitive token / credential columns
+  deliberately omitted (NULL or random invitation token at this point —
+  neither belongs in audit). Metadata stamps `action='invite'` and
+  `invited_by`.
+- Endpoint now takes `request: Request` so IP / user-agent are captured
+  on the audit row.
+
+**I2 — PII scrub endpoint now writes an audit row before scrubbing**
+- `POST /api/users/{id}/scrub_pii` is the most destructive single
+  endpoint in the system (GDPR right-to-erasure). It now records a
+  `Delete` audit row BEFORE the scrub runs, so an investigator can
+  reconstruct that a scrub happened and who performed it, without ever
+  exposing the scrubbed PII to the audit log.
+- `field_changes` lists every scrubbed column (email, first_name,
+  last_name, display_name, phone, avatar_url, job_title,
+  primary_entity_id, user_type, status_before) with both `old` and
+  `new` set to the literal string `"[SCRUBBED]"`. The pre-scrub values
+  exist only in a transient Python dict that goes out of scope as soon
+  as the audit row is built.
+- Metadata records `action='pii_scrub'`,
+  `gdpr_basis='right_to_erasure'`, `preserves_fk_integrity=true`.
+- Endpoint now takes `request: Request` for IP / UA capture.
+
+**I3 — Bank fields and UTR added to `SENSITIVE_FIELDS`**
+- Entity audit diffs previously carried `bank_name`,
+  `bank_account_name`, and `bank_account_number_masked` in cleartext.
+  All three now in the redaction set. The masked column is already
+  partially obscured at write time (`****1234`); redacting it
+  consistently in audit diffs simplifies the rule and defends against
+  a future write-path bug that might bypass the mask.
+- Residual discovered during the schema sweep: `entities.utr` (UK
+  Unique Taxpayer Reference) is sensitive PII for sole traders /
+  partnerships and commercially sensitive for SPVs / JV vehicles.
+  Added to `SENSITIVE_FIELDS` in the same patch.
+- Lock test `test_sensitive_fields_set_includes_banking_and_utr`
+  asserts the redaction set contents so future PRs cannot quietly
+  remove these.
+
+**M1 — `audit_log_no_modify` carve-out documented in-line**
+- Added migration `0010_audit_trigger_comment` that
+  `CREATE OR REPLACE`s the trigger function with a block comment
+  explaining the `pg_trigger_depth() > 1` carve-out's safety boundary:
+  the carve-out only admits FK referential actions, and any future
+  trigger that mutates `audit_log` rows from another trigger context
+  would silently bypass the append-only guard.
+- Behaviour byte-identical pre and post; the comment is visible via
+  `\df+ audit_log_no_modify`.
+- Mirroring application-side comment added in
+  `app/services/audit_retention.py` at the `DISABLE TRIGGER USER`
+  call site.
+
+**M7 — Bare `pytest` invocation now works**
+- `tests/conftest.py` uses `from tests.conftest import …` style imports.
+  Without `/app/backend` on `sys.path`, bare `pytest tests/` failed with
+  `ModuleNotFoundError: No module named 'tests'`.
+- Added `/app/backend/pyproject.toml` with three-line
+  `[tool.pytest.ini_options]` block (`pythonpath = ["."]`,
+  `testpaths = ["tests"]`, `addopts = "-q --tb=short"`).
+- README updated with a "Running tests" section showing the bare
+  invocation. `python -m pytest` continues to work and remains the
+  preferred CI form.
+
+**Tests**
+- +7 new in `tests/test_audit_remediation_patch_2.py`. Suite total:
+  314 → **321 passed**, 0 failed, 0 skipped (the previous 1 skipped
+  was a pre-3.11 guard now running on Python 3.11).
+
+**Files touched**
+- `app/routers/users.py` — invite + scrub_pii rewired (request +
+  record_audit + pre-scrub capture).
+- `app/services/audit.py` — `SENSITIVE_FIELDS` += `{bank_name,
+  bank_account_name, bank_account_number_masked, utr}`.
+- `app/services/audit_retention.py` — safety-boundary comment.
+- `alembic/versions/0010_audit_trigger_comment.py` — new (no-op
+  behaviourally; embeds documentation in the live function).
+- `pyproject.toml` — new (pytest config).
+- `README.md` — Running tests section.
+- `tests/test_audit_remediation_patch_2.py` — new (7 tests).
+
+**Deliberately simplified**
+- `bank_account_number_masked` is redacted in audit even though it's
+  already masked at write time. Trade-off: simpler one-line redaction
+  rule and defence-in-depth against a future masking bug, at the cost
+  of slightly less informative diffs (`[REDACTED] → [REDACTED]`
+  instead of `****1234 → ****8901`).
+- No retroactive backfill of `audit_log` for invites and PII scrubs
+  that pre-dated this patch. Going forward only.
+- No new endpoints, no behavioural schema changes. 0010 is a
+  pure-documentation `CREATE OR REPLACE`.
+- `pyproject.toml` lives at `/app/backend/pyproject.toml`, not the repo
+  root. If a future top-level `pyproject.toml` is ever added (e.g. for
+  monorepo packaging), pytest discovery may resolve to the wrong one.
+  Logged to Polish Pass.
+
+  
