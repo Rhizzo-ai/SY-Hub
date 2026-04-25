@@ -23,8 +23,20 @@ variables:
 cd /app/backend
 alembic upgrade head                   # always
 python scripts/seed_test_users.py      # idempotent; creates ~8 test accounts
-python -m pytest tests/ -q             # 160/160 expected
+pytest                                 # configured by pyproject.toml
 ```
+
+## Running tests
+
+```bash
+cd /app/backend
+pytest
+```
+
+The repo-root `pyproject.toml` configures `pythonpath = ["."]` and
+`testpaths = ["tests"]`, so a bare `pytest` invocation discovers the suite
+and resolves `from tests.conftest import …` cleanly. `python -m pytest`
+also works and is preferred in CI.
 
 ## Third-party integrations (Prompt 1.3 stage 1b)
 

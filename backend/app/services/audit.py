@@ -67,6 +67,15 @@ SENSITIVE_FIELDS: frozenset[str] = frozenset({
     "key_hash",
     "access_token_encrypted",
     "refresh_token_encrypted",
+    # Banking PII (Patch #2, 2026-04-23). bank_account_number_masked is
+    # already truncated to ****1234 at write time, but redacting here too
+    # keeps the rule simple and prevents partial-leak via diff timing.
+    "bank_name",
+    "bank_account_name",
+    "bank_account_number_masked",
+    # UK tax identifier — sensitive PII for sole traders / partnerships.
+    # Surfaced as a residual during Patch #2 schema sweep.
+    "utr",
 })
 
 REDACTED = "[REDACTED]"

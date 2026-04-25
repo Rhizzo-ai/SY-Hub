@@ -121,6 +121,16 @@ def purge_old_audit_rows(
 
     # Bypass the append-only trigger for the scope of THIS transaction.
     # The table owner (app DB user) has ALTER rights on user triggers.
+    #
+    # SAFETY BOUNDARY (Patch #2, 2026-04-23):
+    # ENABLE TRIGGER USER lives in a `finally:` block so the trigger is
+    # restored even if the DELETE raises. The DISABLE+DELETE+ENABLE
+    # sequence runs inside this single SQLAlchemy transaction; if commit
+    # fails, both DDL statements roll back together (Postgres treats
+    # ALTER TABLE as transactional). If retention logic is ever called
+    # outside a bounded transaction (e.g. autocommit mode), the trigger
+    # could remain disabled — review this code path on any change to the
+    # surrounding session or scheduler wiring.
     db.execute(text("ALTER TABLE audit_log DISABLE TRIGGER USER"))
     try:
         db.execute(delete(AuditLog).where(AuditLog.id.in_(ids)))

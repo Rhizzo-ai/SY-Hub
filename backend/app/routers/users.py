@@ -292,6 +292,7 @@ def get_user(
 @router.post("", response_model=InviteResponse, status_code=201)
 def invite_user(
     payload: UserCreate,
+    request: Request,
     db: Session = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant_id),
     current: User = Depends(get_current_user),
@@ -331,10 +332,26 @@ def invite_user(
     )
     try:
         db.add(u)
-        db.commit()
+        db.flush()
     except IntegrityError:
         db.rollback()
         raise HTTPException(409, "Email already exists for this tenant")
+    record_audit(
+        db,
+        action="Create", resource_type="users", resource_id=u.id,
+        actor_user_id=current.id,
+        entity_id=u.primary_entity_id,
+        field_changes=[
+            {"field": "email", "old": None, "new": u.email},
+            {"field": "user_type", "old": None, "new": u.user_type},
+            {"field": "primary_entity_id", "old": None,
+             "new": str(u.primary_entity_id) if u.primary_entity_id else None},
+            {"field": "status", "old": None, "new": u.status},
+        ],
+        metadata={"action": "invite", "invited_by": str(current.id)},
+        request=request,
+    )
+    db.commit()
     db.refresh(u)
     return InviteResponse(user=_user_detail(db, u), invitation_token=token_plain)
 
@@ -489,6 +506,7 @@ def unlock_user(
 @router.post("/{user_id}/scrub_pii", status_code=204)
 def scrub_user_pii(
     user_id: uuid.UUID,
+    request: Request,
     db: Session = Depends(get_db),
     tenant_id: uuid.UUID = Depends(get_current_tenant_id),
     current: User = Depends(get_current_user),
@@ -499,6 +517,40 @@ def scrub_user_pii(
     u = db.scalar(select(User).where(User.id == user_id, User.tenant_id == tenant_id))
     if u is None:
         raise HTTPException(404, "User not found")
+
+    # Capture pre-scrub state for forensic audit. Values are used ONLY to
+    # populate the field_changes diff with [SCRUBBED] markers below — the
+    # actual PII never reaches audit_log. The dict goes out of scope as soon
+    # as the audit row is flushed.
+    pre_scrub = {
+        "email": u.email,
+        "first_name": u.first_name,
+        "last_name": u.last_name,
+        "display_name": u.display_name,
+        "phone": u.phone,
+        "avatar_url": u.avatar_url,
+        "job_title": u.job_title,
+        "primary_entity_id": str(u.primary_entity_id) if u.primary_entity_id else None,
+        "user_type": u.user_type,
+        "status_before": u.status,
+    }
+    record_audit(
+        db,
+        action="Delete", resource_type="users", resource_id=u.id,
+        actor_user_id=current.id,
+        entity_id=u.primary_entity_id,
+        field_changes=[
+            {"field": k, "old": "[SCRUBBED]", "new": "[SCRUBBED]"}
+            for k in pre_scrub.keys()
+        ],
+        metadata={
+            "action": "pii_scrub",
+            "gdpr_basis": "right_to_erasure",
+            "preserves_fk_integrity": True,
+        },
+        request=request,
+    )
+
     short_id = str(u.id)[:8]
     u.first_name = "[Deleted User"
     u.last_name = f"{short_id}]"
