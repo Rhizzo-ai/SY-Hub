@@ -195,6 +195,50 @@ class TestRoles:
         assert role_perms["consultant_portal"] == 3  # 1.6: +cost_codes.view
 
 
+class TestSeedRbacRoleGrants:
+    """Lock the cost_codes role-permission grants in ROLE_PERMISSIONS so
+    that seed_rbac.py is authoritative independently of migration 0014.
+
+    Patch 1.6.1 (2026-04-26) — per build-chat audit: migration 0014 was
+    initially the sole source of these grants for non-wildcard roles.
+    seed_rbac was updated alongside the migration in the original 1.6
+    build; these assertions lock the gap closed against future
+    regressions.
+    """
+
+    def test_seed_rbac_grants_cost_codes_view_to_project_manager(self):
+        from app.seed_rbac import ROLE_PERMISSIONS
+        assert "cost_codes.view" in ROLE_PERMISSIONS["project_manager"]
+
+    def test_seed_rbac_grants_cost_codes_view_to_finance(self):
+        from app.seed_rbac import ROLE_PERMISSIONS
+        assert "cost_codes.view" in ROLE_PERMISSIONS["finance"]
+
+    def test_seed_rbac_grants_cost_codes_admin_to_finance(self):
+        from app.seed_rbac import ROLE_PERMISSIONS
+        assert "cost_codes.admin" in ROLE_PERMISSIONS["finance"]
+
+    def test_seed_rbac_grants_cost_codes_view_to_site_manager(self):
+        from app.seed_rbac import ROLE_PERMISSIONS
+        assert "cost_codes.view" in ROLE_PERMISSIONS["site_manager"]
+
+    def test_seed_rbac_grants_cost_codes_view_to_sales(self):
+        from app.seed_rbac import ROLE_PERMISSIONS
+        assert "cost_codes.view" in ROLE_PERMISSIONS["sales"]
+
+    def test_seed_rbac_grants_cost_codes_view_to_read_only(self):
+        from app.seed_rbac import ROLE_PERMISSIONS
+        assert "cost_codes.view" in ROLE_PERMISSIONS["read_only"]
+
+    def test_seed_rbac_grants_cost_codes_view_to_investor_read_only(self):
+        from app.seed_rbac import ROLE_PERMISSIONS
+        assert "cost_codes.view" in ROLE_PERMISSIONS["investor_read_only"]
+
+    def test_seed_rbac_grants_cost_codes_view_to_consultant_portal(self):
+        from app.seed_rbac import ROLE_PERMISSIONS
+        assert "cost_codes.view" in ROLE_PERMISSIONS["consultant_portal"]
+
+
 class TestPermissions:
     def test_permissions_returns_87_permissions(self, admin):
         response = admin.get(f"{BASE_URL}/api/permissions")
