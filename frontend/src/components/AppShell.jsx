@@ -2,9 +2,10 @@ import React from "react";
 import { NavLink, Link, useNavigate } from "react-router-dom";
 import {
     Building2, Users, Layers, Calculator, LineChart, Wallet,
-    CalendarDays, FileText, ShieldCheck, Landmark, Link2, LogOut, KeyRound, Laptop, User as UserIcon, ShieldAlert, ChevronDown, ScrollText,
+    CalendarDays, FileText, ShieldCheck, Landmark, Link2, LogOut, KeyRound, Laptop, User as UserIcon, ShieldAlert, ChevronDown, ScrollText, Settings,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
+import NotificationBell from "@/components/NotificationBell";
 import {
     DropdownMenu,
     DropdownMenuContent,
@@ -22,6 +23,7 @@ const NAV = [
     { label: "Audit Log", to: "/audit", icon: ScrollText, enabled: true, testid: "nav-audit", requires: "audit.view" },
     { label: "Projects", to: "/projects", icon: Layers, enabled: true, testid: "nav-projects", requires: "projects.view" },
     { label: "Cost Codes", to: "/cost-codes", icon: Calculator, enabled: true, testid: "nav-cost-codes", requires: "cost_codes.view" },
+    { label: "System Config", to: "/config", icon: Settings, enabled: true, testid: "nav-config", requires: "system_config.view" },
     { label: "Appraisals", to: "/appraisals", icon: LineChart, enabled: false, testid: "nav-appraisals" },
     { label: "Budgets", to: "/budgets", icon: Wallet, enabled: false, testid: "nav-budgets" },
     { label: "Cash Flow", to: "/cash-flow", icon: Landmark, enabled: false, testid: "nav-cash-flow" },
@@ -101,6 +103,7 @@ export default function AppShell({ children }) {
                                 <ShieldAlert size={12} /> MFA required
                             </Link>
                         )}
+                        <NotificationBell />
                         <DropdownMenu>
                             <DropdownMenuTrigger asChild>
                                 <button

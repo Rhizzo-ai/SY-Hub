@@ -571,6 +571,47 @@ def override_stage(
         },
         request=request,
     )
+
+    # Prompt 1.7 retro-wire: dispatch System_Announcement High to all
+    # directors. Excludes the actor (acting super_admin) themselves.
+    from app.models.rbac import Role, UserRole
+    from app.services.notifications import safe_dispatch
+
+    director_roles = db.scalars(
+        select(Role).where(Role.code.in_(["director"]))
+    ).all()
+    director_role_ids = {r.id for r in director_roles}
+    director_user_ids: set[uuid.UUID] = set()
+    if director_role_ids:
+        urs = db.scalars(
+            select(UserRole).where(
+                UserRole.role_id.in_(director_role_ids),
+                UserRole.status == "Active",
+            )
+        ).all()
+        director_user_ids = {ur.user_id for ur in urs} - {current.id}
+    title = f"Stage override on {p.project_code}: {old} → {payload.new_stage}"
+    body = (
+        f"Super-admin override executed on **{p.project_code}**.\n\n"
+        f"Old stage: {old}\nNew stage: {payload.new_stage}\n"
+        f"Reason: {payload.reason}"
+    )
+    for uid in director_user_ids:
+        safe_dispatch(
+            db,
+            recipient_user_id=uid,
+            notification_type="System_Announcement",
+            title=title,
+            body=body,
+            priority="High",
+            related_resource_type="projects",
+            related_resource_id=p.id,
+            action_url=f"/projects/{p.id}",
+            action_label="View project",
+            actor_user_id=current.id,
+            request=request,
+        )
+
     db.commit()
     db.refresh(p)
     return _serialise(p, perms)

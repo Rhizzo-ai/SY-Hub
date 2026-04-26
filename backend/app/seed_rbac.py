@@ -202,6 +202,11 @@ ROLE_PERMISSIONS["super_admin"] = set(ALL_PERMISSION_CODES)
 # director → all except the explicit exclusions
 ROLE_PERMISSIONS["director"] = set(ALL_PERMISSION_CODES) - {
     "users.admin", "roles.admin", "audit.admin",
+    # Prompt 1.7: system_config.admin is super_admin-only.
+    "system_config.admin",
+    # Editing arbitrary system_config keys also super_admin-only;
+    # column kept on the table for future per-key role gating.
+    "system_config.edit",
 }
 
 # project_manager

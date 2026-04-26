@@ -543,6 +543,28 @@ def mfa_enroll_confirm(
         metadata={"mfa_action": "enrol"},
         request=request,
     )
+    # Prompt 1.7 retro-wire: Security_Alert on MFA enrolment.
+    try:
+        from app.services.notifications import safe_dispatch
+        safe_dispatch(
+            db,
+            recipient_user_id=current.id,
+            notification_type="Security_Alert",
+            title="Two-factor authentication enabled",
+            body=(
+                "MFA (TOTP) was enrolled on your account. Keep your backup "
+                "codes somewhere safe — they're the only way back in if "
+                "you lose your authenticator app."
+            ),
+            priority="High",
+            related_resource_type="users",
+            related_resource_id=current.id,
+            action_url="/profile/security",
+            action_label="View security",
+            request=request,
+        )
+    except Exception:
+        pass
 
     access_token = None
     refresh_token = None
@@ -586,6 +608,27 @@ def mfa_disable(
         metadata={"mfa_action": "disable"},
         request=request,
     )
+    # Prompt 1.7 retro-wire: Security_Alert on MFA disable.
+    try:
+        from app.services.notifications import safe_dispatch
+        safe_dispatch(
+            db,
+            recipient_user_id=current.id,
+            notification_type="Security_Alert",
+            title="Two-factor authentication disabled",
+            body=(
+                "MFA was disabled on your account. If this wasn't you, "
+                "change your password immediately and re-enable MFA."
+            ),
+            priority="High",
+            related_resource_type="users",
+            related_resource_id=current.id,
+            action_url="/profile/security",
+            action_label="Re-enable MFA",
+            request=request,
+        )
+    except Exception:
+        pass
     db.commit()
 
 
@@ -841,6 +884,28 @@ def password_reset_request(
                    template_id="password_reset_email")
         log_event(db, event_type="Password_Reset_Requested", email_attempted=email,
                   user_id=user.id, ip=ip, user_agent=ua)
+        # Prompt 1.7 retro-wire: in-app Security_Alert.
+        try:
+            from app.services.notifications import safe_dispatch
+            safe_dispatch(
+                db,
+                recipient_user_id=user.id,
+                notification_type="Security_Alert",
+                title="Password reset requested",
+                body=(
+                    "A password reset was requested for your account. "
+                    "If this wasn't you, change your password and review "
+                    "your active sessions immediately."
+                ),
+                priority="High",
+                related_resource_type="users",
+                related_resource_id=user.id,
+                action_url="/profile/sessions",
+                action_label="View sessions",
+                request=request,
+            )
+        except Exception:
+            pass
     else:
         log_event(db, event_type="Password_Reset_Requested", email_attempted=email,
                   ip=ip, user_agent=ua, metadata={"outcome": "no_account_or_not_active"})

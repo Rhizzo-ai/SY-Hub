@@ -186,13 +186,15 @@ class TestRoles:
         assert len(roles) == 10
         role_perms = {r["code"]: r["permission_count"] for r in roles}
         assert role_perms["super_admin"] == 87
-        assert role_perms["director"] == 84
+        # 1.7: director loses system_config.{admin,edit} (super_admin only).
+        assert role_perms["director"] == 82
         assert role_perms["project_manager"] >= 30
         assert role_perms["finance"] >= 25
-        assert role_perms["read_only"] == 8  # 1.6: +cost_codes.view
-        assert role_perms["investor_read_only"] == 3  # 1.6: +cost_codes.view
-        assert role_perms["subcontractor_portal"] == 2
-        assert role_perms["consultant_portal"] == 3  # 1.6: +cost_codes.view
+        # 1.7: +system_config.view granted to all 10 roles.
+        assert role_perms["read_only"] == 9  # 1.6: +cost_codes.view, 1.7: +system_config.view
+        assert role_perms["investor_read_only"] == 4  # 1.6: +cost_codes.view, 1.7: +system_config.view
+        assert role_perms["subcontractor_portal"] == 3  # 1.7: +system_config.view
+        assert role_perms["consultant_portal"] == 4  # 1.6: +cost_codes.view, 1.7: +system_config.view
 
 
 class TestSeedRbacRoleGrants:
