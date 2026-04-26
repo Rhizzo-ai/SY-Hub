@@ -311,9 +311,22 @@ Full suite: **160 passed, 1 skipped, 0 failed** (was 135 → +25).
 - PII scrub UI confirmation dialog → Prompt 1.7 (Notifications gives us a confirm UX pattern)
 
 ## Prioritised Backlog (Foundation 1.1 → 1.7)
-- **P0**: 1.3 Sessions/Login History/Invitations/SSO/API Keys; 1.4 Audit log (with retroactive hooks on entities & user_role changes); 1.5 Projects; 1.6 (reserved); 1.7 Notifications (closes the `_emit_alert` log hook).
-- **P1**: Modules 2–10 (Projects, Cost Codes, Appraisals, Budgets, Cash Flow, Programme, Documents, Compliance).
+- **P0**: ✅ 1.3 Sessions/Login History/Invitations/SSO/API Keys; ✅ 1.4 Audit log; ✅ 1.5 Projects; ✅ 1.6 Cost Codes; ✅ **1.7 System Config + Notifications** — Foundation track CLOSED 26 Apr 2026.
+- **P1**: Modules 2–10 (Appraisals, Budgets, Cash Flow, Programme, Documents, Compliance, Sales).
 - **P2**: Xero OAuth (5.1), Bank feed, Group consolidation, Multi-tenancy surfacing.
+
+## Prompt 1.7 — System Config + Notifications (26 Apr 2026)
+- ✅ `system_config` table + 38-key seed across 9 populated categories (Finance:3, Appraisal:8, Budget:5, Programme:4, Security:7, Integration:2, Notification:5, Reporting:2, Audit:2). Categories `Document`, `CashFlow`, `System` reserved in enum for future seeds.
+- ✅ `notifications` table (15-type enum × 4-priority enum, 22 columns, 3 indexes incl. partial on `expires_at IS NOT NULL`).
+- ✅ `SystemConfig` singleton service with in-memory cache + `set/restore/invalidate`. Typed parse/serialise for String/Integer/Decimal/Boolean/JSON/Date.
+- ✅ `NotificationService.dispatch(...)` + `safe_dispatch(...)` wrapper. High|Critical → email via existing ConsoleEmailProvider. SMS branch logs `# TODO[SMS]` (deferred). Defaults expires_at to `now + auto_expire_days` (config-driven).
+- ✅ Endpoints under `/api/v1/system-config` (GET list/grouped, GET one, PUT, POST restore) and `/api/v1/notifications` (GET inbox/filtered, GET unread/lazy-grouped, GET unread-count, PATCH read, PATCH dismiss, POST mark-all-read).
+- ✅ APScheduler jobs (in-memory single-process): `notification_expiry_sweep` (daily 03:00 UTC) and `audit_retention_sweep` (daily 03:00 UTC, gated off by default via `audit.retention_purge_enabled`).
+- ✅ Retro-wires: planning expiry sweep → Deadline_Approaching; stage override → System_Announcement High to all directors; insurance `_emit_alert` → Insurance_Expiry High/Critical; password reset request, MFA enrol, MFA disable → Security_Alert High to user. Post-build grep for `TODO[NOTIFY]` returns ZERO hits.
+- ✅ RBAC: `system_config.view` granted to all 10 roles; `system_config.admin` super_admin only. Director loses `system_config.{admin,edit}` (count drops 84→82). Permission count remains 87 (codes were already in the catalogue from defensive earlier seeding; no new codes added).
+- ✅ Frontend: `/config` grouped editor (typed inputs, Restore button, lock icon, read-only pill), navbar bell with 30s polling (`<NotificationBell>`), `/notifications` inbox with filters + bulk actions.
+- ✅ Tests: 55 new across `test_system_config.py` (~22), `test_notifications.py` (~20), `test_scheduler_jobs.py` (~6), `test_retro_wires.py` (~7). Total suite **457/457** passing (402 baseline + 55).
+- 📋 Polish Pass: persistent APScheduler jobstore for multi-process prod; per-key `minimum_role_to_edit` enforcement; notification body sensitive-field redaction; dispatch queue/worker; tighten `cost_codes` permission catalogue; render read-only ConfigPage values as `<input disabled>` for tooling parity; migrate older `/api/*` routes onto `/api/v1/*`.
 
 ## Process Commitments
 - Never silently defer agreed standards — surface deviations in-channel before changing course.

@@ -124,6 +124,8 @@ function ConfigRow({ row, canEdit, onSave, onRestore }) {
                         disabled={!canEdit || row.is_system_locked}
                         className={`text-sm font-mono px-2 py-1 rounded border w-full text-left ${canEdit && !row.is_system_locked ? "border-slate-200 hover:border-slate-400 bg-white" : "border-slate-100 bg-slate-50 text-slate-500 cursor-not-allowed"}`}
                         data-testid={`config-display-${row.config_key}`}
+                        data-readonly={!canEdit || row.is_system_locked ? "true" : "false"}
+                        data-config-value={row.raw_value}
                     >
                         {row.raw_value}
                     </button>
