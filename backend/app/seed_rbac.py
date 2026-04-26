@@ -218,6 +218,7 @@ ROLE_PERMISSIONS["project_manager"] = {
     "documents.view", "documents.create", "documents.edit",
     "document_registers.view", "document_registers.edit",
     "certificates.view",
+    "cost_codes.view",
     "reports.view", "reports.export",
     "entities.view",
 }
@@ -232,6 +233,7 @@ ROLE_PERMISSIONS["finance"] = {
     "commitments.view", "commitments.view_sensitive",
     "budget_changes.view", "budget_changes.approve",
     "cash_flow.view", "cash_flow.view_sensitive", "cash_flow.edit",
+    "cost_codes.view", "cost_codes.admin",
     "xero_connections.view", "xero_connections.admin",
     "xero_bills.view", "xero_invoices.view", "xero_sync.admin", "xero_sync.view",
     "reports.view", "reports.export",
@@ -247,12 +249,14 @@ ROLE_PERMISSIONS["site_manager"] = {
     "documents.view", "documents.create",
     "document_registers.view", "document_registers.edit",
     "certificates.view",
+    "cost_codes.view",
     "entities.view",
 }
 
 # sales
 ROLE_PERMISSIONS["sales"] = {
     "projects.view",
+    "cost_codes.view",
     "reports.view",
     "entities.view",
 }
@@ -260,12 +264,13 @@ ROLE_PERMISSIONS["sales"] = {
 # read_only
 ROLE_PERMISSIONS["read_only"] = {
     "entities.view", "projects.view", "appraisals.view", "budgets.view",
+    "cost_codes.view",
     "programmes.view", "documents.view", "reports.view",
 }
 
 # investor_read_only
 ROLE_PERMISSIONS["investor_read_only"] = {
-    "projects.view", "reports.view",
+    "projects.view", "cost_codes.view", "reports.view",
 }
 
 # subcontractor_portal
@@ -276,6 +281,7 @@ ROLE_PERMISSIONS["subcontractor_portal"] = {
 # consultant_portal
 ROLE_PERMISSIONS["consultant_portal"] = {
     "documents.view", "documents.create",
+    "cost_codes.view",
 }
 
 

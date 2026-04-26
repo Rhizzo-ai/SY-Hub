@@ -199,6 +199,11 @@ export default function ProjectDetail() {
                         {t.l}
                     </button>
                 ))}
+                <Link to={`/projects/${project.id}/cost-codes`}
+                      className="pb-2 text-sm font-medium text-slate-500 hover:text-slate-700"
+                      data-testid="tab-cost-codes">
+                    Cost Codes
+                </Link>
             </nav>
 
             {tab === "overview" && (

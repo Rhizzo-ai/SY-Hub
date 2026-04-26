@@ -21,7 +21,7 @@ const NAV = [
     { label: "Permissions", to: "/permissions", icon: KeyRound, enabled: true, testid: "nav-permissions" },
     { label: "Audit Log", to: "/audit", icon: ScrollText, enabled: true, testid: "nav-audit", requires: "audit.view" },
     { label: "Projects", to: "/projects", icon: Layers, enabled: true, testid: "nav-projects", requires: "projects.view" },
-    { label: "Cost Codes", to: "/cost-codes", icon: Calculator, enabled: false, testid: "nav-cost-codes" },
+    { label: "Cost Codes", to: "/cost-codes", icon: Calculator, enabled: true, testid: "nav-cost-codes", requires: "cost_codes.view" },
     { label: "Appraisals", to: "/appraisals", icon: LineChart, enabled: false, testid: "nav-appraisals" },
     { label: "Budgets", to: "/budgets", icon: Wallet, enabled: false, testid: "nav-budgets" },
     { label: "Cash Flow", to: "/cash-flow", icon: Landmark, enabled: false, testid: "nav-cash-flow" },

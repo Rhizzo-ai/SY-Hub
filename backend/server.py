@@ -24,6 +24,7 @@ from app.jobs.planning_expiry import (  # noqa: E402
 from app.jobs.role_expiry import start_role_expiry_scheduler, stop_role_expiry_scheduler  # noqa: E402
 from app.routers.audit import router as audit_router  # noqa: E402
 from app.routers.auth import router as auth_router  # noqa: E402
+from app.routers.cost_codes import router as cost_codes_router  # noqa: E402
 from app.routers.entities import router as entities_router  # noqa: E402
 from app.routers.login_history import router as login_history_router  # noqa: E402
 from app.routers.meta import router as meta_router  # noqa: E402
@@ -100,6 +101,7 @@ api_router.include_router(roles_router)
 api_router.include_router(perms_router)
 api_router.include_router(entities_router)
 api_router.include_router(projects_router)
+api_router.include_router(cost_codes_router)
 api_router.include_router(meta_router)
 api_router.include_router(audit_router)
 

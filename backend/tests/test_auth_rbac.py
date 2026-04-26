@@ -189,10 +189,10 @@ class TestRoles:
         assert role_perms["director"] == 84
         assert role_perms["project_manager"] >= 30
         assert role_perms["finance"] >= 25
-        assert role_perms["read_only"] == 7
-        assert role_perms["investor_read_only"] == 2
+        assert role_perms["read_only"] == 8  # 1.6: +cost_codes.view
+        assert role_perms["investor_read_only"] == 3  # 1.6: +cost_codes.view
         assert role_perms["subcontractor_portal"] == 2
-        assert role_perms["consultant_portal"] == 2
+        assert role_perms["consultant_portal"] == 3  # 1.6: +cost_codes.view
 
 
 class TestPermissions:

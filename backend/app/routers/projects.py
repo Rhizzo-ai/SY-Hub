@@ -341,6 +341,19 @@ def create_project(
                                       "status": p.status}),
         request=request,
     )
+
+    # Auto-populate project_cost_codes per project_type (Prompt 1.6 §F).
+    from app.services.cost_codes import auto_populate_project_cost_codes
+    counts = auto_populate_project_cost_codes(db, p)
+    record_audit(
+        db, action="Create", resource_type="project_cost_codes",
+        resource_id=p.id, actor_user_id=current.id,
+        entity_id=p.primary_entity_id, project_id=p.id,
+        field_changes=[],
+        metadata={"kind": "bulk_auto_populate", **counts},
+        request=request,
+    )
+
     db.commit()
     db.refresh(p)
     return _serialise(p, perms)
