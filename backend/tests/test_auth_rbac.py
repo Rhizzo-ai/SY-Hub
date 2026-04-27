@@ -143,7 +143,7 @@ class TestAuthMe:
         assert response.status_code == 200
         data = response.json()
         assert data["is_super_admin"] is True
-        assert len(data["permissions"]) == 87
+        assert len(data["permissions"]) == 81
         assert data["email"] == TEST_ADMIN_EMAIL
 
     def test_me_unauthenticated_returns_401(self):
@@ -185,9 +185,11 @@ class TestRoles:
         roles = response.json()
         assert len(roles) == 10
         role_perms = {r["code"]: r["permission_count"] for r in roles}
-        assert role_perms["super_admin"] == 87
-        # 1.7: director loses system_config.{admin,edit} (super_admin only).
-        assert role_perms["director"] == 82
+        assert role_perms["super_admin"] == 81
+        # Patch #3: director loses 4 orphan grants (cost_codes.{create,edit,
+        # delete} + notifications.edit). notifications.view was already
+        # excluded by being ungranted. 82 - 5 = 77.
+        assert role_perms["director"] == 77
         assert role_perms["project_manager"] >= 30
         assert role_perms["finance"] >= 25
         # 1.7: +system_config.view granted to all 10 roles.

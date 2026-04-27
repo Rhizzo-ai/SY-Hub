@@ -162,9 +162,12 @@ def seed_system_config(db: Session | None = None) -> int:
         db.execute(insert(SystemConfig), rows)
 
         # Single summary audit row.
+        # Patch #3: action='Seed_Run' (was 'Create'). Enum value is
+        # added by migration 0017; lifespan-time this runs AFTER all
+        # migrations so the value is always present.
         db.add(AuditLog(
             actor_user_id=None,
-            action="Create",
+            action="Seed_Run",
             resource_type="system_config",
             resource_id=uuid.uuid4(),
             field_changes=[],

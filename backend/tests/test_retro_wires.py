@@ -311,10 +311,11 @@ class TestPermissionsCatalogue:
         db = SessionLocal()
         try:
             total = db.scalar(select(func.count()).select_from(Permission))
-            # Pre-1.7 baseline = 87. Prompt 1.7 spec said "+2"; the
-            # catalogue already carried system_config + notifications
-            # codes from earlier prompts (defensive seeding), so the
-            # actual delta is 0. Total stays at 87.
-            assert total == 87
+            # Pre-1.7 baseline was 87. Patch #3 (Patch #3 — End-of-Foundation
+            # Audit Remediation) removes 6 orphan permission codes that no
+            # route enforces: cost_codes.{create,edit,delete},
+            # system_config.edit, notifications.{view,edit}. Post-Patch-#3
+            # total is 81.
+            assert total == 81
         finally:
             db.close()

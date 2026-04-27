@@ -4,10 +4,13 @@ Revision ID: 0012_cost_code_sections_seed
 Revises: 0011_cost_codes
 
 Bulk seed migration; emits a single audit summary row instead of
-per-section audit (Prompt 1.6 §I). Uses action='Create' with
-resource_type='migration' and a UUID5 derived from the revision so
-the resource_id column (non-null UUID) is satisfied without polluting
-the audit_action enum.
+per-section audit (Prompt 1.6 §I).
+
+Patch #3 update: emits `action='Seed_Run'` (was 'Create'). The enum
+value is added idempotently at the top of this migration via
+`ALTER TYPE ... ADD VALUE IF NOT EXISTS` inside an autocommit block, so
+a fresh DB chain (0012 before 0017) still succeeds. Existing DBs are
+unaffected — this migration already ran and won't re-execute.
 """
 import json
 import uuid
@@ -43,6 +46,13 @@ SECTIONS = [
 
 
 def upgrade() -> None:
+    # Patch #3: make `Seed_Run` available to this migration on fresh
+    # DBs (it's officially added in 0017; IF NOT EXISTS makes re-run
+    # safe). Must be in an autocommit block — Postgres forbids using a
+    # newly-added enum value in the same transaction that added it.
+    with op.get_context().autocommit_block():
+        op.execute("ALTER TYPE audit_action ADD VALUE IF NOT EXISTS 'Seed_Run'")
+
     bind = op.get_bind()
     inserted = 0
     for code, name, order, direct, p_and_l in SECTIONS:
@@ -61,7 +71,7 @@ def upgrade() -> None:
         INSERT INTO audit_log
             (id, action, resource_type, resource_id, field_changes,
              metadata_json, created_at)
-        VALUES (gen_random_uuid(), 'Create', 'migration', :rid,
+        VALUES (gen_random_uuid(), 'Seed_Run', 'migration', :rid,
                 CAST('[]' AS jsonb), CAST(:meta AS jsonb), :now)
     """), {
         "rid": str(rev_uuid),

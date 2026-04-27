@@ -76,7 +76,7 @@ PERMISSION_CATALOGUE += _perms_for(
 )
 PERMISSION_CATALOGUE += _perms_for(
     "cost_codes",
-    include=["view", "create", "edit", "delete", "admin"],
+    include=["view", "admin"],
 )
 PERMISSION_CATALOGUE += _perms_for(
     "appraisals",
@@ -142,13 +142,11 @@ PERMISSION_CATALOGUE += _perms_for(
 )
 PERMISSION_CATALOGUE += _perms_for(
     "system_config",
-    include=["view", "edit", "admin"],
+    include=["view", "admin"],
     sensitive={"admin"},
 )
-PERMISSION_CATALOGUE += _perms_for(
-    "notifications",
-    include=["view", "edit"],
-)
+# Patch #3: `notifications.{view,edit}` retired — routes use own-only auth
+# (recipient_user_id == current.id), not permission codes.
 PERMISSION_CATALOGUE += _perms_for(
     "reports",
     include=["view", "export"],
@@ -204,9 +202,6 @@ ROLE_PERMISSIONS["director"] = set(ALL_PERMISSION_CODES) - {
     "users.admin", "roles.admin", "audit.admin",
     # Prompt 1.7: system_config.admin is super_admin-only.
     "system_config.admin",
-    # Editing arbitrary system_config keys also super_admin-only;
-    # column kept on the table for future per-key role gating.
-    "system_config.edit",
 }
 
 # project_manager

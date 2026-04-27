@@ -17,6 +17,10 @@ AUDIT_ACTIONS = (
     "Login", "Logout",
     "Export", "Permission_Change",
     "Stage_Change", "Status_Change",
+    # Patch #3: bulk seed runs from canonical catalogues emit Seed_Run
+    # (was 'Create' + metadata.kind='seed_run'). See
+    # /app/backend/alembic/versions/0017_audit_remediation_patch_3.py.
+    "Seed_Run",
 )
 
 
