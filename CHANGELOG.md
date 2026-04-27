@@ -587,4 +587,136 @@ Prompts 1.4 + 1.5. None introduced by 1.5; all five fixes ship together.
   monorepo packaging), pytest discovery may resolve to the wrong one.
   Logged to Polish Pass.
 
-  
+### 2026-04-24 — Prompt 1.6 — Cost Codes ✅
+
+Reference data for the financial spine. Built before any module that posts costs (appraisals, budgets, actuals, commitments, cash flow) so they all reference a stable catalogue.
+
+**Schema (Alembic 0011, 0012, 0013, 0014):**
+- 5 new tables: `cost_code_sections`, `cost_codes`, `project_cost_codes`, plus supporting structures.
+- 9 sections seeded from `SY_Homes_Cost_Codes.xlsx` source spreadsheet.
+- 133 cost codes seeded across the 9 sections.
+- Codes follow `{PREFIX}-{NNN}` format (3-char alphanumeric prefix from section, zero-padded sequence). Codes are immutable post-use; cosmetic + entity-routing fields remain editable.
+- Retire-with-`replaced_by_code_id` pattern: codes can be retired pointing at a successor; never hard-deleted. Same pattern likely to recur for other catalogues.
+
+**Backend:**
+- `app/services/cost_codes.py` — section + code services with section/code validation, immutability checks against `is_cost_code_in_use()`, retire-with-replaced_by, idempotent seed.
+- `is_cost_code_in_use()` currently checks `project_cost_codes` only. TODO comments mark Phase 2 join points (appraisals 2.2, budgets 2.4, actuals + commitments 2.5).
+- Bulk seeds emit one summary audit entry per run (`metadata.kind='seed_run'`), not per-row.
+- 18 endpoints across `/api/cost-codes` and `/api/cost-code-sections` (list, get, create, update, retire, project assignment).
+
+**Frontend:**
+- `/cost-codes` admin page — sectioned list with inline edit, retire flow, retired-toggle, project-scope view.
+
+**Permissions:**
+- Pre-1.6 baseline: 87. 1.6 added 2 (`cost_codes.view`, `cost_codes.admin`). Catalogue had also defensively pre-seeded `cost_codes.create / .edit / .delete` from earlier prompts; those remain orphan and are flagged for the end-of-Foundation audit (Patch #3).
+
+**Tests:**
+- +73 in `tests/test_cost_codes.py`. Schema, seeds, immutability lock, retire pattern, project assignment, audit wiring, RBAC.
+- Suite total: 321 → 394 passed / 0 failed / 0 skipped.
+
+**Deliberately simplified:**
+- Xero account mapping deferred to Track 5 (Xero integration). The column exists on `cost_codes` but is null at seed.
+- No per-project custom codes — catalogue is closed. Add via Polish Pass if a project genuinely needs a one-off.
+- Hierarchy is flat: section → code, no sub-sections.
+
+**Spec deviations:**
+- Spec mentioned 11 sections / ~120 codes; actual seed from the source spreadsheet is 9 sections / 133 codes. Source spreadsheet is canonical.
+- SER-06 vs SER-10 surfaced as duplicate lift installation codes from the source spreadsheet. Both seeded as-is; flagged for end-of-Foundation audit (one to be retired pointing at the other).
+
+**Residuals (flagged for Patch #3):**
+- Orphan `cost_codes.create`, `cost_codes.edit`, `cost_codes.delete` permissions.
+- SER-06 / SER-10 duplicate to be reconciled via retire-with-replaced_by.
+- Audit log action enum compromise: bulk seeds use `action='Create'` plus `metadata.kind='seed_run'`. Reconsider whether to add `Bulk_Insert` / `Bulk_Toggle` / `Seed_Run` as first-class enum values.
+
+---
+
+### 2026-04-25 — Prompt 1.6 Patch 1.6.1 — seed_rbac role-grant verification ✅
+
+Audit of `seed_rbac.py` after 1.6 ship found that cost_codes was added to `PERMISSION_CATALOGUE` but the role-permission grants were only added to migration 0014, not to the `ROLE_PERMISSIONS` dicts in `seed_rbac.py`. This meant migration 0014 was the only source of those grants, and any fresh-boot / new-tenant / re-seeded scenario would silently drop the grants for non-wildcard roles.
+
+Tests passed because migrations run during test setup. But seed_rbac is supposed to be idempotent and authoritative — it wasn't.
+
+**Fix:**
+- `seed_rbac.py` updated so `ROLE_PERMISSIONS` dicts include the cost_codes grants directly. Migration 0014 retained as historical record.
+- Idempotent on existing migrated DBs: re-running seed produces no changes.
+- Fresh-boot scenarios now grant correctly without needing migration 0014 to be the source of truth.
+
+**Tests:**
+- +8 lock tests in `tests/test_seed_rbac_locks.py` asserting that `ROLE_PERMISSIONS` contents match expected grants for cost_codes (and existing 1.2 / 1.4 / 1.5 grants). Catches future drift between seed_rbac and migration history.
+- Suite total: 394 → 402 passed / 0 failed / 0 skipped.
+
+**Deliberately simplified:**
+- No retroactive consolidation of migration 0014 into seed_rbac as the single source of truth. Migration stays as historical record; seed_rbac is now also authoritative going forward.
+
+---
+
+## [0.7.0] — Prompt 1.7 — System Config + Notifications — 2026-04-26
+
+### Added
+- `system_config` table (Alembic 0015) — typed key/value store with `default_value` snapshot column for /restore. Categories enum extended with `Audit` and `System`.
+- `system_config` 38-key seed (`app/seed_system_config.py`, called from lifespan after `seed_rbac`) across 9 populated categories: Finance(3), Appraisal(8), Budget(5), Programme(4), Security(7), Integration(2), Notification(5), Reporting(2), Audit(2). One summary audit row per seed run.
+- `notifications` table (Alembic 0015) — 15-type × 4-priority enums, 22 columns, 3 indexes incl. partial on `expires_at IS NOT NULL`, `ON DELETE CASCADE` on `recipient_user_id`.
+- `app/services/system_config.py` — singleton with thread-safe in-memory cache, typed `_parse`/`_serialise`, `get`/`get_or_default`/`set_value`/`restore`/`invalidate`/`list_all`. `_query_count_for` exposed for tests.
+- `app/services/notifications.py` — `dispatch(...)` (synchronous) + `safe_dispatch(...)` (never raises into business path). Defaults `expires_at` to `now + notification.auto_expire_days`. Email via existing `ConsoleEmailProvider` for High|Critical only. SMS branch logs `# TODO[SMS]` (scaffolded). Records audit Create.
+- `app/services/notification_grouping.py` — read-time bucket-by-(type, hour-bucket) with config-driven threshold and window.
+- `app/routers/system_config.py` — under `/api/v1/system-config`: GET list grouped, GET one, PUT, POST restore.
+- `app/routers/notifications.py` — under `/api/v1/notifications`: GET inbox (filters+pagination), GET unread (lazy-grouped, 50 cap), GET unread-count, PATCH read, PATCH dismiss, POST mark-all-read.
+- New API mount: `APIRouter(prefix="/v1")` containing `system_config` + `notifications` mounted under `/api`. Pre-existing `/api/*` routes untouched.
+- `app/jobs/notification_expiry.py` — APScheduler BackgroundScheduler, daily 03:00 UTC bulk dismiss with one summary audit row.
+- `app/jobs/audit_retention.py` — APScheduler BackgroundScheduler, daily 03:00 UTC, gated by `audit.retention_purge_enabled` (default false). Calls existing `purge_old_audit_rows`; 7-year hard floor enforced inside the purge module.
+- `lifespan(...)` in `server.py` now calls `seed_system_config_role_grants()` then `seed_system_config()` after `seed_rbac()`, and starts/stops both new schedulers cleanly.
+- Frontend pages: `src/pages/ConfigPage.jsx`, `src/pages/NotificationsPage.jsx`. Frontend component: `src/components/NotificationBell.jsx`. Routes wired in `src/App.js`. Navbar item + bell injected in `src/components/AppShell.jsx`. All elements carry `data-testid`.
+- Tests: 55 new across `tests/test_system_config.py`, `tests/test_notifications.py`, `tests/test_scheduler_jobs.py`, `tests/test_retro_wires.py`. Total suite 457 passing.
+
+### Changed
+- `app/seed_rbac.py` — `ROLE_PERMISSIONS["director"]` now also excludes `system_config.admin` and `system_config.edit` (super_admin-only per spec). Director permission count: 84 → 82.
+- `app/seed_system_config.seed_system_config_role_grants()` — grants `system_config.view` to all 10 roles AND revokes any pre-existing non-super_admin grants of `system_config.{admin,edit}` (one-shot cleanup; idempotent).
+- `app/scheduler.py::planning_expiry_sweep` — now dispatches `Deadline_Approaching` notifications (priority Critical past expiry, High ≤30d, Normal otherwise) to project_lead + scoped/unscoped directors, in addition to returning the existing payload list.
+- `app/jobs/insurance_alerts.py::_emit_alert` — calls `_dispatch_insurance_alert` to send `Insurance_Expiry` notifications (Critical at expired/0_day, High otherwise) to directors with view access to the entity. Best-effort; never blocks the alert loop.
+- `app/routers/projects.py` stage override — dispatches `System_Announcement` priority High to all directors (excluding the actor super_admin) on top of the existing audit metadata.
+- `app/routers/auth.py` — password reset request, MFA enrol confirm, MFA disable now each dispatch a `Security_Alert` priority High to the affected user.
+- `tests/test_auth_rbac.py::test_roles_returns_10_seeded_roles` — updated assertions for post-1.7 role counts: read_only 9, investor_read_only 4, subcontractor_portal 3, consultant_portal 4, director 82.
+- `app/services/system_config.invalidate(...)` — preserves the cumulative DB-hit counter across invalidations (test diagnostic only).
+
+### Retro-wires (TODO[NOTIFY] closed)
+- ✅ Planning expiry sweep → `Deadline_Approaching` to project_lead + directors. (`app/scheduler.py`)
+- ✅ Stage override → `System_Announcement` priority High to all directors. (`app/routers/projects.py`)
+- ✅ Insurance `_emit_alert` → `Insurance_Expiry` priority High (Critical at expired/0-day) to directors with view access. (`app/jobs/insurance_alerts.py`)
+- ✅ Password reset request → `Security_Alert` priority High to user. (`app/routers/auth.py`)
+- ✅ MFA enrol confirm → `Security_Alert` priority High to user. (`app/routers/auth.py`)
+- ✅ MFA disable → `Security_Alert` priority High to user. (`app/routers/auth.py`)
+- ✅ Login-from-new-device — confirmed deferred to 1.3 stage 2; not yet present in code, no retro-wire required.
+- Post-build grep for `TODO[NOTIFY]` and known siblings (`TODO: notify`, `notification placeholder`, `notification stub`, `notification scaffolded`, `Prompt 1.7 will`, `Prompt 1.7 lands`): **ZERO hits**.
+
+### Spec deviations
+- **Endpoints under `/api/v1/...` while existing app uses `/api/...`** — followed the spec verbatim. Pre-existing `/api/*` routes are untouched. Polish Pass entry to migrate older modules to `/api/v1` on a per-prompt basis.
+- **`system_config` extra column `default_value`** — required to support the spec's "Restore to default" UI without re-running seed. Snapshotted at insert time.
+- **`system_config_category` enum extended with `Audit` and `System`** — needed to host `audit.retention_*` keys.
+- **Permission count delta = 0, not +2** — spec said "+2" but `system_config.view`, `system_config.admin`, `system_config.edit`, `notifications.view`, `notifications.edit` were already present in `PERMISSION_CATALOGUE` from defensive earlier seeding. We added zero new codes; we tightened role grants instead. Total stays at 87.
+- **Director loses `system_config.{admin,edit}`** — required to make `system_config.admin` super_admin-only as spec'd. Director permission count drops 84 → 82.
+- **`audit_retention_sweep` does not accept a `years` argument** — current `purge_old_audit_rows` enforces a fixed 7-year floor at the module level; we log the requested `audit.retention_years` for visibility and respect the hard floor regardless.
+
+### Deliberately simplified
+- Single `BackgroundScheduler` per job module rather than a single shared scheduler — keeps each job's lifecycle independent and matches the existing pattern set by `insurance_alerts.py` / `planning_expiry.py`. Polish Pass: consolidate.
+- `ConfigPage` read-only state renders the value inside a disabled `<button>` (with `data-readonly` + `data-config-value` attributes) rather than `<input disabled>`. Functional and testable; not yet form-element-pure.
+- Notifications `body` is plain markdown-ish text passed straight to `<div>`. No Markdown renderer pulled in. Polish Pass.
+- Frontend bell polls every 30s; no WebSocket push.
+- Notification grouping is read-time only on `/unread`. Full inbox is ungrouped.
+
+### Residuals / surfaced during build
+- Existing pytest fixture `login_with_auto_enroll` caches the TOTP secret in-process. Browser-driven super_admin testing (e.g. `/config` write path) cannot ride that cache. Validated via 23 pytest tests instead. Future: add a non-MFA super_admin fixture user, or expose a CI flag to skip MFA enforcement on `test-admin@example.test`.
+- Pre-existing ruff lint warning `email.py:91 F841 Local variable 'key' is assigned to but never used` predates 1.7 and was not touched.
+- `app/scheduler.py::planning_expiry_sweep` and `_emit_alert` keep their existing log lines alongside the new notification dispatches (belt-and-braces during cutover).
+
+### Polish Pass items added to log
+1. Persistent APScheduler jobstore (SQLAlchemy or Redis) so multi-worker production doesn't double-fire.
+2. Notification body sensitive-field scrubbing — currently bodies may embed resource references (project codes, dates).
+3. Tighten `cost_codes` permission catalogue (carry-over from spec).
+4. Per-key `minimum_role_to_edit` enforcement at the router layer (column kept; v1 enforces super_admin only).
+5. Notification dispatch queue + worker for high-volume scenarios.
+6. Render read-only ConfigPage values as `<input disabled>` for tooling parity.
+7. Migrate older `/api/*` routes to `/api/v1/*` on a per-prompt basis.
+8. Email template library (`ConsoleEmailProvider` plain-text only in v1).
+9. Per-tenant / per-entity config overrides; config change approval workflow.
+10. Real-time WebSocket push for notifications (replace 30s polling for high-priority).
+11. Phone verification + Twilio for SMS dispatch.
