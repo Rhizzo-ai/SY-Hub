@@ -145,8 +145,18 @@ def unread_count(
     current: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Polled every 30s by the bell. Auth-required; rate limiter is bypassed
-    via app/services/rate_limit.py exemption (see __init__ wiring)."""
+    """Polled every 30s by the frontend bell.
+
+    DELIBERATELY not rate-limited. The rate limiter in
+    `app/services/rate_limit.py` is a per-endpoint opt-in helper invoked
+    only by login + password-reset routes; it is NOT a global middleware
+    and the `LIMITS` dict does not register this path. If a future change
+    introduces a blanket middleware, add an explicit exemption here AND
+    update `backend/README.md` § "Rate limiting and the bell endpoint".
+
+    Verified by `tests/test_notifications.py
+    ::TestPolling::test_polling_does_not_trip_rate_limiter`.
+    """
     cnt = db.scalar(
         select(func.count()).select_from(Notification).where(
             Notification.recipient_user_id == current.id,

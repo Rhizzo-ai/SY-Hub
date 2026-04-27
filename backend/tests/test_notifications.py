@@ -473,3 +473,43 @@ class TestCascade:
             assert still_exists is None
         finally:
             db.close()
+
+
+
+# =============================================================================
+# Bell polling — rate limiter must NOT trip on /unread-count
+# =============================================================================
+
+class TestPolling:
+    def test_polling_does_not_trip_rate_limiter(self, readonly_session):
+        """Simulate the bell's 30s polling cadence at full speed: 60
+        consecutive calls in tight succession (~= 30 minutes of real
+        polling). All must return 200; none should ever return 429.
+
+        This is the contract documented in `backend/README.md` §
+        'Rate limiting and the bell endpoint' and in the route docstring
+        `app/routers/notifications.py::unread_count`.
+        """
+        for i in range(60):
+            r = readonly_session.get(f"{BASE_URL}/api/v1/notifications/unread-count")
+            assert r.status_code == 200, (
+                f"poll #{i} returned {r.status_code} — global rate-limit "
+                f"middleware may have been added without exempting "
+                f"/api/v1/notifications/unread-count. See README §"
+                f"'Rate limiting and the bell endpoint'."
+            )
+            assert "count" in r.json()
+
+    def test_unread_count_no_limits_registered(self):
+        """Hard guard: the rate-limit module's LIMITS dict must NOT carry
+        an entry for the bell. If someone adds one, this test will
+        force them to (a) confirm it's intentional, (b) update the
+        README, and (c) add an exemption fixture.
+        """
+        from app.services.rate_limit import LIMITS
+        bell_keys = [k for k in LIMITS.keys() if "unread" in k or "notification" in k]
+        assert bell_keys == [], (
+            f"Rate-limit LIMITS now contains bell-related keys {bell_keys}. "
+            f"If this is intentional, update tests/test_notifications.py and "
+            f"backend/README.md § 'Rate limiting and the bell endpoint'."
+        )
