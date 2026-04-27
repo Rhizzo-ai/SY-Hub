@@ -75,6 +75,105 @@ SY Homes is a UK property development company. This platform replaces spreadshee
 
 ## What's Been Implemented
 
+### 2026-04-23 — Prompt 1.5: Projects + Project Team Members ✅
+
+**Schema (Alembic 0008 + 0009)**
+- `projects` (~30 cols): project_code (unique), name, project_type, parent_project_id (self-FK),
+  primary_entity_id / construction_entity_id, land_ownership_method, site_address + postcode,
+  site_area_ha + acres (4dp numeric), tenure, planning_{ref,type,status,approval_date,expiry_date},
+  implementation_required, s106/cil/vat flags, units_target/actual, affordable_housing_pct,
+  target/actual start+PC dates, current_stage + stage_entered_at, status, dead_reason, cached
+  financials (gdv/build_cost/all_in_cost/profit/margin + financials_refreshed_at), project_lead_user_id,
+  created_by_user_id, notes. 4 indexes + partial index on planning_expiry for sweep candidates.
+- `project_team_members`: project_id, user_id, role_on_project, is_primary, assigned_{by_user_id,at},
+  removed_at, notes. Partial unique index `ux_team_one_active_primary_per_role` enforces one
+  active primary per (project, role) via `WHERE is_primary=true AND removed_at IS NULL`.
+- 0009 wires retroactive FKs: `user_role_projects.project_id → projects.id (CASCADE)` and
+  `audit_log.project_id → projects.id (SET NULL)`.
+- Trigger `set_updated_at` on both tables.
+
+**Backend endpoints** (all `/api/projects…`, cookies-only auth)
+- `GET /` — list with filters (project_type[], current_stage[], status[], q, primary_entity_id,
+  project_lead_user_id), pagination, strict RBAC scoping (user_role.project_scope = All/Specific/None).
+- `POST /` — create; auto-generates `project_code` via 3-char slug prefix + sequential counter;
+  override accepted if it matches `^[A-Z0-9]{3}-\d{3,}$`. Reconciles area (ha wins over acres).
+  Auto-calculates planning_expiry (+3y for Full/Outline/Hybrid/Permitted_Dev/Prior_Approval;
+  +2y for Reserved_Matters).
+- `GET/PUT/DELETE /{id}` — with 404-on-scope-miss, project_code immutability, area + expiry
+  auto-recalc on update, manual-expiry-override flagged in audit metadata, delete hook via
+  `has_project_dependents()` (stub today; extends per Prompts 2.2/2.4/2.5/3.2/4.2/4.3/5.1).
+- `POST /{id}/stage/advance` — forward-only transitions via hard-coded FORWARD_TRANSITIONS;
+  requires `dead_reason` when moving to Dead. Status auto-syncs (Dead→Dead, Closed→Complete).
+- `POST /{id}/stage/override` — super_admin ONLY; min 10-char reason; `director_notifications`
+  payload written into audit metadata (actual notifications land in Prompt 1.7).
+- `GET/POST /{id}/team` + `DELETE /{id}/team/{tm_id}` — soft-remove via `removed_at`;
+  primary Project_Lead syncs to `projects.project_lead_user_id` (and nulls on removal).
+- `POST /{id}/financials/refresh` — STUB; returns zeros, stamps `financials_refreshed_at`.
+  Requires `projects.view_sensitive`.
+
+**Scheduler**
+- `planning_expiry_sweep` daily 07:00 UTC (APScheduler cron). Filters active, unstarted,
+  implementation-required projects with a planning_expiry_date set. Fires at exact-day
+  thresholds {365, 180, 90, 30, 0} and daily past expiry. Returns notification payloads
+  (logged today; inserted into `notifications` in Prompt 1.7).
+
+**Services**
+- `app/services/projects.py` — code generation, area reconciliation, expiry derivation,
+  delete-dependents hook.
+- `app/services/project_stage.py` — FORWARD_TRANSITIONS graph + `is_allowed_forward()` +
+  `derived_status()`. **Deliberate deviation**: forward-only hard-coded model rather than
+  "flagged non-sequential" per spec. Polish Pass (post-1.7) moves the graph into `system_config`
+  and considers allowing Sales ↔ Post_Completion concurrency.
+- `app/services/project_financials.py` — zero-valued stub until 2.5 + 2.7 land.
+
+**Seed**
+- `seed_rbac.py` adds `projects.{view, view_sensitive, create, edit, delete, approve, admin}`.
+- project_manager role gains projects.create/edit/view_sensitive. director + super_admin
+  retain full coverage via their catch-all grants.
+
+**Frontend**
+- `/projects` list — search (name/code/address/postcode), filters (type/stage/status),
+  margin% column gated on `projects.view_sensitive`, pagination, filter chips, empty state.
+- `/projects/new` — required-field validation, live ha↔acres conversion (symmetric),
+  planning expiry auto-fill preview (+3y/+2y per type), route gated on `projects.create`.
+- `/projects/:id` — Header with current-stage badge, dead-banner when Status=Dead, action
+  buttons mirror FORWARD_TRANSITIONS (Dead button opens reason-required modal),
+  super_admin-only Override button (10-char min reason validated both sides), delete button.
+- Overview tab: 5 collapsible sections (Summary, Site, Planning, Targets, Financials).
+  Financials section only renders for users with `projects.view_sensitive`, includes
+  "Last refreshed" stamp + Refresh button.
+- Team tab: primary-per-role marker, Add Team Member modal (user picker + role + primary
+  toggle), Remove (soft), history toggle to show removed members.
+- Audit tab: pulls `/api/audit?project_id=…`, handles 403 with explicit forbidden message
+  (falls back to existing `/audit` page for full view).
+
+**Tests**: +93 new (`tests/test_projects.py`) covering project code gen + override validation
++ duplicates + immutability, ha↔acres reconciliation (incl. round-trip + NULL), planning
+expiry auto-calc (Full/Outline/Reserved_Matters/missing), manual override audit flag,
+stage advance (init, forward, cannot skip/reverse, walk-to-closed), Dead from any stage,
+Closed→Complete auto-status, super_admin override (permission gate, 10-char reason,
+same-stage reject, Dead-reason requirement, audit metadata + director_notifications),
+team CRUD (one primary per role unique constraint, role validation, unknown user, soft
+remove, project_lead_user_id sync, idempotent removal, cross-project 404), audit diff
+tracking (no-change = no-audit), RBAC (401, 403s, readonly sees no financials, director/
+finance/super see financials, pagination, search, filter by stage/entity), delete 204 +
+404 + cascade-set-null on audit project_id, planning expiry sweep thresholds (30/100/past/
+non-active/started-project skips), financials refresh stub (200 on super, 403 on readonly,
+timestamp stamped), retro FKs exist + set-null on delete, unit tests on service helpers.
+Full suite: **314 passed, 1 skipped, 0 failed** (was 221 → +93).
+
+**Known deviations from spec**
+- Stage machine is hard-coded forward-only with an explicit super_admin override, deliberately
+  chosen over the spec's "non-sequential allowed but flagged" model. Revisit in Polish Pass
+  (post-1.7): move FORWARD_TRANSITIONS into system_config, and consider whether Sales and
+  Post_Completion should run concurrently (developers often sell plots while mobilising the
+  next phase).
+- Financials refresh returns zeros pending Prompts 2.5 + 2.7.
+- Director notifications for stage overrides are written into audit metadata today; actual
+  notification delivery lands with the `notifications` table in Prompt 1.7.
+
+## What's Been Implemented
+
 ### 2026-04-19 — Prompt 1.1: Entities ✅
 (See previous PRD revisions — tables, CRUD, scheduled insurance alerts, full UI. Alembic 0001 migration. 53/53 tests.)
 
@@ -212,9 +311,22 @@ Full suite: **160 passed, 1 skipped, 0 failed** (was 135 → +25).
 - PII scrub UI confirmation dialog → Prompt 1.7 (Notifications gives us a confirm UX pattern)
 
 ## Prioritised Backlog (Foundation 1.1 → 1.7)
-- **P0**: 1.3 Sessions/Login History/Invitations/SSO/API Keys; 1.4 Audit log (with retroactive hooks on entities & user_role changes); 1.5 Projects; 1.6 (reserved); 1.7 Notifications (closes the `_emit_alert` log hook).
-- **P1**: Modules 2–10 (Projects, Cost Codes, Appraisals, Budgets, Cash Flow, Programme, Documents, Compliance).
+- **P0**: ✅ 1.3 Sessions/Login History/Invitations/SSO/API Keys; ✅ 1.4 Audit log; ✅ 1.5 Projects; ✅ 1.6 Cost Codes; ✅ **1.7 System Config + Notifications** — Foundation track CLOSED 26 Apr 2026.
+- **P1**: Modules 2–10 (Appraisals, Budgets, Cash Flow, Programme, Documents, Compliance, Sales).
 - **P2**: Xero OAuth (5.1), Bank feed, Group consolidation, Multi-tenancy surfacing.
+
+## Prompt 1.7 — System Config + Notifications (26 Apr 2026)
+- ✅ `system_config` table + 38-key seed across 9 populated categories (Finance:3, Appraisal:8, Budget:5, Programme:4, Security:7, Integration:2, Notification:5, Reporting:2, Audit:2). Categories `Document`, `CashFlow`, `System` reserved in enum for future seeds.
+- ✅ `notifications` table (15-type enum × 4-priority enum, 22 columns, 3 indexes incl. partial on `expires_at IS NOT NULL`).
+- ✅ `SystemConfig` singleton service with in-memory cache + `set/restore/invalidate`. Typed parse/serialise for String/Integer/Decimal/Boolean/JSON/Date.
+- ✅ `NotificationService.dispatch(...)` + `safe_dispatch(...)` wrapper. High|Critical → email via existing ConsoleEmailProvider. SMS branch logs `# TODO[SMS]` (deferred). Defaults expires_at to `now + auto_expire_days` (config-driven).
+- ✅ Endpoints under `/api/v1/system-config` (GET list/grouped, GET one, PUT, POST restore) and `/api/v1/notifications` (GET inbox/filtered, GET unread/lazy-grouped, GET unread-count, PATCH read, PATCH dismiss, POST mark-all-read).
+- ✅ APScheduler jobs (in-memory single-process): `notification_expiry_sweep` (daily 03:00 UTC) and `audit_retention_sweep` (daily 03:00 UTC, gated off by default via `audit.retention_purge_enabled`).
+- ✅ Retro-wires: planning expiry sweep → Deadline_Approaching; stage override → System_Announcement High to all directors; insurance `_emit_alert` → Insurance_Expiry High/Critical; password reset request, MFA enrol, MFA disable → Security_Alert High to user. Post-build grep for `TODO[NOTIFY]` returns ZERO hits.
+- ✅ RBAC: `system_config.view` granted to all 10 roles; `system_config.admin` super_admin only. Director loses `system_config.{admin,edit}` (count drops 84→82). Permission count remains 87 (codes were already in the catalogue from defensive earlier seeding; no new codes added).
+- ✅ Frontend: `/config` grouped editor (typed inputs, Restore button, lock icon, read-only pill), navbar bell with 30s polling (`<NotificationBell>`), `/notifications` inbox with filters + bulk actions.
+- ✅ Tests: 55 new across `test_system_config.py` (~22), `test_notifications.py` (~20), `test_scheduler_jobs.py` (~6), `test_retro_wires.py` (~7). Total suite **457/457** passing (402 baseline + 55).
+- 📋 Polish Pass: persistent APScheduler jobstore for multi-process prod; per-key `minimum_role_to_edit` enforcement; notification body sensitive-field redaction; dispatch queue/worker; tighten `cost_codes` permission catalogue; render read-only ConfigPage values as `<input disabled>` for tooling parity; migrate older `/api/*` routes onto `/api/v1/*`.
 
 ## Process Commitments
 - Never silently defer agreed standards — surface deviations in-channel before changing course.

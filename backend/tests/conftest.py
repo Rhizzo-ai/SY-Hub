@@ -1,12 +1,16 @@
 """Pytest config — loads backend .env before any app imports.
 
-Also provides a session-scoped helper that logs in and auto-enrols MFA
-for users holding an MFA-enforced role (super_admin / director / finance).
-Those users cannot acquire a full access token without MFA under the
-Prompt 1.2 gap-closure rules, so the fixture path must enrol them on
-first use. The TOTP secret is cached in-process so subsequent logins in
-the same pytest session can complete the MFA challenge instead of
-skipping.
+Provides a session-scoped helper that logs a user in under the new
+cookies-only auth contract (audit remediation C1). The helper returns a
+`requests.Session` whose cookie jar carries `access_token` + (optionally)
+`refresh_token` — exactly what the production frontend will hold after
+login. Tests should call methods on the returned session directly;
+`Authorization: Bearer` headers are no longer used anywhere.
+
+MFA-enforced roles (super_admin / director / finance) whose users haven't
+enrolled yet are auto-enrolled via pyotp on first login. The TOTP secret
+is cached in-process so subsequent logins in the same pytest session can
+complete the MFA challenge instead of skipping.
 """
 from __future__ import annotations
 
@@ -14,6 +18,7 @@ import os
 from pathlib import Path
 
 import pytest
+import requests
 from dotenv import load_dotenv
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
@@ -40,40 +45,58 @@ def _reset_rate_limiter():
     yield
 
 
-def login_with_auto_enroll(api_client, base_url: str, email: str, password: str) -> str:
-    """Log in and return a full access token.
+def _new_client() -> requests.Session:
+    s = requests.Session()
+    s.headers.update({"Content-Type": "application/json"})
+    return s
+
+
+def login_with_auto_enroll(_unused_client, base_url: str, email: str, password: str,
+                           remember_me: bool = False) -> requests.Session:
+    """Log in under the cookies-only contract and return a `requests.Session`.
+
+    The returned session's cookie jar carries the access_token (and refresh
+    token if the login path issued one). Callers use it like any other
+    requests.Session — `s.get(...)`, `s.post(...)` — and auth rides
+    transparently via cookies.
+
+    The first positional argument is accepted but ignored so old call sites
+    `login_with_auto_enroll(api_client, BASE_URL, email, pw)` keep working.
+    Each call returns a *new* session so multi-user / multi-session tests
+    don't cross-contaminate cookie jars.
 
     - If the user is an MFA-enforced role that hasn't enrolled yet: run the
-      enrolment flow (start → TOTP via pyotp → confirm) and return the full
-      access token issued by /mfa/enroll/confirm. The secret is cached.
+      enrolment flow (start → TOTP via pyotp → confirm). The final session
+      carries the full access + refresh cookies from /mfa/enroll/confirm.
     - If the user is already enrolled AND we have a cached secret for them:
-      complete the MFA challenge flow and return the resulting access token.
-    - Otherwise: return the plain access token from the login response.
+      complete the mfa_challenge flow and return the verified session.
+    - Otherwise: return the session populated by the plain /login response.
     """
     import pyotp
 
-    r = api_client.post(
+    s = _new_client()
+    r = s.post(
         f"{base_url}/api/auth/login",
-        json={"email": email, "password": password},
+        json={"email": email, "password": password, "remember_me": remember_me},
     )
     if r.status_code != 200:
-        import pytest
         pytest.skip(f"Login failed for {email}: {r.text}")
     data = r.json()
+    # Attach login metadata for tests that want to assert on user fields.
+    setattr(s, "login_body", data)
 
     if data.get("mfa_required"):
         # Already enrolled — need a live TOTP. Use the cached secret if we
         # have one from an earlier enrolment in this pytest session.
         secret = _MFA_SECRETS.get(email)
         if not secret:
-            import pytest
             pytest.skip(
                 f"{email} has MFA enabled but no cached secret is available. "
                 f"Re-run `python scripts/seed_test_users.py` to reset, then "
                 f"restart the test session."
             )
         challenge = data["mfa_challenge_token"]
-        verify = api_client.post(
+        verify = s.post(
             f"{base_url}/api/auth/mfa/verify",
             json={
                 "challenge_token": challenge,
@@ -82,28 +105,52 @@ def login_with_auto_enroll(api_client, base_url: str, email: str, password: str)
             },
         )
         assert verify.status_code == 200, f"mfa/verify failed: {verify.text}"
-        return verify.json()["access_token"]
+        setattr(s, "login_body", verify.json())
+        return s
 
     if not data.get("mfa_enrollment_required"):
-        return data["access_token"]
+        # Normal login — cookies already on the session.
+        return s
 
     # Enforced role + not enrolled → enrol via pyotp.
-    pending = data["mfa_pending_token"]
-    headers = {"Authorization": f"Bearer {pending}"}
-
-    start = api_client.post(
-        f"{base_url}/api/auth/mfa/enroll/start", headers=headers
-    )
+    # The mfa_pending cookie was set on `s` by the /login response, so the
+    # following calls ride on cookies (no Bearer header).
+    start = s.post(f"{base_url}/api/auth/mfa/enroll/start")
     assert start.status_code == 200, f"mfa/enroll/start failed: {start.text}"
     secret = start.json()["secret"]
     _MFA_SECRETS[email] = secret  # cache for this session
 
-    confirm = api_client.post(
+    confirm = s.post(
         f"{base_url}/api/auth/mfa/enroll/confirm",
-        headers=headers,
         json={"secret": secret, "code": pyotp.TOTP(secret).now()},
     )
     assert confirm.status_code == 200, f"mfa/enroll/confirm failed: {confirm.text}"
-    token = confirm.json().get("access_token")
-    assert token, "Enrolment confirm did not return an access_token"
-    return token
+    body = confirm.json()
+    assert body.get("session_issued") is True, (
+        "Enrolment confirm did not issue a session; expected cookies to "
+        "have been replaced with access_token + refresh_token."
+    )
+    # Cookies are now full-session access + refresh — ready to use.
+    setattr(s, "login_body", body)
+    return s
+
+
+def plain_login(base_url: str, email: str, password: str,
+                remember_me: bool = False) -> requests.Session:
+    """Log a non-MFA user in. Returns a session with the access_token +
+    refresh_token cookies set. Fails the test rather than skipping if login
+    doesn't succeed with a plain access cookie.
+    """
+    s = _new_client()
+    r = s.post(
+        f"{base_url}/api/auth/login",
+        json={"email": email, "password": password, "remember_me": remember_me},
+    )
+    assert r.status_code == 200, f"login failed {r.status_code}: {r.text}"
+    data = r.json()
+    assert not data.get("mfa_required"), f"{email} has MFA enabled — use login_with_auto_enroll"
+    assert not data.get("mfa_enrollment_required"), (
+        f"{email} is MFA-enforced but not enrolled — use login_with_auto_enroll"
+    )
+    setattr(s, "login_body", data)
+    return s

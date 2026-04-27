@@ -1,17 +1,10 @@
 """
 Backend tests — MFA Gap Closure (Prompt 1.2 addendum).
+Migrated to cookies-only transport (audit remediation C1 — Feb 2026).
 
-Covers:
-  - Hard-block login for MFA-enforced roles (super_admin / director / finance)
-    not yet enrolled → mfa_pending token
-  - Non-enforced roles get a normal access token when MFA is off
-  - mfa_pending token only permits the whitelisted endpoints
-  - /auth/me shape under mfa_pending
-  - Enrolment confirm swaps mfa_pending → full access token
-  - /mfa/disable requires current_password (422 / 400 / 204)
-  - /mfa/backup-codes/regenerate requires current_password + current_totp
-  - mfa_enrolled_at column is stamped on confirm, cleared on disable
-  - Existing MFA-challenge flow (already-enrolled user) still works
+The mfa_pending JWT now rides as an httpOnly cookie (`access_token`) set by
+`/api/auth/login` rather than surfaced in the response body. Tests use
+`requests.Session` cookie jars; no Bearer headers.
 """
 from __future__ import annotations
 
@@ -23,6 +16,7 @@ import pyotp
 import pytest
 import requests
 import sqlalchemy as sa
+
 
 def _read_env(path: str, key: str) -> Optional[str]:
     try:
@@ -55,17 +49,16 @@ PM = "test-pm@example.test"
 # ---------- helpers ----------
 
 @pytest.fixture(scope="module")
-def http():
-    s = requests.Session()
-    s.headers.update({"Content-Type": "application/json"})
-    return s
-
-
-@pytest.fixture(scope="module")
 def db_engine():
     eng = sa.create_engine(DATABASE_URL, future=True)
     yield eng
     eng.dispose()
+
+
+def _new_session() -> requests.Session:
+    s = requests.Session()
+    s.headers.update({"Content-Type": "application/json"})
+    return s
 
 
 def _reset_user_mfa(db_engine, email: str) -> None:
@@ -90,10 +83,12 @@ def _reset_user_mfa(db_engine, email: str) -> None:
         )
 
 
-def _login(http, email: str, password: str = PWD) -> dict:
-    r = http.post(f"{BASE_URL}/api/auth/login", json={"email": email, "password": password})
+def _login_fresh(email: str, password: str = PWD):
+    """Log in on a brand-new session. Returns (session, body)."""
+    s = _new_session()
+    r = s.post(f"{BASE_URL}/api/auth/login", json={"email": email, "password": password})
     assert r.status_code == 200, f"login failed {r.status_code} {r.text}"
-    return r.json()
+    return s, r.json()
 
 
 def _fetch_mfa_enrolled_at(db_engine, email: str) -> Optional[object]:
@@ -106,7 +101,7 @@ def _fetch_mfa_enrolled_at(db_engine, email: str) -> Optional[object]:
     return row[0]
 
 
-# Column-name sanity check — migration 0003 renamed mfa_enforced_at → mfa_enrolled_at.
+# Column-name sanity check.
 def test_column_rename_applied(db_engine):
     with db_engine.begin() as conn:
         cols = {
@@ -118,66 +113,66 @@ def test_column_rename_applied(db_engine):
                 )
             )
         }
-    assert "mfa_enrolled_at" in cols, "mfa_enrolled_at column missing"
-    assert "mfa_enforced_at" not in cols, "old mfa_enforced_at column still present"
+    assert "mfa_enrolled_at" in cols
+    assert "mfa_enforced_at" not in cols
 
 
 # ---------- 1. Login hard-block for enforced role ----------
 
 class TestEnforcedRoleLogin:
-    def test_director_login_issues_mfa_pending(self, http, db_engine):
+    def test_director_login_issues_mfa_pending(self, db_engine):
         _reset_user_mfa(db_engine, DIRECTOR)
-        data = _login(http, DIRECTOR)
+        s, data = _login_fresh(DIRECTOR)
         assert data["mfa_enrollment_required"] is True
-        assert data["mfa_pending_token"], "mfa_pending_token missing"
-        # access_token should equal the mfa_pending token (per spec)
-        assert data["access_token"] == data["mfa_pending_token"]
+        # Audit C1: mfa_pending token rides via cookie, not body.
+        assert "mfa_pending_token" not in data
+        assert "access_token" not in data
+        assert s.cookies.get("access_token"), "pending cookie not set"
+        # Refresh cookie should be cleared defensively.
+        assert not s.cookies.get("refresh_token")
         assert data["enforced_role_name"] == "Director"
         assert data["user"]["email"] == DIRECTOR
         assert data.get("mfa_required") in (False, None)
 
-    def test_finance_login_issues_mfa_pending(self, http, db_engine):
+    def test_finance_login_issues_mfa_pending(self, db_engine):
         _reset_user_mfa(db_engine, FINANCE)
-        data = _login(http, FINANCE)
+        _, data = _login_fresh(FINANCE)
         assert data["mfa_enrollment_required"] is True
         assert data["enforced_role_name"] == "Finance"
 
-    def test_super_admin_login_issues_mfa_pending(self, http, db_engine):
+    def test_super_admin_login_issues_mfa_pending(self, db_engine):
         _reset_user_mfa(db_engine, ADMIN)
-        data = _login(http, ADMIN)
+        _, data = _login_fresh(ADMIN)
         assert data["mfa_enrollment_required"] is True
-        # super_admin is priority 1 → most senior
         assert data["enforced_role_name"] == "Super Administrator"
 
-    def test_readonly_login_is_normal_access(self, http, db_engine):
+    def test_readonly_login_is_normal_access(self, db_engine):
         _reset_user_mfa(db_engine, READONLY)
-        data = _login(http, READONLY)
+        s, data = _login_fresh(READONLY)
         assert data["mfa_enrollment_required"] is False
-        assert data["access_token"]
-        assert data.get("mfa_pending_token") in (None, "")
+        assert s.cookies.get("access_token")
+        assert s.cookies.get("refresh_token")
         assert data.get("enforced_role_name") in (None, "")
 
-    def test_pm_login_is_normal_access(self, http, db_engine):
+    def test_pm_login_is_normal_access(self, db_engine):
         _reset_user_mfa(db_engine, PM)
-        data = _login(http, PM)
+        s, data = _login_fresh(PM)
         assert data["mfa_enrollment_required"] is False
-        assert data["access_token"]
+        assert s.cookies.get("access_token")
 
 
-# ---------- 2. mfa_pending token gating ----------
+# ---------- 2. mfa_pending cookie gating ----------
 
 class TestMfaPendingTokenGating:
     @pytest.fixture(scope="class")
-    def pending_token(self, http, db_engine):
+    def pending_session(self, db_engine):
         _reset_user_mfa(db_engine, DIRECTOR)
-        data = _login(http, DIRECTOR)
-        return data["mfa_pending_token"]
+        s, data = _login_fresh(DIRECTOR)
+        assert data["mfa_enrollment_required"] is True
+        return s
 
-    def _auth(self, token):
-        return {"Authorization": f"Bearer {token}"}
-
-    def test_me_allowed(self, http, pending_token):
-        r = http.get(f"{BASE_URL}/api/auth/me", headers=self._auth(pending_token))
+    def test_me_allowed(self, pending_session):
+        r = pending_session.get(f"{BASE_URL}/api/auth/me")
         assert r.status_code == 200
         body = r.json()
         assert body["token_type"] == "mfa_pending"
@@ -186,89 +181,83 @@ class TestMfaPendingTokenGating:
         assert body["mfa_enrollment_required"] is True
         assert body["enforced_role_name"] == "Director"
 
-    def test_mfa_enroll_start_allowed(self, http, pending_token):
-        r = http.post(
-            f"{BASE_URL}/api/auth/mfa/enroll/start",
-            headers=self._auth(pending_token),
-        )
+    def test_mfa_enroll_start_allowed(self, pending_session):
+        r = pending_session.post(f"{BASE_URL}/api/auth/mfa/enroll/start")
         assert r.status_code == 200
         assert "secret" in r.json()
 
-    def test_entities_blocked(self, http, pending_token):
-        r = http.get(f"{BASE_URL}/api/entities", headers=self._auth(pending_token))
-        assert r.status_code in (401, 403), f"expected 401/403, got {r.status_code}"
-
-    def test_users_blocked(self, http, pending_token):
-        r = http.get(f"{BASE_URL}/api/users", headers=self._auth(pending_token))
+    def test_entities_blocked(self, pending_session):
+        r = pending_session.get(f"{BASE_URL}/api/entities")
         assert r.status_code in (401, 403)
 
-    def test_logout_allowed(self, http, pending_token):
-        r = http.post(f"{BASE_URL}/api/auth/logout", headers=self._auth(pending_token))
+    def test_users_blocked(self, pending_session):
+        r = pending_session.get(f"{BASE_URL}/api/users")
+        assert r.status_code in (401, 403)
+
+    def test_logout_allowed(self, pending_session):
+        r = pending_session.post(f"{BASE_URL}/api/auth/logout")
         assert r.status_code == 204
 
 
 # ---------- 3. Enrol happy-path (mfa_pending → full access) ----------
 
 class TestEnforcedEnrolmentHappyPath:
-    def test_full_flow_login_enrol_access_entities(self, http, db_engine):
+    def test_full_flow_login_enrol_access_entities(self, db_engine):
         _reset_user_mfa(db_engine, DIRECTOR)
-        login = _login(http, DIRECTOR)
-        pending = login["mfa_pending_token"]
-        assert pending
+        s, login = _login_fresh(DIRECTOR)
+        assert login["mfa_enrollment_required"] is True
+        pending_cookie = s.cookies.get("access_token")
+        assert pending_cookie
 
         # /mfa/enroll/start
-        start = http.post(
-            f"{BASE_URL}/api/auth/mfa/enroll/start",
-            headers={"Authorization": f"Bearer {pending}"},
-        )
+        start = s.post(f"{BASE_URL}/api/auth/mfa/enroll/start")
         assert start.status_code == 200
         secret = start.json()["secret"]
 
-        # Confirm with live TOTP
+        # Confirm with live TOTP.
         totp = pyotp.TOTP(secret)
-        code = totp.now()
-        confirm = http.post(
+        confirm = s.post(
             f"{BASE_URL}/api/auth/mfa/enroll/confirm",
-            json={"secret": secret, "code": code},
-            headers={"Authorization": f"Bearer {pending}"},
+            json={"secret": secret, "code": totp.now()},
         )
         assert confirm.status_code == 200, confirm.text
         body = confirm.json()
         assert len(body["backup_codes"]) == 10
-        new_access = body["access_token"]
-        assert new_access and new_access != pending
+        # Audit C1: no token leak in body.
+        assert "access_token" not in body
+        assert "refresh_token" not in body
+        assert body["session_issued"] is True
+        # Cookies were rotated from pending → full session.
+        new_access = s.cookies.get("access_token")
+        assert new_access and new_access != pending_cookie
+        assert s.cookies.get("refresh_token")
 
-        # mfa_enrolled_at stamped
+        # mfa_enrolled_at stamped.
         stamped = _fetch_mfa_enrolled_at(db_engine, DIRECTOR)
-        assert stamped is not None, "mfa_enrolled_at was not set on confirm"
+        assert stamped is not None
 
-        # /api/auth/me with new token → full access principal
-        me = http.get(
-            f"{BASE_URL}/api/auth/me",
-            headers={"Authorization": f"Bearer {new_access}"},
-        )
+        # /auth/me with the new cookie → full access principal.
+        me = s.get(f"{BASE_URL}/api/auth/me")
         assert me.status_code == 200
         assert me.json()["token_type"] == "access"
         assert len(me.json()["permissions"]) > 0
 
-        # /api/entities now reachable
-        ent = http.get(
-            f"{BASE_URL}/api/entities",
-            headers={"Authorization": f"Bearer {new_access}"},
-        )
-        assert ent.status_code == 200, f"entities blocked: {ent.status_code} {ent.text}"
+        # /entities now reachable.
+        ent = s.get(f"{BASE_URL}/api/entities")
+        assert ent.status_code == 200
 
-        # Subsequent login — user now enrolled → mfa_challenge path (regression)
-        login2 = http.post(
+        # Subsequent login — user now enrolled → mfa_challenge path (regression).
+        s2 = _new_session()
+        login2 = s2.post(
             f"{BASE_URL}/api/auth/login",
             json={"email": DIRECTOR, "password": PWD},
         ).json()
         assert login2.get("mfa_required") is True
         assert login2.get("mfa_challenge_token")
 
-        # Verify TOTP completes the challenge
+        # Verify TOTP completes the challenge.
         time.sleep(1)
-        verify = http.post(
+        verify = s2.post(
             f"{BASE_URL}/api/auth/mfa/verify",
             json={
                 "challenge_token": login2["mfa_challenge_token"],
@@ -277,63 +266,46 @@ class TestEnforcedEnrolmentHappyPath:
             },
         )
         assert verify.status_code == 200, verify.text
-        assert verify.json().get("access_token")
+        # Full session cookies set.
+        assert s2.cookies.get("access_token")
+        assert s2.cookies.get("refresh_token")
 
 
 # ---------- 4. /mfa/disable requires current_password ----------
 
 class TestMfaDisablePasswordGate:
     @pytest.fixture(scope="class")
-    def enrolled_token_and_secret(self, http, db_engine):
+    def enrolled_session(self, db_engine):
         _reset_user_mfa(db_engine, ADMIN)
-        login = _login(http, ADMIN)
-        pending = login["mfa_pending_token"]
-        start = http.post(
-            f"{BASE_URL}/api/auth/mfa/enroll/start",
-            headers={"Authorization": f"Bearer {pending}"},
-        ).json()
+        s, _ = _login_fresh(ADMIN)
+        start = s.post(f"{BASE_URL}/api/auth/mfa/enroll/start").json()
         secret = start["secret"]
-        code = pyotp.TOTP(secret).now()
-        confirm = http.post(
+        confirm = s.post(
             f"{BASE_URL}/api/auth/mfa/enroll/confirm",
-            json={"secret": secret, "code": code},
-            headers={"Authorization": f"Bearer {pending}"},
-        ).json()
-        return confirm["access_token"], secret
-
-    def test_missing_body_returns_422(self, http, enrolled_token_and_secret):
-        token, _ = enrolled_token_and_secret
-        r = http.post(
-            f"{BASE_URL}/api/auth/mfa/disable",
-            headers={"Authorization": f"Bearer {token}"},
+            json={"secret": secret, "code": pyotp.TOTP(secret).now()},
         )
+        assert confirm.status_code == 200
+        return s, secret
+
+    def test_missing_body_returns_422(self, enrolled_session):
+        s, _ = enrolled_session
+        r = s.post(f"{BASE_URL}/api/auth/mfa/disable")
         assert r.status_code == 422
 
-    def test_wrong_password_returns_400(self, http, enrolled_token_and_secret):
-        token, _ = enrolled_token_and_secret
-        r = http.post(
-            f"{BASE_URL}/api/auth/mfa/disable",
-            json={"current_password": "totally-wrong"},
-            headers={"Authorization": f"Bearer {token}"},
-        )
+    def test_wrong_password_returns_400(self, enrolled_session):
+        s, _ = enrolled_session
+        r = s.post(f"{BASE_URL}/api/auth/mfa/disable", json={"current_password": "totally-wrong"})
         assert r.status_code == 400
         assert "Current password is incorrect" in r.json()["detail"]
 
-    def test_correct_password_returns_204_and_clears(self, http, db_engine, enrolled_token_and_secret):
-        token, _ = enrolled_token_and_secret
-        r = http.post(
-            f"{BASE_URL}/api/auth/mfa/disable",
-            json={"current_password": PWD},
-            headers={"Authorization": f"Bearer {token}"},
-        )
+    def test_correct_password_returns_204_and_clears(self, db_engine, enrolled_session):
+        s, _ = enrolled_session
+        r = s.post(f"{BASE_URL}/api/auth/mfa/disable", json={"current_password": PWD})
         assert r.status_code == 204
 
-        # mfa_enabled false and mfa_enrolled_at cleared
         with db_engine.begin() as conn:
             row = conn.execute(
-                sa.text(
-                    "SELECT mfa_enabled, mfa_enrolled_at FROM users WHERE email = :e"
-                ),
+                sa.text("SELECT mfa_enabled, mfa_enrolled_at FROM users WHERE email = :e"),
                 {"e": ADMIN},
             ).first()
         assert row[0] is False
@@ -344,68 +316,55 @@ class TestMfaDisablePasswordGate:
 
 class TestRegenerateBackupCodes:
     @pytest.fixture(scope="class")
-    def enrolled(self, http, db_engine):
+    def enrolled(self, db_engine):
         _reset_user_mfa(db_engine, FINANCE)
-        login = _login(http, FINANCE)
-        pending = login["mfa_pending_token"]
-        start = http.post(
-            f"{BASE_URL}/api/auth/mfa/enroll/start",
-            headers={"Authorization": f"Bearer {pending}"},
-        ).json()
+        s, _ = _login_fresh(FINANCE)
+        start = s.post(f"{BASE_URL}/api/auth/mfa/enroll/start").json()
         secret = start["secret"]
-        code = pyotp.TOTP(secret).now()
-        confirm = http.post(
+        confirm = s.post(
             f"{BASE_URL}/api/auth/mfa/enroll/confirm",
-            json={"secret": secret, "code": code},
-            headers={"Authorization": f"Bearer {pending}"},
-        ).json()
-        return confirm["access_token"], secret
-
-    def test_missing_fields_returns_422(self, http, enrolled):
-        token, _ = enrolled
-        r = http.post(
-            f"{BASE_URL}/api/auth/mfa/backup-codes/regenerate",
-            json={},
-            headers={"Authorization": f"Bearer {token}"},
+            json={"secret": secret, "code": pyotp.TOTP(secret).now()},
         )
+        assert confirm.status_code == 200
+        return s, secret
+
+    def test_missing_fields_returns_422(self, enrolled):
+        s, _ = enrolled
+        r = s.post(f"{BASE_URL}/api/auth/mfa/backup-codes/regenerate", json={})
         assert r.status_code == 422
 
-    def test_missing_totp_returns_422(self, http, enrolled):
-        token, _ = enrolled
-        r = http.post(
+    def test_missing_totp_returns_422(self, enrolled):
+        s, _ = enrolled
+        r = s.post(
             f"{BASE_URL}/api/auth/mfa/backup-codes/regenerate",
             json={"current_password": PWD},
-            headers={"Authorization": f"Bearer {token}"},
         )
         assert r.status_code == 422
 
-    def test_wrong_password_returns_400(self, http, enrolled):
-        token, secret = enrolled
-        r = http.post(
+    def test_wrong_password_returns_400(self, enrolled):
+        s, secret = enrolled
+        r = s.post(
             f"{BASE_URL}/api/auth/mfa/backup-codes/regenerate",
             json={"current_password": "nope", "current_totp": pyotp.TOTP(secret).now()},
-            headers={"Authorization": f"Bearer {token}"},
         )
         assert r.status_code == 400
         assert "Current password is incorrect" in r.json()["detail"]
 
-    def test_wrong_totp_returns_400(self, http, enrolled):
-        token, _ = enrolled
-        r = http.post(
+    def test_wrong_totp_returns_400(self, enrolled):
+        s, _ = enrolled
+        r = s.post(
             f"{BASE_URL}/api/auth/mfa/backup-codes/regenerate",
             json={"current_password": PWD, "current_totp": "000000"},
-            headers={"Authorization": f"Bearer {token}"},
         )
         assert r.status_code == 400
         assert "Invalid authenticator code" in r.json()["detail"]
 
-    def test_valid_returns_10_new_codes(self, http, enrolled):
-        token, secret = enrolled
+    def test_valid_returns_10_new_codes(self, enrolled):
+        s, secret = enrolled
         time.sleep(1)
-        r = http.post(
+        r = s.post(
             f"{BASE_URL}/api/auth/mfa/backup-codes/regenerate",
             json={"current_password": PWD, "current_totp": pyotp.TOTP(secret).now()},
-            headers={"Authorization": f"Bearer {token}"},
         )
         assert r.status_code == 200, r.text
         body = r.json()

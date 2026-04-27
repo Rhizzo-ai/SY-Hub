@@ -2,9 +2,10 @@ import React from "react";
 import { NavLink, Link, useNavigate } from "react-router-dom";
 import {
     Building2, Users, Layers, Calculator, LineChart, Wallet,
-    CalendarDays, FileText, ShieldCheck, Landmark, Link2, LogOut, KeyRound, Laptop, User as UserIcon, ShieldAlert, ChevronDown,
+    CalendarDays, FileText, ShieldCheck, Landmark, Link2, LogOut, KeyRound, Laptop, User as UserIcon, ShieldAlert, ChevronDown, ScrollText, Settings,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
+import NotificationBell from "@/components/NotificationBell";
 import {
     DropdownMenu,
     DropdownMenuContent,
@@ -19,8 +20,10 @@ const NAV = [
     { label: "Users", to: "/users", icon: Users, enabled: true, testid: "nav-users" },
     { label: "Roles", to: "/roles", icon: ShieldCheck, enabled: true, testid: "nav-roles" },
     { label: "Permissions", to: "/permissions", icon: KeyRound, enabled: true, testid: "nav-permissions" },
-    { label: "Projects", to: "/projects", icon: Layers, enabled: false, testid: "nav-projects" },
-    { label: "Cost Codes", to: "/cost-codes", icon: Calculator, enabled: false, testid: "nav-cost-codes" },
+    { label: "Audit Log", to: "/audit", icon: ScrollText, enabled: true, testid: "nav-audit", requires: "audit.view" },
+    { label: "Projects", to: "/projects", icon: Layers, enabled: true, testid: "nav-projects", requires: "projects.view" },
+    { label: "Cost Codes", to: "/cost-codes", icon: Calculator, enabled: true, testid: "nav-cost-codes", requires: "cost_codes.view" },
+    { label: "System Config", to: "/config", icon: Settings, enabled: true, testid: "nav-config", requires: "system_config.view" },
     { label: "Appraisals", to: "/appraisals", icon: LineChart, enabled: false, testid: "nav-appraisals" },
     { label: "Budgets", to: "/budgets", icon: Wallet, enabled: false, testid: "nav-budgets" },
     { label: "Cash Flow", to: "/cash-flow", icon: Landmark, enabled: false, testid: "nav-cash-flow" },
@@ -54,6 +57,11 @@ export default function AppShell({ children }) {
                     <div className="px-3 pt-2 pb-1 text-[10px] uppercase tracking-widest text-slate-400 font-semibold">Modules</div>
                     {NAV.map((item) => {
                         const Icon = item.icon;
+                        // Permission gate — hide if `requires` isn't granted.
+                        if (item.requires && !(me?.permissions || []).includes(item.requires)
+                            && !(me?.is_super_admin)) {
+                            return null;
+                        }
                         if (!item.enabled) {
                             return (
                                 <div key={item.label} className="flex items-center gap-3 px-3 py-2 rounded-md text-slate-400 cursor-not-allowed select-none" data-testid={item.testid} title="Coming in a later phase">
@@ -95,6 +103,7 @@ export default function AppShell({ children }) {
                                 <ShieldAlert size={12} /> MFA required
                             </Link>
                         )}
+                        <NotificationBell />
                         <DropdownMenu>
                             <DropdownMenuTrigger asChild>
                                 <button

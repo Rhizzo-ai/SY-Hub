@@ -33,11 +33,15 @@ class Principal:
 
 
 def _extract_token(request: Request, authorization: Optional[str]) -> Optional[str]:
-    # Prefer Authorization: Bearer <token>; fall back to httpOnly cookie.
-    if authorization:
-        parts = authorization.split()
-        if len(parts) == 2 and parts[0].lower() == "bearer":
-            return parts[1]
+    """Access tokens are read ONLY from the httpOnly `access_token` cookie.
+
+    The previous `Authorization: Bearer <token>` fallback was intentionally
+    removed as part of the audit remediation (C1) so that a successful XSS
+    can't exfiltrate a bearable token: tokens never touch JS-reachable
+    storage. The `authorization` parameter is retained in the signature so
+    existing endpoint decorators keep their shape; it is deliberately
+    ignored here.
+    """
     return request.cookies.get("access_token")
 
 
@@ -103,6 +107,12 @@ def get_optional_principal(
             raise HTTPException(status_code=401, detail="Session idle — please log in again")
         touch_session(db, session)
         db.commit()
+    # Stash for audit.py: populated even when session is None (values stay
+    # None) so callers can rely on the state attrs existing.
+    request.state.current_session_id = session.id if session else None
+    request.state.impersonator_user_id = (
+        session.impersonator_user_id if session else None
+    )
     return Principal(user=user, tenant_id=tenant_id, token_type=payload["type"], session=session)
 
 

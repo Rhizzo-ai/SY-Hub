@@ -4,9 +4,10 @@ Runs at 06:00 UTC every day. For each entity with non-null insurance dates,
 compute days until expiry and emit an alert when days_until_expiry matches
 one of 60, 30, 14, 7, 0, OR when the policy is already past expiry.
 
-Prompt 1.7 will replace the `_emit_alert` log-hook with a real insert into
-the `notifications` table scoped to director-role users with access to the
-entity.
+Prompt 1.7 retro-wired `_emit_alert` to dispatch a real
+Insurance_Expiry notification (priority High, or Critical when the
+policy has already expired or expires today) to every director with
+view access to the entity in question.
 """
 from __future__ import annotations
 
@@ -105,7 +106,8 @@ def _emit_alert(
     tenant_id: uuid.UUID,
     severity: str,
 ) -> None:
-    """Emission hook — logs the alert today; Prompt 1.7 swaps in notifications.
+    """Emission hook — logs the alert AND dispatches a notification to
+    every director with view access to the entity (Prompt 1.7 retro-wire).
 
     `severity` is one of {"60_day", "30_day", "14_day", "7_day", "0_day", "expired"}.
     Tests monkey-patch this function to capture invocations.
@@ -120,6 +122,85 @@ def _emit_alert(
         alert.days_until_expiry,
         severity,
     )
+    # Notification dispatch (Prompt 1.7 retro-wire). Best-effort — never
+    # blocks the underlying alert loop.
+    try:
+        _dispatch_insurance_alert(alert, tenant_id, severity)
+    except Exception:
+        log.exception("insurance alert notification dispatch failed")
+
+
+def _dispatch_insurance_alert(
+    alert: InsuranceAlert,
+    tenant_id: uuid.UUID,
+    severity: str,
+) -> None:
+    """Dispatch one Insurance_Expiry notification per director with
+    `entities.view` access to the entity in question.
+
+    Priority:
+      - Critical when policy is already expired (severity='expired') or
+        same-day (0_day).
+      - High otherwise.
+    """
+    from sqlalchemy import select
+    from app.db import SessionLocal
+    from app.models.rbac import Role, UserRole, user_role_entities
+    from app.models.user import User
+    from app.services.notifications import safe_dispatch
+
+    priority = "Critical" if severity in ("expired", "0_day") else "High"
+    title = f"Insurance expiring: {alert.entity_name} — {alert.policy}"
+    body = (
+        f"{alert.policy} insurance for **{alert.entity_name}** "
+        f"{'has expired' if alert.days_until_expiry < 0 else f'expires in {alert.days_until_expiry} days'} "
+        f"({alert.expires_on.isoformat()})."
+    )
+    db = SessionLocal()
+    try:
+        # Director users with access to this entity:
+        # - role_scope='All' on a director role
+        # - or role_scope='Specific' with the entity in user_role_entities
+        director_roles = db.scalars(
+            select(Role).where(Role.code.in_(["director", "super_admin"]))
+        ).all()
+        if not director_roles:
+            return
+        director_role_ids = {r.id for r in director_roles}
+        all_user_roles = db.scalars(
+            select(UserRole).where(
+                UserRole.role_id.in_(director_role_ids),
+                UserRole.status == "Active",
+            )
+        ).all()
+        recipient_ids: set = set()
+        for ur in all_user_roles:
+            if ur.entity_scope == "All":
+                recipient_ids.add(ur.user_id)
+            elif ur.entity_scope == "Specific":
+                rows = db.execute(
+                    select(user_role_entities.c.entity_id).where(
+                        user_role_entities.c.user_role_id == ur.id,
+                    )
+                ).all()
+                if any(r[0] == alert.entity_id for r in rows):
+                    recipient_ids.add(ur.user_id)
+        for uid in recipient_ids:
+            safe_dispatch(
+                db,
+                recipient_user_id=uid,
+                notification_type="Insurance_Expiry",
+                title=title,
+                body=body,
+                priority=priority,
+                related_resource_type="entities",
+                related_resource_id=alert.entity_id,
+                action_url=f"/entities/{alert.entity_id}",
+                action_label="View entity",
+            )
+        db.commit()
+    finally:
+        db.close()
 
 
 def run_insurance_alert_sweep() -> int:

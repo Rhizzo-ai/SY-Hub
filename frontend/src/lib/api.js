@@ -3,6 +3,17 @@ import axios from "axios";
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 export const API_BASE = `${BACKEND_URL}/api`;
 
+/**
+ * Cookies-only auth transport (audit remediation C1, Feb 2026).
+ *
+ * The backend sets `access_token` + `refresh_token` as HttpOnly cookies on
+ * `/api/auth/login`, rotates them on `/api/auth/refresh`, and clears them on
+ * `/api/auth/logout`. The frontend NEVER touches token values directly —
+ * they live in the cookie jar and ride every request via `withCredentials`.
+ *
+ * Everything previously in localStorage (access/refresh token strings) is
+ * gone: a successful XSS can no longer exfiltrate a bearable token.
+ */
 export const api = axios.create({
     baseURL: API_BASE,
     headers: { "Content-Type": "application/json" },
@@ -10,59 +21,31 @@ export const api = axios.create({
     withCredentials: true,
 });
 
-// ---- Auth token storage ----
-const ACCESS_KEY = "syhomes_access_token";
-const REFRESH_KEY = "syhomes_refresh_token";
-
-export function setAuthToken(access) {
-    if (access) localStorage.setItem(ACCESS_KEY, access);
-    else localStorage.removeItem(ACCESS_KEY);
-}
-export function getAuthToken() {
-    return localStorage.getItem(ACCESS_KEY);
-}
-export function setRefreshToken(refresh) {
-    if (refresh) localStorage.setItem(REFRESH_KEY, refresh);
-    else localStorage.removeItem(REFRESH_KEY);
-}
-export function getRefreshToken() {
-    return localStorage.getItem(REFRESH_KEY);
-}
-export function setTokenPair({ access_token, refresh_token }) {
-    setAuthToken(access_token);
-    if (refresh_token) setRefreshToken(refresh_token);
-}
-export function clearTokens() {
-    setAuthToken(null);
-    setRefreshToken(null);
-}
-
-// ---- Request interceptor: attach access token ----
-api.interceptors.request.use((config) => {
-    const token = getAuthToken();
-    if (token) {
-        config.headers = config.headers || {};
-        config.headers.Authorization = `Bearer ${token}`;
-    }
-    return config;
-});
 
 // ---- Refresh-on-401 with a single in-flight promise to prevent stampedes ----
+//
+// Success path: POST /api/auth/refresh → 204 No Content + rotated Set-Cookie
+// headers. Nothing to parse from the body. We resolve the shared promise so
+// all queued callers retry their original request (cookies auto-refreshed).
+// Failure path: 401 → reject, caller falls through to the "log out" branch.
+
 let _refreshPromise = null;
 
-async function refreshTokens() {
+function refreshCookies() {
     if (_refreshPromise) return _refreshPromise;
-    const refresh = getRefreshToken();
-    if (!refresh) return Promise.reject(new Error("no-refresh-token"));
     _refreshPromise = axios
-        .post(`${API_BASE}/auth/refresh`, { refresh_token: refresh }, { withCredentials: true })
+        .post(`${API_BASE}/auth/refresh`, null, { withCredentials: true })
         .then((r) => {
-            setTokenPair(r.data);
-            return r.data.access_token;
+            // Contract: 204 on success.
+            if (r.status !== 204 && r.status !== 200) {
+                throw new Error(`unexpected refresh status ${r.status}`);
+            }
+            return true;
         })
         .finally(() => { _refreshPromise = null; });
     return _refreshPromise;
 }
+
 
 // ---- Response interceptor: refresh+retry on 401, friendlyMessage for UI ----
 api.interceptors.response.use(
@@ -70,27 +53,23 @@ api.interceptors.response.use(
     async (error) => {
         const original = error?.config;
         const status = error?.response?.status;
+        const url = String(original?.url || "");
 
         // Attempt refresh exactly once for 401s on non-auth routes.
-        if (
-            status === 401 &&
-            original &&
-            !original._retried &&
-            !String(original.url || "").includes("/auth/refresh") &&
-            !String(original.url || "").includes("/auth/login") &&
-            getRefreshToken()
-        ) {
+        const isAuthRoute =
+            url.includes("/auth/refresh") ||
+            url.includes("/auth/login") ||
+            url.includes("/auth/logout");
+
+        if (status === 401 && original && !original._retried && !isAuthRoute) {
             original._retried = true;
             try {
-                const newAccess = await refreshTokens();
-                original.headers = original.headers || {};
-                original.headers.Authorization = `Bearer ${newAccess}`;
+                await refreshCookies();
+                // Cookies rotated — retry the original request. The browser
+                // attaches the fresh access cookie automatically.
                 return api(original);
             } catch (_) {
-                clearTokens();
-                if (window.location.pathname !== "/login") {
-                    window.dispatchEvent(new Event("syhomes:unauthorized"));
-                }
+                // Refresh failed — drop to unauth event below.
             }
         }
 
@@ -106,10 +85,19 @@ api.interceptors.response.use(
                   ? detail.map((e) => (e?.msg ? e.msg : JSON.stringify(e))).join(" ")
                   : JSON.stringify(detail);
 
-        if (status === 401 && window.location.pathname !== "/login") {
-            clearTokens();
+        if (status === 401 && !isAuthRoute && window.location.pathname !== "/login") {
             window.dispatchEvent(new Event("syhomes:unauthorized"));
         }
         return Promise.reject(error);
     }
 );
+
+
+// ---- Cookie-aware fetch wrapper for binary downloads (CSV/PDF) ----
+//
+// `fetch` does not honour our axios `withCredentials` default, so callers
+// that stream blobs (e.g. CSV export) go via this helper instead of adding
+// Authorization headers. Never read or send tokens from JS land.
+export function authedFetch(url, init = {}) {
+    return fetch(url, { credentials: "include", ...init });
+}

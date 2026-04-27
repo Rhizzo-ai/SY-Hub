@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -22,6 +22,7 @@ from app.services.sessions import (
     revoke_session as _revoke,
     log_event,
 )
+from app.services.audit import record_audit
 
 router = APIRouter(tags=["sessions"])
 
@@ -80,6 +81,7 @@ def list_my_sessions(
 @router.post("/users/me/sessions/{session_id}/revoke", status_code=204)
 def revoke_my_session(
     session_id: uuid.UUID,
+    request: Request,
     principal: Principal = Depends(get_current_principal),
     db: Session = Depends(get_db),
 ):
@@ -93,15 +95,29 @@ def revoke_my_session(
               user_id=principal.user.id, session_id=s.id,
               ip=s.ip_address or "", user_agent=s.user_agent or "",
               metadata={"initiator": "self"})
+    record_audit(
+        db, action="Delete", resource_type="user_sessions", resource_id=s.id,
+        actor_user_id=principal.user.id,
+        metadata={"reason": "user_revoke"}, request=request,
+    )
     db.commit()
 
 
 @router.post("/users/me/sessions/revoke-others", status_code=204)
 def revoke_all_other_sessions(
+    request: Request,
     principal: Principal = Depends(get_current_principal),
     db: Session = Depends(get_db),
 ):
     current_id = principal.session.id if principal.session else None
+    # Capture the sessions that will be revoked, so each gets its own audit row.
+    to_revoke = db.scalars(
+        select(UserSession).where(
+            UserSession.user_id == principal.user.id,
+            UserSession.revoked_at.is_(None),
+            UserSession.id != current_id,
+        )
+    ).all()
     revoked = revoke_all_user_sessions(
         db, principal.user.id, "Logout", except_session_id=current_id,
     )
@@ -109,6 +125,12 @@ def revoke_all_other_sessions(
               user_id=principal.user.id, session_id=current_id,
               ip="", user_agent="",
               metadata={"initiator": "self", "scope": "all_others", "count": revoked})
+    for s in to_revoke:
+        record_audit(
+            db, action="Delete", resource_type="user_sessions", resource_id=s.id,
+            actor_user_id=principal.user.id,
+            metadata={"reason": "user_revoke_all_others"}, request=request,
+        )
     db.commit()
 
 
@@ -132,6 +154,7 @@ def list_user_sessions(
 @router.post("/users/{user_id}/sessions/revoke-all", status_code=204)
 def admin_revoke_all_sessions(
     user_id: uuid.UUID,
+    request: Request,
     db: Session = Depends(get_db),
     principal: Principal = Depends(get_current_principal),
     _=Depends(require_permission("users.admin")),
@@ -139,11 +162,24 @@ def admin_revoke_all_sessions(
     target = db.get(User, user_id)
     if target is None:
         raise HTTPException(404, "User not found")
+    to_revoke = db.scalars(
+        select(UserSession).where(
+            UserSession.user_id == user_id,
+            UserSession.revoked_at.is_(None),
+        )
+    ).all()
     revoked = revoke_all_user_sessions(db, user_id, "Admin_Revoke")
     log_event(db, event_type="Session_Revoked", email_attempted=target.email,
               user_id=user_id, ip="", user_agent="",
               metadata={"initiator": "admin", "admin_user_id": str(principal.user.id),
                         "count": revoked})
+    for s in to_revoke:
+        record_audit(
+            db, action="Delete", resource_type="user_sessions", resource_id=s.id,
+            actor_user_id=principal.user.id,
+            metadata={"reason": "admin_revoke", "target_user_id": str(user_id)},
+            request=request,
+        )
     if revoked > 0:
         subj, html, text = session_revoked_email(
             recipient_name=target.display_name or target.first_name,

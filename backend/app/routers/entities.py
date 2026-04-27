@@ -14,7 +14,7 @@ from __future__ import annotations
 import uuid
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -35,7 +35,28 @@ from app.schemas.entity import (
     EntityRead, EntitySummary, EntityUpdate,
 )
 
+from app.services.audit import record_audit, field_diff
+
 router = APIRouter(prefix="/entities", tags=["entities"])
+
+
+def _entity_snapshot(ent: Entity) -> dict:
+    """Columns we care about for field_diff — drop anything internal."""
+    return {
+        "name": ent.name, "legal_name": ent.legal_name, "entity_type": ent.entity_type,
+        "parent_entity_id": str(ent.parent_entity_id) if ent.parent_entity_id else None,
+        "registered_address": ent.registered_address, "trading_address": ent.trading_address,
+        "companies_house_number": ent.companies_house_number, "vat_number": ent.vat_number,
+        "vat_scheme": ent.vat_scheme, "vat_return_period": ent.vat_return_period,
+        "cis_status": ent.cis_status, "year_end": ent.year_end.isoformat() if ent.year_end else None,
+        "default_currency": ent.default_currency, "status": ent.status,
+        "el_insurance_expires": ent.el_insurance_expires.isoformat() if ent.el_insurance_expires else None,
+        "pl_insurance_expires": ent.pl_insurance_expires.isoformat() if ent.pl_insurance_expires else None,
+        "pi_insurance_expires": ent.pi_insurance_expires.isoformat() if ent.pi_insurance_expires else None,
+        "bank_name": ent.bank_name, "bank_account_name": ent.bank_account_name,
+        "bank_account_number_masked": ent.bank_account_number_masked,
+        "xero_org_id": ent.xero_org_id,
+    }
 
 
 SORTABLE_FIELDS = {
@@ -200,6 +221,7 @@ def get_entity(
 @router.post("", response_model=EntityDetail, status_code=201)
 def create_entity(
     payload: EntityCreate,
+    request: Request,
     db: Session = Depends(get_db),
     principal: Principal = Depends(get_current_principal),
     current: User = Depends(get_current_user),
@@ -222,7 +244,7 @@ def create_entity(
     ent = Entity(tenant_id=tenant_id, created_by_user_id=current.id, **data)
     db.add(ent)
     try:
-        db.commit()
+        db.flush()
     except IntegrityError as e:
         db.rollback()
         msg = str(e.orig)
@@ -231,6 +253,16 @@ def create_entity(
         if "uq_entities_vat_number" in msg:
             raise HTTPException(409, "vat_number already exists for this tenant")
         raise HTTPException(409, "Integrity error")
+
+    # Audit after flush (we need ent.id) but before commit so both land atomically.
+    record_audit(
+        db,
+        action="Create", resource_type="entities", resource_id=ent.id,
+        actor_user_id=current.id, entity_id=ent.id,
+        field_changes=field_diff({}, _entity_snapshot(ent)),
+        request=request,
+    )
+    db.commit()
     db.refresh(ent)
     detail = _detail_payload(db, tenant_id, ent)
     _strip_sensitive(detail, perms)
@@ -241,14 +273,18 @@ def create_entity(
 def update_entity(
     entity_id: uuid.UUID,
     payload: EntityUpdate,
+    request: Request,
     db: Session = Depends(get_db),
     principal: Principal = Depends(get_current_principal),
+    current: User = Depends(get_current_user),
     perms: UserPermissions = Depends(require_permission("entities.edit")),
 ):
     tenant_id = principal.tenant_id
     ent = _get_or_404(db, tenant_id, entity_id)
     if not perms.has_on_entity("entities.edit", ent.id):
         raise HTTPException(403, "Insufficient scope for this entity")
+
+    before = _entity_snapshot(ent)
 
     data = payload.model_dump(exclude_unset=True)
     unset_parent = data.pop("unset_parent", False)
@@ -282,7 +318,7 @@ def update_entity(
         setattr(ent, k, v)
 
     try:
-        db.commit()
+        db.flush()
     except IntegrityError as e:
         db.rollback()
         msg = str(e.orig)
@@ -291,6 +327,17 @@ def update_entity(
         if "uq_entities_vat_number" in msg:
             raise HTTPException(409, "vat_number already exists for this tenant")
         raise HTTPException(409, "Integrity error")
+
+    after = _entity_snapshot(ent)
+    changes = field_diff(before, after)
+    if changes:
+        record_audit(
+            db,
+            action="Update", resource_type="entities", resource_id=ent.id,
+            actor_user_id=current.id, entity_id=ent.id,
+            field_changes=changes, request=request,
+        )
+    db.commit()
     db.refresh(ent)
     detail = _detail_payload(db, tenant_id, ent)
     _strip_sensitive(detail, perms)
@@ -300,8 +347,10 @@ def update_entity(
 @router.delete("/{entity_id}", status_code=204)
 def delete_entity(
     entity_id: uuid.UUID,
+    request: Request,
     db: Session = Depends(get_db),
     principal: Principal = Depends(get_current_principal),
+    current: User = Depends(get_current_user),
     perms: UserPermissions = Depends(require_permission("entities.delete")),
 ):
     tenant_id = principal.tenant_id
@@ -319,7 +368,17 @@ def delete_entity(
             f"Cannot delete: {child_count} child entity(ies) reference this entity. "
             "Set status to Struck_off instead, or reassign children first.",
         )
+    before = _entity_snapshot(ent)
+    ent_id = ent.id  # preserve before deletion flushes
     try:
+        record_audit(
+            db,
+            action="Delete", resource_type="entities", resource_id=ent_id,
+            actor_user_id=current.id,
+            field_changes=field_diff(before, {}),
+            metadata={"entity_name": ent.name},
+            request=request,
+        )
         db.delete(ent)
         db.commit()
     except IntegrityError:

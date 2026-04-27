@@ -65,6 +65,7 @@ from app.services.sessions import (
     rotate_session,
     session_is_active,
 )
+from app.services.audit import record_audit
 
 log = logging.getLogger("syhomes.auth")
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -84,13 +85,22 @@ class LoginRequest(BaseModel):
 
 
 class LoginResponse(BaseModel):
-    access_token: Optional[str] = None
-    refresh_token: Optional[str] = None
+    """Cookies-only transport: tokens go in Set-Cookie, never the body.
+
+    The body carries the metadata the frontend needs to hydrate
+    AuthContext without a follow-up `GET /auth/me`.
+
+    Exception: `mfa_challenge_token` is NOT a session-bearing access token.
+    It is a short-lived (5-min) opaque artifact whose sole purpose is to
+    identify the half-authenticated flow on the next /mfa/verify call.
+    The /mfa/verify endpoint is unauthenticated (no cookie yet) and must
+    receive the challenge id in the body — this is standard for MFA
+    hand-off and is out of scope for C1 (no access/refresh leak).
+    """
     token_type: str = "bearer"
     mfa_required: bool = False
     mfa_challenge_token: Optional[str] = None
     mfa_enrollment_required: bool = False
-    mfa_pending_token: Optional[str] = None
     enforced_role_name: Optional[str] = None
     user: Optional[dict] = None
     access_token_expires_in: int = ACCESS_TOKEN_MINUTES * 60
@@ -114,9 +124,14 @@ class MfaEnrollConfirmRequest(BaseModel):
 
 
 class MfaEnrollConfirmResponse(BaseModel):
+    """Cookies-only transport: a successful enrolment from a `mfa_pending`
+    token sets the full `access_token` + `refresh_token` cookies on the way
+    out (see _set_cookies below). The body carries only the backup codes
+    and a boolean indicating that a full session was issued — never the
+    tokens themselves (audit remediation C1).
+    """
     backup_codes: list[str]
-    access_token: Optional[str] = None
-    refresh_token: Optional[str] = None
+    session_issued: bool = False
 
 
 class MfaDisableRequest(BaseModel):
@@ -138,14 +153,20 @@ class PasswordChangeRequest(BaseModel):
 
 
 class RefreshRequest(BaseModel):
-    refresh_token: str
+    """Cookies-only: refresh token is read from the httpOnly cookie.
+    Bodies are ignored; kept as an empty model so clients sending a stale
+    `{"refresh_token": "..."}` payload don't get a 422 from Pydantic.
+
+    Any extra fields are silently discarded (Pydantic default extra='ignore').
+    """
+    pass
 
 
 class RefreshResponse(BaseModel):
-    access_token: str
-    refresh_token: str
-    token_type: str = "bearer"
-    access_token_expires_in: int = ACCESS_TOKEN_MINUTES * 60
+    """Cookies-only — kept as an empty model to preserve router shape; the
+    real response is `204 No Content` with rotated Set-Cookie headers.
+    """
+    pass
 
 
 class PasswordResetRequestPayload(BaseModel):
@@ -214,12 +235,21 @@ def _is_locked(u: User) -> bool:
 
 
 def _most_senior_enforced_role(db: Session, user: User) -> Optional[Role]:
+    """Returns the most-senior MFA-enforced role the user currently holds.
+
+    Must match `compute_effective_permissions` (app/auth/permissions.py) so
+    that MFA enforcement never sees a role that the permission resolver would
+    treat as expired. Seniority uses roles.priority ASC (lower = more senior).
+    """
+    from sqlalchemy import or_
+    now = datetime.now(timezone.utc)
     return db.scalars(
         select(Role)
         .join(UserRole, UserRole.role_id == Role.id)
         .where(
             UserRole.user_id == user.id,
             UserRole.status == "Active",
+            or_(UserRole.expires_at.is_(None), UserRole.expires_at > now),
             Role.code.in_(MFA_ENFORCED_ROLES),
         )
         .order_by(Role.priority.asc())
@@ -238,24 +268,48 @@ def _ua(req: Request) -> str:
     return req.headers.get("user-agent", "")
 
 
-def _set_cookies(response: Response, access: str, refresh: str, remember_me: bool) -> None:
-    """Access cookie matches token TTL; refresh cookie matches session TTL."""
+def _is_secure_env() -> bool:
+    """Secure flag everywhere except the test harness (which runs http)."""
     import os
+    return os.environ.get("APP_ENV", "") != "test"
+
+
+def _set_cookies(response: Response, access: str, refresh: str, remember_me: bool) -> None:
+    """Access + refresh cookies, Path=/ on both so nothing breaks if a client
+    reads the refresh cookie from a path other than /auth. HttpOnly + SameSite=Lax
+    always; Secure off only in APP_ENV=test.
+    """
     access_max_age = ACCESS_TOKEN_MINUTES * 60
     refresh_days = 90 if remember_me else 30
     refresh_max_age = refresh_days * 86400
+    secure = _is_secure_env()
     response.set_cookie(
-        key="access_token", value=access, httponly=True, secure=False,
+        key="access_token", value=access, httponly=True, secure=secure,
         samesite="lax", max_age=access_max_age, path="/",
     )
     response.set_cookie(
-        key="refresh_token", value=refresh, httponly=True, secure=False,
-        samesite="lax", max_age=refresh_max_age, path="/api/auth",
+        key="refresh_token", value=refresh, httponly=True, secure=secure,
+        samesite="lax", max_age=refresh_max_age, path="/",
     )
+
+
+def _set_pending_cookie(response: Response, pending_token: str) -> None:
+    """mfa_pending token travels via the `access_token` cookie so every auth
+    dependency keeps using one transport. Short Max-Age matches JWT TTL.
+    """
+    response.set_cookie(
+        key="access_token", value=pending_token, httponly=True,
+        secure=_is_secure_env(), samesite="lax",
+        max_age=MFA_PENDING_LIFETIME_MINUTES * 60, path="/",
+    )
+    # Defensive: ensure no stale refresh cookie leaks across an enrolment flow.
+    response.delete_cookie("refresh_token", path="/")
 
 
 def _clear_cookies(response: Response) -> None:
     response.delete_cookie("access_token", path="/")
+    response.delete_cookie("refresh_token", path="/")
+    # Legacy path from the pre-remediation release — delete defensively.
     response.delete_cookie("refresh_token", path="/api/auth")
 
 
@@ -352,10 +406,9 @@ def login(
             token_type="mfa_pending", lifetime_minutes=MFA_PENDING_LIFETIME_MINUTES,
         )
         db.commit()
+        _set_pending_cookie(response, pending)
         return LoginResponse(
-            access_token=pending,
             mfa_enrollment_required=True,
-            mfa_pending_token=pending,
             enforced_role_name=enforced_role.name,
             user=_serialise_user_public(user),
         )
@@ -375,10 +428,14 @@ def login(
     )
     log_event(db, event_type="Login_Success", email_attempted=email, user_id=user.id,
               session_id=session.id, ip=ip, user_agent=ua)
+    record_audit(
+        db, action="Login", resource_type="users", resource_id=user.id,
+        actor_user_id=user.id, session_id=session.id, request=request,
+        metadata={"mfa": "none"},
+    )
     db.commit()
     _set_cookies(response, access, refresh, payload.remember_me)
-    return LoginResponse(access_token=access, refresh_token=refresh,
-                        user=_serialise_user_public(user))
+    return LoginResponse(user=_serialise_user_public(user))
 
 
 @router.post("/mfa/verify", response_model=LoginResponse)
@@ -438,10 +495,14 @@ def mfa_verify(
     log_event(db, event_type="Login_Success", email_attempted=user.email, user_id=user.id,
               session_id=session.id, ip=ip, user_agent=ua,
               metadata={"mfa": "totp" if not payload.use_backup_code else "backup_code"})
+    record_audit(
+        db, action="Login", resource_type="users", resource_id=user.id,
+        actor_user_id=user.id, session_id=session.id, request=request,
+        metadata={"mfa": "totp" if not payload.use_backup_code else "backup_code"},
+    )
     db.commit()
     _set_cookies(response, access, refresh, payload.remember_me)
-    return LoginResponse(access_token=access, refresh_token=refresh,
-                        user=_serialise_user_public(user))
+    return LoginResponse(user=_serialise_user_public(user))
 
 
 @router.post("/mfa/enroll/start", response_model=MfaEnrollStartResponse)
@@ -476,9 +537,38 @@ def mfa_enroll_confirm(
 
     log_event(db, event_type="MFA_Enrolled", email_attempted=current.email, user_id=current.id,
               ip=ip, user_agent=ua)
+    record_audit(
+        db, action="Update", resource_type="users", resource_id=current.id,
+        actor_user_id=current.id,
+        metadata={"mfa_action": "enrol"},
+        request=request,
+    )
+    # Prompt 1.7 retro-wire: Security_Alert on MFA enrolment.
+    try:
+        from app.services.notifications import safe_dispatch
+        safe_dispatch(
+            db,
+            recipient_user_id=current.id,
+            notification_type="Security_Alert",
+            title="Two-factor authentication enabled",
+            body=(
+                "MFA (TOTP) was enrolled on your account. Keep your backup "
+                "codes somewhere safe — they're the only way back in if "
+                "you lose your authenticator app."
+            ),
+            priority="High",
+            related_resource_type="users",
+            related_resource_id=current.id,
+            action_url="/profile/security",
+            action_label="View security",
+            request=request,
+        )
+    except Exception:
+        pass
 
     access_token = None
     refresh_token = None
+    session_issued = False
     if principal.token_type == "mfa_pending":
         session, access_token, refresh_token = create_session(
             db, user_id=current.id, email=current.email, tenant_id=current.tenant_id,
@@ -488,10 +578,11 @@ def mfa_enroll_confirm(
                   user_id=current.id, session_id=session.id, ip=ip, user_agent=ua,
                   metadata={"via": "mfa_enrolment"})
         _set_cookies(response, access_token, refresh_token, remember_me=False)
+        session_issued = True
 
     db.commit()
     return MfaEnrollConfirmResponse(
-        backup_codes=codes, access_token=access_token, refresh_token=refresh_token,
+        backup_codes=codes, session_issued=session_issued,
     )
 
 
@@ -511,12 +602,40 @@ def mfa_disable(
     current.mfa_enrolled_at = None
     log_event(db, event_type="MFA_Disabled", email_attempted=current.email,
               user_id=current.id, ip=_client_ip(request), user_agent=_ua(request))
+    record_audit(
+        db, action="Update", resource_type="users", resource_id=current.id,
+        actor_user_id=current.id,
+        metadata={"mfa_action": "disable"},
+        request=request,
+    )
+    # Prompt 1.7 retro-wire: Security_Alert on MFA disable.
+    try:
+        from app.services.notifications import safe_dispatch
+        safe_dispatch(
+            db,
+            recipient_user_id=current.id,
+            notification_type="Security_Alert",
+            title="Two-factor authentication disabled",
+            body=(
+                "MFA was disabled on your account. If this wasn't you, "
+                "change your password immediately and re-enable MFA."
+            ),
+            priority="High",
+            related_resource_type="users",
+            related_resource_id=current.id,
+            action_url="/profile/security",
+            action_label="Re-enable MFA",
+            request=request,
+        )
+    except Exception:
+        pass
     db.commit()
 
 
 @router.post("/mfa/backup-codes/regenerate", response_model=RegenerateBackupCodesResponse)
 def regenerate_backup_codes(
     payload: RegenerateBackupCodesRequest,
+    request: Request,
     current: User = Depends(get_enrollment_user),
     db: Session = Depends(get_db),
 ):
@@ -529,6 +648,12 @@ def regenerate_backup_codes(
         raise HTTPException(status_code=400, detail="Invalid authenticator code")
     codes = generate_backup_codes()
     current.mfa_backup_codes_encrypted = encrypt_backup_codes(codes)
+    record_audit(
+        db, action="Update", resource_type="users", resource_id=current.id,
+        actor_user_id=current.id,
+        metadata={"mfa_action": "regenerate"},
+        request=request,
+    )
     db.commit()
     return RegenerateBackupCodesResponse(backup_codes=codes)
 
@@ -569,6 +694,13 @@ def password_change(
     ip = _client_ip(request)
     log_event(db, event_type="Password_Change", email_attempted=current.email,
               user_id=current.id, ip=ip, user_agent=_ua(request))
+    record_audit(
+        db, action="Update", resource_type="users", resource_id=current.id,
+        actor_user_id=current.id,
+        field_changes=[{"field": "password_hash", "old": "[REDACTED]", "new": "[REDACTED]"}],
+        metadata={"initiator": "self"},
+        request=request,
+    )
 
     subj, html, text = password_changed_email(
         recipient_name=current.display_name or current.first_name,
@@ -579,19 +711,27 @@ def password_change(
     db.commit()
 
 
-@router.post("/refresh", response_model=RefreshResponse)
+@router.post("/refresh", status_code=204)
 def refresh(
-    payload: RefreshRequest,
     request: Request,
     response: Response,
     db: Session = Depends(get_db),
 ):
-    """Rotate refresh token. Replay detection: if the presented hash matches a
-    session whose refresh was already rotated, revoke ALL sessions for the user.
+    """Rotate refresh token. Reads refresh-token from the httpOnly cookie
+    (audit remediation C1 — no body transport). Replay detection: if the
+    presented hash matches a session whose refresh was already rotated,
+    revoke ALL sessions for the user.
     """
     ip = _client_ip(request)
     ua = _ua(request)
-    presented_hash = hash_refresh(payload.refresh_token)
+    presented = request.cookies.get("refresh_token")
+    if not presented:
+        log_event(db, event_type="Refresh_Failed", email_attempted="",
+                  ip=ip, user_agent=ua, failure_reason="Refresh_Token_Invalid",
+                  metadata={"reason": "no_cookie"})
+        db.commit()
+        raise HTTPException(status_code=401, detail="Missing refresh cookie")
+    presented_hash = hash_refresh(presented)
 
     # Normal rotation path
     session = db.scalar(
@@ -659,7 +799,6 @@ def refresh(
               user_id=user.id, session_id=session.id, ip=ip, user_agent=ua)
     db.commit()
     _set_cookies(response, access, raw_refresh, remember_me=session.remember_me)
-    return RefreshResponse(access_token=access, refresh_token=raw_refresh)
 
 
 @router.post("/logout", status_code=204)
@@ -695,6 +834,11 @@ def logout(
         log_event(db, event_type="Logout", email_attempted="",
                   user_id=session.user_id, session_id=session.id,
                   ip=_client_ip(request), user_agent=_ua(request))
+        record_audit(
+            db, action="Logout", resource_type="users", resource_id=session.user_id,
+            actor_user_id=session.user_id, session_id=session.id,
+            request=request,
+        )
         db.commit()
 
     _clear_cookies(response)
@@ -740,6 +884,28 @@ def password_reset_request(
                    template_id="password_reset_email")
         log_event(db, event_type="Password_Reset_Requested", email_attempted=email,
                   user_id=user.id, ip=ip, user_agent=ua)
+        # Prompt 1.7 retro-wire: in-app Security_Alert.
+        try:
+            from app.services.notifications import safe_dispatch
+            safe_dispatch(
+                db,
+                recipient_user_id=user.id,
+                notification_type="Security_Alert",
+                title="Password reset requested",
+                body=(
+                    "A password reset was requested for your account. "
+                    "If this wasn't you, change your password and review "
+                    "your active sessions immediately."
+                ),
+                priority="High",
+                related_resource_type="users",
+                related_resource_id=user.id,
+                action_url="/profile/sessions",
+                action_label="View sessions",
+                request=request,
+            )
+        except Exception:
+            pass
     else:
         log_event(db, event_type="Password_Reset_Requested", email_attempted=email,
                   ip=ip, user_agent=ua, metadata={"outcome": "no_account_or_not_active"})
@@ -814,6 +980,13 @@ def password_reset_complete(
     revoke_all_user_sessions(db, user.id, "Password_Reset")
     log_event(db, event_type="Password_Reset_Completed", email_attempted=user.email,
               user_id=user.id, ip=ip, user_agent=ua)
+    record_audit(
+        db, action="Update", resource_type="users", resource_id=user.id,
+        actor_user_id=user.id,
+        field_changes=[{"field": "password_hash", "old": "[REDACTED]", "new": "[REDACTED]"}],
+        metadata={"reset_initiator": "self"},
+        request=request,
+    )
 
     subj, html, text = password_changed_email(
         recipient_name=user.display_name or user.first_name,

@@ -1,5 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
-import { api, setTokenPair, clearTokens, getAuthToken } from "@/lib/api";
+import { api } from "@/lib/api";
 import ForcedMfaEnroll from "@/pages/ForcedMfaEnroll";
 
 const AuthContext = createContext(null);
@@ -9,36 +9,63 @@ const AuthContext = createContext(null);
 const IDLE_WARN_MS = 55 * 60 * 1000;
 const IDLE_FORCE_MS = 60 * 60 * 1000;
 
+/**
+ * Cookies-only AuthContext (audit remediation C1, Feb 2026).
+ *
+ * Lifecycle:
+ *   1. First mount → state="loading" → `GET /auth/me` to see if a session
+ *      cookie survived a page reload. Success populates `me`; 401 drops to
+ *      state="anon". This is the ONLY time we call /auth/me on boot.
+ *   2. Login → `POST /auth/login` sets the cookies server-side and returns
+ *      the user metadata in the body. We hydrate `me` directly from the
+ *      login response — no follow-up /auth/me round-trip.
+ *   3. MFA challenge → second login step via `POST /auth/mfa/verify`, same
+ *      hydration pattern.
+ *   4. MFA enrolment for an enforced role → `mfa_enrollment_required: true`
+ *      in the login body → route to ForcedMfaEnroll. The pending JWT rides
+ *      on the access_token cookie; we do NOT read a pending-token string.
+ *      After /mfa/enroll/confirm, call `refresh()` to re-hydrate `me` under
+ *      the rotated full-session cookie.
+ *   5. Logout → `POST /auth/logout` clears cookies server-side.
+ *   6. 401 mid-session → api.js interceptor attempts a silent /auth/refresh;
+ *      if that also 401s it dispatches `syhomes:unauthorized` which drops
+ *      us back to state="anon".
+ */
 export function AuthProvider({ children }) {
-    const [state, setState] = useState(getAuthToken() ? "loading" : "anon");
+    // No localStorage peek: cookies are HttpOnly. We optimistically assume
+    // there MAY be a session and let /auth/me decide.
+    const [state, setState] = useState("loading");
     const [me, setMe] = useState(null);
     const [idleWarning, setIdleWarning] = useState(false);
     const lastActivityRef = useRef(Date.now());
 
+    const hydrateFromMe = useCallback((data) => {
+        setMe(data);
+        setState(data?.token_type === "mfa_pending" ? "pending_mfa" : "authed");
+    }, []);
+
     const fetchMe = useCallback(async () => {
         try {
             const r = await api.get("/auth/me");
-            setMe(r.data);
-            setState(r.data?.token_type === "mfa_pending" ? "pending_mfa" : "authed");
+            hydrateFromMe(r.data);
             return r.data;
-        } catch (e) {
-            clearTokens();
+        } catch (_) {
             setMe(null);
             setState("anon");
             return null;
         }
-    }, []);
+    }, [hydrateFromMe]);
 
+    // Boot-time session restoration.
     useEffect(() => {
-        if (state === "loading") fetchMe();
+        fetchMe();
         const onUnauth = () => {
-            clearTokens();
             setMe(null);
             setState("anon");
         };
         window.addEventListener("syhomes:unauthorized", onUnauth);
         return () => window.removeEventListener("syhomes:unauthorized", onUnauth);
-    }, [state, fetchMe]);
+    }, [fetchMe]);
 
     // --- Idle-timeout tracking (authed only) ---
     useEffect(() => {
@@ -49,8 +76,6 @@ export function AuthProvider({ children }) {
         const interval = setInterval(() => {
             const idle = Date.now() - lastActivityRef.current;
             if (idle >= IDLE_FORCE_MS) {
-                // Force-logout
-                clearTokens();
                 setMe(null);
                 setState("anon");
             } else if (idle >= IDLE_WARN_MS && !idleWarning) {
@@ -65,35 +90,59 @@ export function AuthProvider({ children }) {
 
     const login = useCallback(async (email, password, remember_me = false) => {
         const r = await api.post("/auth/login", { email, password, remember_me });
-        if (r.data.mfa_required) {
-            return { mfa_required: true, challenge: r.data.mfa_challenge_token };
+        const body = r.data;
+
+        if (body.mfa_required) {
+            // Half-authenticated — no session cookie yet. Caller collects
+            // the TOTP and routes into submitMfa().
+            return { mfa_required: true, challenge: body.mfa_challenge_token };
         }
-        if (r.data.mfa_enrollment_required && r.data.mfa_pending_token) {
-            // mfa_pending tokens are one-shot JWTs, no refresh rotation.
-            setTokenPair({ access_token: r.data.mfa_pending_token, refresh_token: null });
+        if (body.mfa_enrollment_required) {
+            // The backend has already set the mfa_pending JWT as an HttpOnly
+            // `access_token` cookie. We don't read any token from the body
+            // (audit C1: mfa_pending_token was removed from the response).
+            // Hydrate `me` via /auth/me on the pending cookie; ProtectedRoute
+            // will render the ForcedMfaEnroll gate when token_type is pending.
             await fetchMe();
             return {
                 mfa_enrollment_required: true,
-                enforced_role_name: r.data.enforced_role_name,
+                enforced_role_name: body.enforced_role_name,
             };
         }
-        setTokenPair(r.data);
-        await fetchMe();
+
+        // Normal path — cookies set, user metadata in body. Hydrate directly
+        // from the login payload; skip the /auth/me round-trip.
+        hydrateFromMe({
+            ...body.user,
+            // /auth/me returns these fields; synthesise what we can so the
+            // UI doesn't flash with missing permissions. A follow-up
+            // refresh() can be used by callers that need the full perm set.
+            token_type: "access",
+            permissions: [],
+            is_super_admin: false,
+            mfa_enrollment_required: false,
+        });
+        // Then pull /auth/me asynchronously to populate permissions +
+        // is_super_admin. This is intentionally not awaited before return:
+        // the caller can navigate immediately and gated UI will flip on
+        // once perms arrive (very fast on a LAN or same-pod call).
+        fetchMe();
         return { mfa_required: false };
-    }, [fetchMe]);
+    }, [fetchMe, hydrateFromMe]);
 
     const submitMfa = useCallback(async (challenge, code, useBackup = false, remember_me = false) => {
-        const r = await api.post("/auth/mfa/verify", {
-            challenge_token: challenge, code,
-            use_backup_code: useBackup, remember_me,
+        await api.post("/auth/mfa/verify", {
+            challenge_token: challenge,
+            code,
+            use_backup_code: useBackup,
+            remember_me,
         });
-        setTokenPair(r.data);
+        // Cookies rotated → full access. Hydrate `me` (includes permissions).
         await fetchMe();
     }, [fetchMe]);
 
     const logout = useCallback(async () => {
         try { await api.post("/auth/logout"); } catch (_) {}
-        clearTokens();
         setMe(null);
         setState("anon");
     }, []);

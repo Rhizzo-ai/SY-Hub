@@ -8,10 +8,14 @@ Migrate to Redis when we deploy properly (roadmap note).
 """
 from __future__ import annotations
 
+import logging
+import os
 import threading
 import time
 from dataclasses import dataclass
 from typing import Optional
+
+_startup_log = logging.getLogger("syhomes.rate_limit")
 
 
 @dataclass
@@ -77,11 +81,37 @@ LIMITS = {
 }
 
 
+def _is_bypass_active() -> bool:
+    """Rate limiting is bypassed ONLY when BOTH flags are set:
+
+      - SYHOMES_RATE_LIMIT_DISABLED=1
+      - APP_ENV=test
+
+    A stray `SYHOMES_RATE_LIMIT_DISABLED=1` in production is a footgun we
+    refuse to honour; we log an ERROR instead and leave the limiter active.
+    """
+    disabled_flag = os.environ.get("SYHOMES_RATE_LIMIT_DISABLED") == "1"
+    app_env = os.environ.get("APP_ENV", "")
+    if disabled_flag and app_env == "test":
+        return True
+    if disabled_flag and app_env != "test":
+        _startup_log.error(
+            "SYHOMES_RATE_LIMIT_DISABLED is set but APP_ENV=%r. "
+            "Rate limiting REMAINS ACTIVE. The disable flag only takes effect "
+            "when APP_ENV=test.",
+            app_env or "(unset)",
+        )
+    return False
+
+
+# Emit startup-time confirmation so operators see the decision in the logs
+# instead of having to reason about env pairs.
+if os.environ.get("SYHOMES_RATE_LIMIT_DISABLED") == "1" and os.environ.get("APP_ENV") == "test":
+    _startup_log.warning("Rate limiting disabled — APP_ENV=test.")
+
+
 def enforce(kind: str, key: str) -> tuple[bool, float]:
-    # Allow blanket bypass during test runs so bursty fixtures don't trip
-    # the per-email login limit. Set SYHOMES_RATE_LIMIT_DISABLED=1 in .env.
-    import os
-    if os.environ.get("SYHOMES_RATE_LIMIT_DISABLED") == "1":
+    if _is_bypass_active():
         return True, 0.0
     cap, window = LIMITS[kind]
     return rate_limiter.check(f"{kind}:{key}", cap, window)

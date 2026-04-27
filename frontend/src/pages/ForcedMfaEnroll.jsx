@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { ShieldCheck, LogOut, Loader2, CheckCircle2, Copy } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { api, setAuthToken } from "@/lib/api";
+import { api } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
 
@@ -51,8 +51,10 @@ export default function ForcedMfaEnroll() {
                 code: code.trim(),
             });
             setBackupCodes(r.data.backup_codes);
-            // Swap mfa_pending → full access token.
-            if (r.data.access_token) setAuthToken(r.data.access_token);
+            // Cookies-only contract (audit C1): the backend has already
+            // rotated the `access_token` + `refresh_token` cookies from
+            // mfa_pending → full session when `session_issued: true`.
+            // Nothing to store client-side.
             setStep("codes");
         } catch (err) {
             toast.error(err.friendlyMessage || "Invalid code — re-scan and try again");

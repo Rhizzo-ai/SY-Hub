@@ -1,0 +1,65 @@
+{
+  "summary": "Phase 1 Prompt 1.5 — Projects + project_team_members full-stack review. Backend pytest suite is GREEN (93/93 test_projects passing, 135/135 incl. audit). Frontend UI flows validated end-to-end for test-pm and test-readonly: list renders with filter/search/clear, margin% gate honoured, new-project form submits and navigates to detail, ha→acres conversion works, planning expiry preview computes +3y (Full) / +2y (Reserved_Matters), detail page shows correct FORWARD_TRANSITIONS (Lead → Appraisal/Dead), override/delete hidden for non-super_admin, tabs switch cleanly. Three MINOR UX issues and one verification gap (super_admin MFA gate) documented below.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "ProjectNew — acres input",
+        "issue": "Acres→ha conversion is one-way-guarded: onAcresChange only writes ha when ha is currently empty (ProjectNew.jsx:70 `!form.site_area_ha`). onHaChange always overwrites acres. Result: typing ha=1.2 then changing acres to 5 leaves ha stuck at 1.2. Backend reconciles on save so data is ultimately consistent, but UI is misleading.",
+        "selector": "[data-testid=\"field-area-acres\"]",
+        "priority": "MINOR"
+      },
+      {
+        "component": "Routing — /projects/new",
+        "issue": "Read-only user (no projects.create) can still load the ProjectNew form via direct URL. The New Project button is correctly hidden in the list, but the route itself isn't permission-gated. Backend returns 403 on submit so it is not a security bug, just misleading UX. Wrap the route in a permission guard (projects.create) or bounce back to /projects.",
+        "selector": "[data-testid=\"project-new-page\"]",
+        "priority": "MINOR"
+      },
+      {
+        "component": "ProjectDetail — AuditTab",
+        "issue": "The audit fetch (ProjectDetail.jsx:529) has no .catch(); for users without audit.view the API returns 403 and the component silently renders 'No audit events yet.' in the empty state. Should show an explicit access-denied message or hide the tab for users lacking audit.view.",
+        "selector": "[data-testid=\"audit-empty\"]",
+        "priority": "MINOR"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_projects.py",
+    "/app/test_reports/pytest/pytest_projects.xml",
+    "/app/test_reports/pytest/pytest_iter6.xml"
+  ],
+  "action_items": [
+    "UX fix: make acres→ha conversion symmetric with ha→acres in ProjectNew.jsx (onAcresChange should always recompute site_area_ha).",
+    "UX fix: gate the /projects/new route with projects.create permission (or redirect to /projects when missing). Currently read-only users can load the form.",
+    "UX fix: ProjectDetail AuditTab should handle 403 explicitly (e.g., .catch on api.get('/audit', ...)) and render a distinct 'You do not have permission to view audit events for this project' message instead of the zero-state.",
+    "Optional: consider giving project_manager role audit.view_own (scoped to their entities) so they can see project_audit trails for projects they manage — today PM sees the same empty state as any other unauthorised caller."
+  ],
+  "critical_code_review_comments": [
+    "ProjectNew.jsx: area conversion is asymmetric (bug above). Also note that both `site_area_ha` and `site_area_acres` are sent to POST — backend services.projects.reconcile_area handles precedence, confirmed by 93 passing tests.",
+    "ProjectNew.jsx:100 coerces units_target with parseInt — good. Empty-string stripping on line 96–98 is defensive.",
+    "ProjectDetail.jsx allowedNext correctly pulls from FORWARD_TRANSITIONS (verified Lead → Appraisal|Dead render).",
+    "ProjectDetail.jsx:165 — isSuper gating on Override button is correct (super_admin only per spec).",
+    "ProjectDetail.jsx:172 canDelete gate: delete-project-button was hidden for test-pm, which matches backend service has_project_dependents blocking and RBAC requiring projects.delete — good.",
+    "AdvanceStageModal: disables submit until reason.trim() present when target=Dead (line 637). Good. But note the modal doesn't enforce a minimum length on dead_reason client-side — backend enforces via Pydantic, so it will just 422 on short reasons. Minor — add min-length hint.",
+    "OverrideStageModal: canSubmit requires reason.trim().length >= 10 (line 658) — matches backend min 10-char enforcement. Good.",
+    "AuditTab error swallowing (minor bug above).",
+    "ProjectsList: search form has no visible submit button — relies on Enter. Consider adding a submit icon button for discoverability; not blocking.",
+    "File sizes: ProjectDetail.jsx is 788 lines — above the 700-line guideline. Consider splitting AdvanceStageModal / OverrideStageModal / TeamTab / AuditTab into separate files."
+  ],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "100% (93/93 test_projects, 135/135 overall)",
+    "frontend": "90% — all primary flows validated for PM + read_only. Super_admin-gated override modal not browser-tested (MFA gate). Three MINOR UX issues logged."
+  },
+  "test_credentials": "See /app/memory/test_credentials.md. Browser tests used test-pm@example.test and test-readonly@example.test (both non-MFA). Backend pytest uses login_with_auto_enroll helper for MFA-enforced roles.",
+  "seed_data_creation": "Created one project 'TEST QA Project {ts}' via the UI during detail-page verification. Attempted SQL cleanup afterwards; backend may have already cleaned via cascades. No lasting seed data added.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Prompt 1.5 is functionally GREEN. The three MINOR frontend UX items (acres→ha symmetry, /projects/new route gating, audit 403 swallowing) can be fixed and self-verified by the main agent without full re-test. Super_admin override modal (data-testid=override-stage-button, override-submit, override-reason) was not exercised in the browser because test-admin triggers the MFA TOTP challenge; backend pytest already exercises it comprehensively in test_projects.py::TestStageOverride. If you need browser coverage for super_admin flows, use pyotp to drive the TOTP challenge or pre-seed an MFA-bypassed admin. Also note: ProjectDetail.jsx is 788 lines — consider splitting for maintainability.",
+  "rca_of_the_issue": "N/A — no functional bugs in Prompt 1.5. Only three UX asymmetries and one oversized file (see comments)."
+}

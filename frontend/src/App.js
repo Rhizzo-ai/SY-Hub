@@ -14,11 +14,21 @@ import UsersList from "@/pages/UsersList";
 import UserDetail from "@/pages/UserDetail";
 import UserNew from "@/pages/UserNew";
 import UserEdit from "@/pages/UserEdit";
+import ProjectsList from "@/pages/ProjectsList";
+import ProjectNew from "@/pages/ProjectNew";
+import ProjectDetail from "@/pages/ProjectDetail";
+import ProjectCostCodes from "@/pages/ProjectCostCodes";
+import CostCodesList from "@/pages/CostCodesList";
+import CostCodeDetail from "@/pages/CostCodeDetail";
+import CostCodeSections from "@/pages/CostCodeSections";
 import { RolesList, RoleDetail, PermissionsList } from "@/pages/RolesAndPermissions";
 import ProfileSecurity from "@/pages/ProfileSecurity";
 import ProfileSessions from "@/pages/ProfileSessions";
 import AdminUserSessions from "@/pages/AdminUserSessions";
 import AdminLoginHistory from "@/pages/AdminLoginHistory";
+import AuditLog from "@/pages/AuditLog";
+import ConfigPage from "@/pages/ConfigPage";
+import NotificationsPage from "@/pages/NotificationsPage";
 import ForgotPassword from "@/pages/ForgotPassword";
 import ResetPassword from "@/pages/ResetPassword";
 
@@ -31,6 +41,13 @@ function ShellRoutes() {
                 <Route path="/entities/new" element={<EntityNew />} />
                 <Route path="/entities/:id" element={<EntityDetail />} />
                 <Route path="/entities/:id/edit" element={<EntityEdit />} />
+                <Route path="/projects" element={<ProjectsList />} />
+                <Route path="/projects/new" element={<ProjectNew />} />
+                <Route path="/projects/:id" element={<ProjectDetail />} />
+                <Route path="/projects/:id/cost-codes" element={<ProjectCostCodes />} />
+                <Route path="/cost-codes" element={<CostCodesList />} />
+                <Route path="/cost-codes/sections" element={<CostCodeSections />} />
+                <Route path="/cost-codes/:id" element={<CostCodeDetail />} />
                 <Route path="/users" element={<UsersList />} />
                 <Route path="/users/new" element={<UserNew />} />
                 <Route path="/users/:id/edit" element={<UserEdit />} />
@@ -43,6 +60,9 @@ function ShellRoutes() {
                 <Route path="/profile" element={<Navigate to="/profile/security" replace />} />
                 <Route path="/profile/security" element={<ProfileSecurity />} />
                 <Route path="/profile/sessions" element={<ProfileSessions />} />
+                <Route path="/audit" element={<AuditLog />} />
+                <Route path="/config" element={<ConfigPage />} />
+                <Route path="/notifications" element={<NotificationsPage />} />
                 <Route path="*" element={
                     <div className="text-slate-600" data-testid="not-found-page">
                         <h1 className="font-heading text-2xl font-bold text-slate-900">Not found</h1>
