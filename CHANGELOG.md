@@ -720,3 +720,42 @@ Tests passed because migrations run during test setup. But seed_rbac is supposed
 9. Per-tenant / per-entity config overrides; config change approval workflow.
 10. Real-time WebSocket push for notifications (replace 30s polling for high-priority).
 11. Phone verification + Twilio for SMS dispatch.
+
+---
+
+## [0.7.1] — Patch #3 — End-of-Foundation Audit Remediation — 2026-04-27
+
+Closes Foundation track audit. Merged via PR #8 (commit `5f15766`).
+
+### Removed
+- Permission codes that no route enforced and that only cluttered the catalogue: `cost_codes.create`, `cost_codes.edit`, `cost_codes.delete`, `system_config.edit`, `notifications.view`, `notifications.edit`. Migration 0017 revoked 11 role-permission grants then deleted the 6 permission rows. `PERMISSION_CATALOGUE` in `app/seed_rbac.py` tightened so the next seed run won't re-create them.
+- Director role excludes for `system_config.edit` (code no longer exists).
+
+### Changed
+- **SER-10 retired** (`status='Retired'`, `retired_at` set, `replaced_by_code_id` → SER-06). Reason: "Patch #3: duplicate of SER-06 (Lifts & access). SER-06 has broader scope." No hard delete; SER-10 row preserved for historical FK integrity.
+- `audit_action` enum gained `Seed_Run`. Option C from Patch #3 spec (only the `Create`-vs-seed mismatch addressed; no `Bulk_*` values added to avoid enum sprawl).
+- `app/seed_system_config.py` and migrations `0012`, `0013` now emit `action='Seed_Run'` instead of `'Create'`. `0014` left alone — it emits `Permission_Change`, which is already accurate for its content.
+- `app/models/audit.AUDIT_ACTIONS` tuple extended with `Seed_Run` so the service-layer `record_audit` guard accepts it.
+- Fresh-DB alembic chain fix: migrations `0012` and `0013` prepend `ALTER TYPE audit_action ADD VALUE IF NOT EXISTS 'Seed_Run'` inside an `autocommit_block()` so they still succeed when run before 0017 on a brand-new database.
+
+### Fixed
+- Duplicate cost code surfaced during end-of-Foundation review (SER-06 vs SER-10) now collapsed via the supported retire+replaced-by mechanism.
+- Orphan permissions that would have confused `/roles/:id/permissions` and any future "who can do X" audit now gone.
+
+### Verified (no change)
+- `is_cost_code_in_use()` in `app/services/cost_codes.py` lines 36-50: TODO comments for Prompts 2.2, 2.4, 2.5 still present and correctly scoped. Early-return structure unchanged.
+- `/api/v1/*` routing is the intentional ongoing migration target; older `/api/*` routes untouched. Per-prompt migration strategy.
+
+### Deliberately simplified
+- **`ALTER TYPE ... REMOVE VALUE` not supported by Postgres** — migration 0017 downgrade can't un-add `Seed_Run`. Downgrade limited to the reversible slice (SER-10 restore only). Documented in the migration.
+- **Historical audit rows NOT backfilled** per the append-only contract from Prompt 1.4. Existing `action='Create'` + `metadata.kind='seed_run'` rows remain as-is.
+- **Migration 0014 NOT updated**. It already emits `Permission_Change`, which is semantically correct for a role-permissions grant event; the Option C compromise addresses only the `Create` mismatch.
+- **Dead-code `UserPermissions` import** in `app/routers/system_config.py` surfaced but NOT removed on re-investigation: `require_permission(...)` returns `perms` (a `UserPermissions`) via `app/auth/deps.py:222`, so the type hint is truthful.
+
+### Surfaced / unresolved
+- Nothing new surfaced. The 1.7 surface scan turned up only items already logged in Polish Pass (TODO[SMS], ConfigPage `<button disabled>`).
+
+### Counts at commit
+- Permissions: 87 → **81**
+- Tests: 459 → **468** passing, 0 failed
+- Migrations head: **0017_audit_remediation_patch_3**
