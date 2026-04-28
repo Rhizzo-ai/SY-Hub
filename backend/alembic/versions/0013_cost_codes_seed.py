@@ -253,6 +253,11 @@ def _parse_rows():
 
 
 def upgrade() -> None:
+    # Patch #3: ensure `Seed_Run` exists before emitting it below
+    # (idempotent; officially added in 0017).
+    with op.get_context().autocommit_block():
+        op.execute("ALTER TYPE audit_action ADD VALUE IF NOT EXISTS 'Seed_Run'")
+
     bind = op.get_bind()
     rows = _parse_rows()
     if len(rows) != 133:
@@ -320,7 +325,7 @@ def upgrade() -> None:
         INSERT INTO audit_log
             (id, action, resource_type, resource_id, field_changes,
              metadata_json, created_at)
-        VALUES (gen_random_uuid(), 'Create', 'migration', :rid,
+        VALUES (gen_random_uuid(), 'Seed_Run', 'migration', :rid,
                 CAST('[]' AS jsonb), CAST(:meta AS jsonb), :now)
     """), {
         "rid": str(rev_uuid),
