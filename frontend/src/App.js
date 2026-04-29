@@ -29,6 +29,8 @@ import AdminLoginHistory from "@/pages/AdminLoginHistory";
 import AuditLog from "@/pages/AuditLog";
 import ConfigPage from "@/pages/ConfigPage";
 import NotificationsPage from "@/pages/NotificationsPage";
+import SdltRatesPage from "@/pages/SdltRatesPage";
+import AppraisalDefaultsPage from "@/pages/AppraisalDefaultsPage";
 import ForgotPassword from "@/pages/ForgotPassword";
 import ResetPassword from "@/pages/ResetPassword";
 
@@ -63,6 +65,8 @@ function ShellRoutes() {
                 <Route path="/audit" element={<AuditLog />} />
                 <Route path="/config" element={<ConfigPage />} />
                 <Route path="/notifications" element={<NotificationsPage />} />
+                <Route path="/settings/sdlt-rates" element={<SdltRatesPage />} />
+                <Route path="/settings/appraisal-defaults" element={<AppraisalDefaultsPage />} />
                 <Route path="*" element={
                     <div className="text-slate-600" data-testid="not-found-page">
                         <h1 className="font-heading text-2xl font-bold text-slate-900">Not found</h1>

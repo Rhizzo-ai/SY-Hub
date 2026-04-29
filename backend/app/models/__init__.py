@@ -55,6 +55,10 @@ from app.models.notifications import (
     Notification,
     NOTIFICATION_TYPES, NOTIFICATION_PRIORITIES,
 )
+from app.models.reference_data import (
+    SdltRateBand, AppraisalDefaultSetting,
+    SDLT_CATEGORIES, APPRAISAL_SETTING_TYPES,
+)
 
 __all__ = [
     "Tenant",

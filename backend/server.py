@@ -36,6 +36,7 @@ from app.routers.login_history import router as login_history_router  # noqa: E4
 from app.routers.meta import router as meta_router  # noqa: E402
 from app.routers.notifications import router as notifications_router  # noqa: E402
 from app.routers.projects import router as projects_router  # noqa: E402
+from app.routers.reference_data import router as reference_data_router  # noqa: E402
 from app.routers.roles import roles_router, perms_router  # noqa: E402
 from app.routers.sessions import router as sessions_router  # noqa: E402
 from app.routers.system_config import router as system_config_router  # noqa: E402
@@ -135,6 +136,7 @@ api_router.include_router(audit_router)
 v1_router = APIRouter(prefix="/v1")
 v1_router.include_router(system_config_router)
 v1_router.include_router(notifications_router)
+v1_router.include_router(reference_data_router)
 api_router.include_router(v1_router)
 
 app.include_router(api_router)
