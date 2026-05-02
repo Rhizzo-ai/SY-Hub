@@ -745,7 +745,7 @@ def submit_appraisal(
     a.submitted_by_user_id = current.id
     a.submitted_at = datetime.now(timezone.utc)
     record_audit(
-        db, action="Update", resource_type="appraisals",
+        db, action="Submit", resource_type="appraisals",
         resource_id=a.id, actor_user_id=current.id,
         project_id=a.project_id, field_changes=[],
         metadata={"kind": "state_transition", "to": "Submitted"},

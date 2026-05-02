@@ -317,6 +317,7 @@ Full suite: **160 passed, 1 skipped, 0 failed** (was 135 → +25).
 
 ## Prompt 2.2 — Appraisals Core (2 May 2026, backend + tests complete)
 - ✅ Alembic 0019: 4 tables (`appraisals`, `appraisal_units`, `appraisal_cost_lines`, `appraisal_finance_model`) with triggers, indexes, FKs to projects/users/cost_codes. 7 enum types. Two new permission codes (`appraisals.submit`, `appraisals.view_financials`) bring total perms to 83.
+- ✅ Alembic 0020 — enum fidelity: `permission_action` += `submit`, `view_financials`; `audit_action` += `Submit`. Permission rows backfilled; 1:1 code↔action mapping restored.
 - ✅ Models in `app/models/appraisals.py` with ORM relationships (cascade delete).
 - ✅ Three calculation engines (Decimal-only, no floats):
   - `appraisal_classification.py` — SDLT category resolver (honours surcharge/corporate threshold + developer relief).
@@ -330,8 +331,9 @@ Full suite: **160 passed, 1 skipped, 0 failed** (was 135 → +25).
   - `recompute` and `recalculate-rlv` endpoints.
   - **Field gating**: keys for land_purchase_price, totals, margins, RLV, target_profit_* are **OMITTED** (not nullified) for callers without `appraisals.view_financials`.
   - Defaults consumed on create from `appraisal_default_settings` (specific project_type beats 'All'), seeding Percentage_Of_* cost-line skeleton + SDLT_Engine + Finance_Engine auto-lines.
+  - `/submit` endpoint emits `audit_action='Submit'` (distinct from `Update`/`Approve`).
 - ✅ RBAC updated: super_admin=83, director=79, project_manager + finance gain `appraisals.view_financials` + `appraisals.submit`.
-- ✅ **527/527 tests passing** (491 baseline + 36 new in `test_appraisals.py` covering SDLT classification, finance-engine modes, RLV convergence/non-convergence/non-mutation, 8-step pipeline ordering assertions, state-machine transitions, router integration end-to-end, and financial-field gating).
+- ✅ **531/531 tests passing** (491 baseline + 40 new in `test_appraisals.py` covering SDLT classification, finance-engine modes, RLV convergence/non-convergence/non-mutation, 8-step pipeline ordering assertions, state-machine transitions, router integration end-to-end, financial-field gating, and enum-fidelity regression guards).
 - 🕒 Frontend (5-tab UI w/ `decimal.js`) — pending next batch.
 - 📋 Future/Backlog (per spec): IRR/ROCE, optimistic concurrency control, live SONIA tracking, Compound_Quarterly, frontend Appraisal UI.
 - ⚠️ Known fresh-DB bootstrap issue (pre-existing from 2.1, NOT introduced by 2.2): migration 0018 + 0019 require tenant + super_admin to exist — but lifespan runs `alembic upgrade head` BEFORE `seed()`. On pristine DBs the first boot fails; re-seeding + re-running alembic resolves. Logged for a future "migration bootstrap order" fix.

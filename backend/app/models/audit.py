@@ -13,7 +13,7 @@ from app.db import Base
 
 AUDIT_ACTIONS = (
     "Create", "Update", "Delete",
-    "Approve", "Reject", "Reopen",
+    "Submit", "Approve", "Reject", "Reopen",
     "Login", "Logout",
     "Export", "Permission_Change",
     "Stage_Change", "Status_Change",

@@ -36,8 +36,10 @@ RESOURCES = (
 )
 
 ACTIONS = (
-    "view", "view_sensitive", "create", "edit", "delete",
-    "approve", "reopen", "export", "admin",
+    "view", "view_sensitive", "view_financials",
+    "create", "edit", "delete",
+    "submit", "approve", "reopen",
+    "export", "admin",
 )
 
 ENTITY_SCOPES = ("All", "Specific")

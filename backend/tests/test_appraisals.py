@@ -867,3 +867,77 @@ class TestFieldGating:
         body = admin.get(f"{BASE_URL}/api/v1/appraisals/{aid}").json()
         assert "land_purchase_price" in body
         assert "total_gdv" in body
+
+
+
+# --------------------------------------------------------------------------
+# Enum fidelity regression guards (Prompt 2.2 cleanup — migration 0020).
+# --------------------------------------------------------------------------
+
+class TestEnumFidelity:
+    def test_permission_action_enum_carries_submit_and_view_financials(self):
+        from app.db import SessionLocal
+        from sqlalchemy import text
+        db = SessionLocal()
+        try:
+            labels = {r[0] for r in db.execute(text(
+                "SELECT enumlabel FROM pg_enum "
+                "JOIN pg_type ON pg_type.oid=enumtypid "
+                "WHERE pg_type.typname='permission_action'"
+            )).all()}
+            assert "submit" in labels
+            assert "view_financials" in labels
+        finally:
+            db.close()
+
+    def test_audit_action_enum_carries_submit(self):
+        from app.db import SessionLocal
+        from sqlalchemy import text
+        db = SessionLocal()
+        try:
+            labels = {r[0] for r in db.execute(text(
+                "SELECT enumlabel FROM pg_enum "
+                "JOIN pg_type ON pg_type.oid=enumtypid "
+                "WHERE pg_type.typname='audit_action'"
+            )).all()}
+            assert "Submit" in labels
+        finally:
+            db.close()
+
+    def test_permission_code_to_action_is_one_to_one(self):
+        from app.db import SessionLocal
+        from sqlalchemy import text
+        db = SessionLocal()
+        try:
+            rows = db.execute(text(
+                "SELECT code, action FROM permissions "
+                "WHERE code IN ('appraisals.submit','appraisals.view_financials')"
+            )).all()
+            by_code = {c: a for (c, a) in rows}
+            assert by_code["appraisals.submit"] == "submit"
+            assert by_code["appraisals.view_financials"] == "view_financials"
+        finally:
+            db.close()
+
+    def test_submit_endpoint_emits_submit_audit_action(self, admin, project):
+        import requests as _r
+        from app.db import SessionLocal
+        from sqlalchemy import text
+        r = admin.post(
+            f"{BASE_URL}/api/v1/projects/{project['id']}/appraisals",
+            json={"name": "AuditEnum", "land_purchase_price": "100000"},
+        )
+        aid = r.json()["id"]
+        admin.post(f"{BASE_URL}/api/v1/appraisals/{aid}/submit")
+        db = SessionLocal()
+        try:
+            row = db.execute(text(
+                "SELECT action FROM audit_log "
+                "WHERE resource_type='appraisals' AND resource_id=:rid "
+                "AND (metadata_json->>'to') = 'Submitted' "
+                "ORDER BY created_at DESC LIMIT 1"
+            ), {"rid": aid}).first()
+            assert row is not None
+            assert row[0] == "Submit"
+        finally:
+            db.close()

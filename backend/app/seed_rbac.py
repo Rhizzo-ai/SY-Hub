@@ -83,13 +83,13 @@ PERMISSION_CATALOGUE += _perms_for(
     include=["view", "view_sensitive", "create", "edit", "delete",
              "approve", "reopen"],
 )
-# Prompt 2.2 additions. Both map to existing ACTIONS enum values
-# (`submit` reuses the `approve` action slot; `view_financials` reuses
-# `view_sensitive`) so we don't need a DB enum migration.
+# Prompt 2.2 additions. Migration 0020 adds matching values to the
+# `permission_action` enum so code → action is 1:1 (no more reusing
+# `approve` / `view_sensitive` as stand-ins).
 PERMISSION_CATALOGUE += [
-    ("appraisals.submit", "appraisals", "approve",
+    ("appraisals.submit", "appraisals", "submit",
      "Submit an appraisal for approval", False),
-    ("appraisals.view_financials", "appraisals", "view_sensitive",
+    ("appraisals.view_financials", "appraisals", "view_financials",
      "View gated financial fields on an appraisal", True),
 ]
 PERMISSION_CATALOGUE += _perms_for(
