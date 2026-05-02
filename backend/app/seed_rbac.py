@@ -80,8 +80,18 @@ PERMISSION_CATALOGUE += _perms_for(
 )
 PERMISSION_CATALOGUE += _perms_for(
     "appraisals",
-    include=["view", "view_sensitive", "create", "edit", "delete", "approve", "reopen"],
+    include=["view", "view_sensitive", "create", "edit", "delete",
+             "approve", "reopen"],
 )
+# Prompt 2.2 additions. Both map to existing ACTIONS enum values
+# (`submit` reuses the `approve` action slot; `view_financials` reuses
+# `view_sensitive`) so we don't need a DB enum migration.
+PERMISSION_CATALOGUE += [
+    ("appraisals.submit", "appraisals", "approve",
+     "Submit an appraisal for approval", False),
+    ("appraisals.view_financials", "appraisals", "view_sensitive",
+     "View gated financial fields on an appraisal", True),
+]
 PERMISSION_CATALOGUE += _perms_for(
     "budgets",
     include=["view", "view_sensitive", "create", "edit", "approve"],
@@ -207,7 +217,9 @@ ROLE_PERMISSIONS["director"] = set(ALL_PERMISSION_CODES) - {
 # project_manager
 ROLE_PERMISSIONS["project_manager"] = {
     "projects.view", "projects.view_sensitive", "projects.create", "projects.edit",
-    "appraisals.view", "appraisals.create", "appraisals.edit", "appraisals.approve",
+    "appraisals.view", "appraisals.view_financials",
+    "appraisals.create", "appraisals.edit", "appraisals.submit",
+    "appraisals.approve",
     "budgets.view", "budgets.view_sensitive", "budgets.edit",
     "actuals.view", "actuals.create", "actuals.edit",
     "commitments.view", "commitments.create", "commitments.edit",
@@ -227,7 +239,7 @@ ROLE_PERMISSIONS["project_manager"] = {
 ROLE_PERMISSIONS["finance"] = {
     "entities.view", "entities.view_sensitive", "entities.edit",
     "projects.view", "projects.view_sensitive",
-    "appraisals.view",
+    "appraisals.view", "appraisals.view_financials",
     "budgets.view", "budgets.view_sensitive",
     "actuals.view", "actuals.view_sensitive", "actuals.create", "actuals.edit", "actuals.approve",
     "commitments.view", "commitments.view_sensitive",

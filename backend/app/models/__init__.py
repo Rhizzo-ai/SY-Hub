@@ -59,6 +59,11 @@ from app.models.reference_data import (
     SdltRateBand, AppraisalDefaultSetting,
     SDLT_CATEGORIES, APPRAISAL_SETTING_TYPES,
 )
+from app.models.appraisals import (
+    Appraisal, AppraisalUnit, AppraisalCostLine, AppraisalFinanceFacility,
+    APPRAISAL_STATES, UNIT_TYPES, TENURE_TYPES,
+    AUTO_SOURCES, COST_CATEGORIES, FINANCE_TYPES, INTEREST_MODES,
+)
 
 __all__ = [
     "Tenant",

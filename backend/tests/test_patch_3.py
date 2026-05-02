@@ -49,7 +49,9 @@ class TestPatch3Permissions:
         db = SessionLocal()
         try:
             total = db.scalar(select(func.count()).select_from(Permission))
-            assert total == 81
+            # Patch #3 baseline was 81. Prompt 2.2 adds two new appraisal
+            # permission codes (appraisals.submit + appraisals.view_financials).
+            assert total == 83
         finally:
             db.close()
 
