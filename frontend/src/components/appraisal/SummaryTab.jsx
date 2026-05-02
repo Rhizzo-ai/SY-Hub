@@ -130,7 +130,7 @@ export default function SummaryTab({ a, editable, stale, onReload }) {
                 </div>
 
                 {rlvState === "empty" && (
-                    <div data-testid="rlv-state-empty">
+                    <div>
                         <p className="text-sm text-slate-600 mb-3">
                             Not yet calculated. Pick a target margin and run the solver to
                             compute the land price that would meet it, holding everything else constant.
@@ -141,7 +141,7 @@ export default function SummaryTab({ a, editable, stale, onReload }) {
                 )}
 
                 {rlvState === "calculated" && (
-                    <div data-testid="rlv-state-calculated">
+                    <div>
                         <div className="flex items-center gap-3 mb-3">
                             <CheckCircle2 className="w-4 h-4 text-emerald-600" />
                             <span className="text-sm text-slate-700">
@@ -170,7 +170,7 @@ export default function SummaryTab({ a, editable, stale, onReload }) {
                 )}
 
                 {rlvState === "non_convergence" && (
-                    <div data-testid="rlv-state-non-convergence">
+                    <div>
                         <div className="border border-rose-200 bg-rose-50 text-rose-800 p-3 rounded text-sm flex items-start gap-2 mb-3">
                             <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" />
                             <div>
