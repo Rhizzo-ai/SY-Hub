@@ -204,6 +204,11 @@ export default function ProjectDetail() {
                       data-testid="tab-cost-codes">
                     Cost Codes
                 </Link>
+                <Link to={`/projects/${project.id}/appraisals`}
+                      className="pb-2 text-sm font-medium text-slate-500 hover:text-slate-700"
+                      data-testid="tab-appraisals">
+                    Appraisals
+                </Link>
             </nav>
 
             {tab === "overview" && (

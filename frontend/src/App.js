@@ -31,6 +31,8 @@ import ConfigPage from "@/pages/ConfigPage";
 import NotificationsPage from "@/pages/NotificationsPage";
 import SdltRatesPage from "@/pages/SdltRatesPage";
 import AppraisalDefaultsPage from "@/pages/AppraisalDefaultsPage";
+import AppraisalsList from "@/pages/AppraisalsList";
+import AppraisalPage from "@/pages/AppraisalPage";
 import ForgotPassword from "@/pages/ForgotPassword";
 import ResetPassword from "@/pages/ResetPassword";
 
@@ -47,6 +49,8 @@ function ShellRoutes() {
                 <Route path="/projects/new" element={<ProjectNew />} />
                 <Route path="/projects/:id" element={<ProjectDetail />} />
                 <Route path="/projects/:id/cost-codes" element={<ProjectCostCodes />} />
+                <Route path="/projects/:id/appraisals" element={<AppraisalsList />} />
+                <Route path="/appraisals/:id" element={<AppraisalPage />} />
                 <Route path="/cost-codes" element={<CostCodesList />} />
                 <Route path="/cost-codes/sections" element={<CostCodeSections />} />
                 <Route path="/cost-codes/:id" element={<CostCodeDetail />} />
