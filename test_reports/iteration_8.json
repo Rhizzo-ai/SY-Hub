@@ -1,0 +1,41 @@
+{
+  "summary": "Phase D Prompt 2.2 Appraisals Core frontend — full e2e UI verification PASSED. Logged in as test-admin (MFA auto-enrol via pyotp) and drove Playwright browser end-to-end through AppraisalsList → AppraisalPage 5 tabs. All 18 review-request scenarios verified live against https://construction-command-5.preview.emergentagent.com.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "AppraisalPage.jsx is 1176 lines — exceeds the 700-line threshold. Recommend splitting HeaderTab/UnitsTab/CostsTab/FinanceTab/SummaryTab/RlvForm into separate files for maintainability.",
+    "Costs tab category total uses raw r.amount even for stale auto rows — this is acceptable per spec (stale-until-save) but worth a short comment in code so future devs don't 'fix' it.",
+    "FacilityTab does not show LIVE interest/fees previews — every facility numeric column is stale-until-save, which is correct per spec but means user has no instant feedback while typing principal/rate. Consider future enhancement (out of Prompt 2.2 scope)."
+  ],
+  "verified_scenarios": {
+    "auth_mfa_login": "PASS (auto-enrol via /mfa/enroll/start + pyotp.TOTP)",
+    "list_page_renders": "PASS (data-testid=appraisals-list-page)",
+    "create_draft_v1": "PASS (create-appraisal-btn → row appeared → open-appraisal-N navigated)",
+    "five_tabs_present": "PASS (tab-header,tab-units,tab-costs,tab-finance,tab-summary all visible)",
+    "header_save_recompute": "PASS (name 'TEST_Edit_v1' persisted after header-save-btn)",
+    "units_live_math": "PASS (unit-type-gdv-0=£1,500,000.00 on qty=3 × £500k; unit-type-build-0=£750,000.00; unit-gdv-per-sqft-0=£387.10 — matches 500000/(120*10.7639)=£387.09)",
+    "units_save_to_server_gdv": "PASS (server-gdv-kpi shows £1,500,000.00 after unit-save-0)",
+    "costs_seeded_auto_lines": "PASS (8 auto-badges and 8 stale-amount-display cells rendered for SDLT_Engine + Finance_Engine seeded lines)",
+    "manual_cost_input_editable": "PASS (add-cost-line-btn produced cost-line-amount-N input — manual_idx=8)",
+    "finance_facility_save": "PASS (facility-save-0 persisted; facility-interest-0='£120,000.00' = 1,000,000 × 8% × 18m simple-monthly rough check, with stale pill)",
+    "summary_kpis": "PASS (8/8 KPI tiles render: kpi-total-gdv,kpi-total-cost,kpi-profit,kpi-profit-on-cost,kpi-profit-on-gdv,kpi-acq,kpi-build,kpi-fin)",
+    "rlv_three_state": "PASS (initial=rlv-panel-empty TRUE; after rlv-run-btn → rlv-panel-calculated TRUE, empty/non_convergence FALSE — panel FLIPPED state, did not collapse)",
+    "submit_state_machine": "PASS (submit-appraisal-btn → submitted-banner visible, header-name-input disabled=True)",
+    "approve_state_machine": "PASS (approve-appraisal-btn visible in Submitted; click → state badge='Approved'; reopen-appraisal-btn visible)",
+    "reject_state_machine": "PASS (window.prompt accepted reason 'Insufficient detail in cost lines'; state='Rejected'; rejection-reason-banner visible)",
+    "back_navigation": "PASS (back-to-appraisals-link returned to /projects/:id/appraisals list)"
+  },
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (skipped per request)", "frontend": "100% (18/18 review-request acceptance criteria verified)"},
+  "test_credentials": "test-admin@example.test / TestUser-Dev-2026! — used login_with_auto_enroll pattern (re-ran scripts/seed_test_users.py before each browser session to clear MFA state, then enrolled via pyotp and injected the resulting access_token cookie into Playwright).",
+  "seed_data_creation": "Created one project 'TEST_Appraisal_E2E' (Pure_Dev, primary_entity_id=existing entity, land_ownership_method=Direct_Purchase, site_postcode/start_date stubbed) because the SY Homes tenant had 0 projects. Created 2 appraisal versions (v1=Approved, v2=Rejected) plus a unit row, a manual cost line, and a finance facility — all prefixed with TEST_ for cleanup.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Prompt 2.2 frontend is fully verified live. All data-testid hooks the spec requires are wired correctly. AppraisalPage.jsx is 1176 lines — flag for future refactor (>700-line guideline). Note: the auto-cost-lines count was 8 (not just 2); this is because backend seeds multiple Percentage_Of_GDV/Build/Land lines plus SDLT_Engine + Finance_Engine — all are stale-until-save per spec, which is correct. RLV converged on first run with basis=on_cost, target_pct=20 against the seeded unit (£1.5m GDV / £750k build / £250k land). For project creation, /api/projects requires: name, primary_entity_id, project_type, tenure_mix, land_status, land_ownership_method, site_address, site_postcode, post_code, project_code, start_date, target_completion_date, status, currency — schema has tightened since iteration_7."
+}

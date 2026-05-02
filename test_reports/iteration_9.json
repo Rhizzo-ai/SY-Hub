@@ -1,0 +1,57 @@
+{
+  "summary": "Phase D Prompt 2.2 Appraisals Core REFACTOR regression — 18/18 acceptance scenarios from iteration_8.json re-verified PASS against the same preview URL after the AppraisalPage.jsx 1176→232-line split into pages/AppraisalPage.jsx + components/appraisal/{atoms,HeaderTab,UnitsTab,CostsTab,FinanceTab,SummaryTab}.jsx. Every required data-testid hook is preserved and wired correctly. No refactor regressions found.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "refactor_checks": {
+    "file_sizes_under_700": {
+      "pages/AppraisalPage.jsx": 232,
+      "components/appraisal/atoms.jsx": 91,
+      "components/appraisal/HeaderTab.jsx": 122,
+      "components/appraisal/UnitsTab.jsx": 224,
+      "components/appraisal/CostsTab.jsx": 218,
+      "components/appraisal/FinanceTab.jsx": 175,
+      "components/appraisal/SummaryTab.jsx": 195
+    },
+    "testid_hooks_preserved": "ALL testids from iteration_8 baseline still resolve — static and dynamic (rlv-panel-${rlvState} → rlv-panel-empty / rlv-panel-calculated / rlv-panel-non_convergence; cost-line-*-${idx}; facility-*-${idx}; unit-*-${idx}; kpi-total-gdv, kpi-total-cost, kpi-profit, kpi-profit-on-cost, kpi-profit-on-gdv, kpi-acq, kpi-build, kpi-fin; server-gdv-kpi, live-gdv-kpi, live-build-kpi all present).",
+    "behavioural_parity": "Confirmed identical — HeaderTab save, UnitsTab LIVE decimal.js math (qty*price GDV, price/(gia*10.7639) per sqft), CostsTab auto-badges + manual row add, FinanceTab add/save, SummaryTab KPIs + stale pills, RLV three-state panel transition, submit→approve state machine, reopen visibility, back nav."
+  },
+  "verified_scenarios_18": {
+    "01_list_page_renders": "PASS (appraisals-list-page)",
+    "02_create_appraisal_btn_and_open_link": "PASS (create-appraisal-btn + open-appraisal-3)",
+    "03_navigate_detail": "PASS (appraisal-page)",
+    "04_five_tabs": "PASS (tab-header / tab-units / tab-costs / tab-finance / tab-summary)",
+    "05_header_name_editable_in_draft": "PASS (not disabled)",
+    "06_header_save": "PASS (name 'TEST_Regression_v3' persisted)",
+    "07_units_live_gdv_row": "PASS (unit-type-gdv-0 = £1,500,000.00 on qty=3 × £500k)",
+    "08_units_live_build_row": "PASS (unit-type-build-0 renders; £0.00 correct for build=0)",
+    "09_units_gdv_per_sqft": "PASS (unit-gdv-per-sqft-0 = £387.10 = 500000/(120*10.7639))",
+    "10_units_live_math_instant": "PASS (no save round-trip; values update on blur)",
+    "11_server_gdv_kpi_stale": "PASS (server-gdv-kpi shows Stale pill while live ≠ saved)",
+    "12_costs_auto_badges": "PASS (8 cost-line-auto-badge-N for SDLT_Engine + Finance_Engine + Percentage_Of_* seed lines)",
+    "13_costs_stale_displays": "PASS (8 cost-line-amount-display-N stale-pill cells)",
+    "14_add_cost_line_manual": "PASS (add-cost-line-btn → new manual cost-line-amount-N editable input)",
+    "15_finance_facility_testids": "PASS (add-facility-btn + facility-interest-0 / facility-fees-0 / facility-save-0 all present)",
+    "16_summary_kpis_render": "PASS (8/8 KPI tiles: kpi-total-gdv, kpi-total-cost, kpi-profit, kpi-profit-on-cost, kpi-profit-on-gdv, kpi-acq, kpi-build, kpi-fin; stale-pill count=9 while dirty)",
+    "17_rlv_three_state_transition": "PASS (initial rlv-panel-empty=1; after rlv-run-btn with target=20 → rlv-panel-calculated=1, rlv-panel-empty=0, rlv-panel-non_convergence=0 — panel FLIPPED state, did not collapse)",
+    "18_state_machine_and_back_nav": "PASS (submit → submitted-banner + header-name disabled; approve → state-badge='Approved' + reopen-appraisal-btn visible; back-to-appraisals-link returned to list)"
+  },
+  "critical_code_review_comments": [
+    "Good: all split files are well under the 700-line threshold (largest is UnitsTab.jsx at 224 lines; shell AppraisalPage.jsx at 232).",
+    "Good: enum constants and shared atoms (StalePill, Kpi, SectionHeader, Field) properly centralised in atoms.jsx; no duplication.",
+    "Minor: atoms.jsx SummaryTab.jsx still contain both static ('rlv-state-empty', 'rlv-state-calculated', 'rlv-state-non-convergence') AND the dynamic ('rlv-panel-${rlvState}') testids on what may be the same panel. If intentional (belt-and-braces for tests), consider a one-line comment; if legacy, the static ones can be dropped. Not a regression — review-request only requires rlv-panel-*.",
+    "Minor: onDirty is only wired on input changes (via Field onChange); a fresh unit row added via add-unit-btn does not flip stale to true until the user types — consistent with pre-refactor behaviour but worth confirming with product."
+  ],
+  "test_report_links": [
+    "/app/test_reports/helpers/auth_helper.py",
+    "/app/test_reports/helpers/setup_test_appraisal.py",
+    "/app/test_reports/regression_final.png"
+  ],
+  "action_items": [],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (skipped per request)", "frontend": "100% (18/18 refactor-regression scenarios verified)"},
+  "test_credentials": "test-admin@example.test / TestUser-Dev-2026! — MFA auto-enrol via pyotp (scripts/seed_test_users.py reset + /api/auth/mfa/enroll/start → /confirm). Cookies (access_token, refresh_token) injected into Playwright context.",
+  "seed_data_creation": "Re-used existing project 'TEST_Appraisal_E2E' (id=d6d9da9a-e8ab-4a64-b23b-b3bd045d04db) from iteration_8. Created fresh Draft v3 appraisal (id=e4b10e5d-6d3f-4200-9432-9cba32ac3d92) named 'TEST_Regression_v3' for this sweep; drove it through the full state machine to Approved.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Refactor regression for Prompt 2.2 is verified GREEN. AppraisalPage.jsx successfully split from 1176 → 232-line shell + 6 per-tab/atom components, all under the 700-line guideline. Every data-testid the review-request spec names resolves on the live preview URL. Two RLV testid naming schemes coexist (dynamic rlv-panel-${state} AND static rlv-state-*); pick one long-term. The TEST_Appraisal_E2E project now has v1=Approved, v2=Rejected, v3=Approved (post-regression sweep) — next agent can reopen v3 for a new draft instead of creating v4."
+}
