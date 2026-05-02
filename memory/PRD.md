@@ -334,7 +334,15 @@ Full suite: **160 passed, 1 skipped, 0 failed** (was 135 → +25).
   - `/submit` endpoint emits `audit_action='Submit'` (distinct from `Update`/`Approve`).
 - ✅ RBAC updated: super_admin=83, director=79, project_manager + finance gain `appraisals.view_financials` + `appraisals.submit`.
 - ✅ **531/531 tests passing** (491 baseline + 40 new in `test_appraisals.py` covering SDLT classification, finance-engine modes, RLV convergence/non-convergence/non-mutation, 8-step pipeline ordering assertions, state-machine transitions, router integration end-to-end, financial-field gating, and enum-fidelity regression guards).
-- 🕒 Frontend (5-tab UI w/ `decimal.js`) — pending next batch.
+- ✅ **Frontend Phase D COMPLETE (2 May 2026, full E2E verified)**:
+  - `yarn add decimal.js@10.6.0` + `app/frontend/src/lib/appraisalMath.js` helpers
+  - `AppraisalsList.jsx` at `/projects/:id/appraisals` (version list, state badges, financial KPIs gated)
+  - `AppraisalPage.jsx` at `/appraisals/:id` with 5 tabs (Header, Units, Costs, Finance, Summary)
+  - **Two-layer calc model**: LIVE decimal.js transforms on unit rows (gia, gdv/sqft, gdv total/type, build/unit, build total/type) — instant, no round-trip. Everything else (KPIs, auto cost lines, facility interest/fees, RLV) has stale-until-save pills.
+  - **RLV three-state panel**: `rlv-panel-empty` → `rlv-panel-calculated` (timestamp + recalc) → `rlv-panel-non_convergence` (banner + solver message). State flips, does not collapse.
+  - State-machine UI: Draft editable; Submit/Approve/Reject/Reopen/Withdraw CTAs gated by permissions + role. Rejection-reason banner, submitted banner, superseded banner.
+  - `testing_agent_v3_fork` — 18/18 acceptance scenarios passed against live preview URL (iteration_8.json).
+  - **Code-quality note**: `AppraisalPage.jsx` is 1176 lines; flagged for post-2.2 refactor to split tabs into separate files (`HeaderTab.jsx`, `UnitsTab.jsx`, etc.).
 - 📋 Future/Backlog (per spec): IRR/ROCE, optimistic concurrency control, live SONIA tracking, Compound_Quarterly, frontend Appraisal UI.
 - ⚠️ Known fresh-DB bootstrap issue (pre-existing from 2.1, NOT introduced by 2.2): migration 0018 + 0019 require tenant + super_admin to exist — but lifespan runs `alembic upgrade head` BEFORE `seed()`. On pristine DBs the first boot fails; re-seeding + re-running alembic resolves. Logged for a future "migration bootstrap order" fix.
 
