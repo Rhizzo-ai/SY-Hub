@@ -315,7 +315,8 @@ class TestPermissionsCatalogue:
             # Audit Remediation) removes 6 orphan permission codes that no
             # route enforces: cost_codes.{create,edit,delete},
             # system_config.edit, notifications.{view,edit}. Post-Patch-#3
-            # total is 81.
-            assert total == 81
+            # total was 81. Prompt 2.2 adds 2 new appraisal codes
+            # (appraisals.submit + appraisals.view_financials) → 83.
+            assert total == 83
         finally:
             db.close()

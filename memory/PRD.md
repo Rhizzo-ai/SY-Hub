@@ -315,6 +315,29 @@ Full suite: **160 passed, 1 skipped, 0 failed** (was 135 → +25).
 - **P1**: Modules 2–10 (Appraisals, Budgets, Cash Flow, Programme, Documents, Compliance, Sales).
 - **P2**: Xero OAuth (5.1), Bank feed, Group consolidation, Multi-tenancy surfacing.
 
+## Prompt 2.2 — Appraisals Core (2 May 2026, backend + tests complete)
+- ✅ Alembic 0019: 4 tables (`appraisals`, `appraisal_units`, `appraisal_cost_lines`, `appraisal_finance_model`) with triggers, indexes, FKs to projects/users/cost_codes. 7 enum types. Two new permission codes (`appraisals.submit`, `appraisals.view_financials`) bring total perms to 83.
+- ✅ Alembic 0020 — enum fidelity: `permission_action` += `submit`, `view_financials`; `audit_action` += `Submit`. Permission rows backfilled; 1:1 code↔action mapping restored.
+- ✅ Models in `app/models/appraisals.py` with ORM relationships (cascade delete).
+- ✅ Three calculation engines (Decimal-only, no floats):
+  - `appraisal_classification.py` — SDLT category resolver (honours surcharge/corporate threshold + developer relief).
+  - `finance_engine.py` — four interest modes (Simple_Monthly, Compound_Monthly, Rolled_Up, Serviced) with arrangement + exit fees. Compound_Quarterly deferred.
+  - `rlv_solver.py` — secant iterator, Decimal-only, 50-iteration cap, negative-land guard, does NOT mutate header land price.
+  - `appraisal_calc.py` — canonical **8-step pipeline** (units → cost pass 1 → GDV → SDLT → cost pass 2 → Finance → header recompute → updated_at/is_stale).
+- ✅ `appraisal_versioning.py` — state machine + `clone_as_new_version` (deep-clones units/lines/facilities) + `mark_superseded`.
+- ✅ Router at `/api/v1/appraisals` + `/api/v1/projects/:id/appraisals`:
+  - CRUD for appraisals, units, cost lines, finance facilities.
+  - State machine: submit / approve / reject (reason ≥5 chars required) / withdraw (submitter-only) / reopen (Rejected→Draft; Approved→clone new version + source Superseded).
+  - `recompute` and `recalculate-rlv` endpoints.
+  - **Field gating**: keys for land_purchase_price, totals, margins, RLV, target_profit_* are **OMITTED** (not nullified) for callers without `appraisals.view_financials`.
+  - Defaults consumed on create from `appraisal_default_settings` (specific project_type beats 'All'), seeding Percentage_Of_* cost-line skeleton + SDLT_Engine + Finance_Engine auto-lines.
+  - `/submit` endpoint emits `audit_action='Submit'` (distinct from `Update`/`Approve`).
+- ✅ RBAC updated: super_admin=83, director=79, project_manager + finance gain `appraisals.view_financials` + `appraisals.submit`.
+- ✅ **531/531 tests passing** (491 baseline + 40 new in `test_appraisals.py` covering SDLT classification, finance-engine modes, RLV convergence/non-convergence/non-mutation, 8-step pipeline ordering assertions, state-machine transitions, router integration end-to-end, financial-field gating, and enum-fidelity regression guards).
+- 🕒 Frontend (5-tab UI w/ `decimal.js`) — pending next batch.
+- 📋 Future/Backlog (per spec): IRR/ROCE, optimistic concurrency control, live SONIA tracking, Compound_Quarterly, frontend Appraisal UI.
+- ⚠️ Known fresh-DB bootstrap issue (pre-existing from 2.1, NOT introduced by 2.2): migration 0018 + 0019 require tenant + super_admin to exist — but lifespan runs `alembic upgrade head` BEFORE `seed()`. On pristine DBs the first boot fails; re-seeding + re-running alembic resolves. Logged for a future "migration bootstrap order" fix.
+
 ## Prompt 1.7 — System Config + Notifications (26 Apr 2026)
 - ✅ `system_config` table + 38-key seed across 9 populated categories (Finance:3, Appraisal:8, Budget:5, Programme:4, Security:7, Integration:2, Notification:5, Reporting:2, Audit:2). Categories `Document`, `CashFlow`, `System` reserved in enum for future seeds.
 - ✅ `notifications` table (15-type enum × 4-priority enum, 22 columns, 3 indexes incl. partial on `expires_at IS NOT NULL`).
