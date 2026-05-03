@@ -83,13 +83,13 @@ export default function AppraisalPage() {
         );
     }
 
-    const editable = a.state === "Draft" && canEdit;
+    const editable = (a.status === "Draft" || a.status === "Reopened") && canEdit;
 
     const handleStateAction = async (action, body = {}) => {
         setBusy(true);
         try {
             const r = await api.post(`/v1/appraisals/${id}/${action}`, body);
-            if (action === "reopen" && r.data.version && r.data.id !== id) {
+            if (action === "reopen" && r.data.version_number && r.data.id !== id) {
                 // Approved→new-version clone — navigate to new row.
                 navigate(`/appraisals/${r.data.id}`);
                 return;
@@ -119,20 +119,20 @@ export default function AppraisalPage() {
                     <div className="flex items-center gap-3 mt-2">
                         <h1 className="font-heading text-3xl font-bold text-slate-900"
                             data-testid="appraisal-name">{a.name}</h1>
-                        <span className={`inline-flex items-center px-2 py-0.5 text-xs font-medium border rounded ${STATE_BADGE[a.state]}`}
-                              data-testid="appraisal-state-badge">{a.state}</span>
-                        <span className="text-xs text-slate-500 font-mono">v{a.version}</span>
+                        <span className={`inline-flex items-center px-2 py-0.5 text-xs font-medium border rounded ${STATE_BADGE[a.status]}`}
+                              data-testid="appraisal-state-badge">{a.status}</span>
+                        <span className="text-xs text-slate-500 font-mono">v{a.version_number}</span>
                         <StalePill stale={stale} />
                     </div>
                 </div>
                 <div className="flex items-center gap-2">
-                    {a.state === "Draft" && canSubmit && (
+                    {(a.status === "Draft" || a.status === "Reopened") && canSubmit && (
                         <Button onClick={() => handleStateAction("submit")}
                                 disabled={busy} data-testid="submit-appraisal-btn">
                             Submit for approval
                         </Button>
                     )}
-                    {a.state === "Submitted" && canApprove && (
+                    {a.status === "Submitted" && canApprove && (
                         <>
                             <Button variant="outline"
                                     onClick={() => {
@@ -152,41 +152,56 @@ export default function AppraisalPage() {
                             </Button>
                         </>
                     )}
-                    {a.state === "Submitted" && a.submitted_by_user_id === me?.id && (
+                    {/* 2.3: Withdraw available to anyone with appraisals.edit
+                        when status ∈ {Draft, Submitted, Reopened}. */}
+                    {(a.status === "Draft" || a.status === "Submitted" || a.status === "Reopened") && canEdit && (
                         <Button variant="outline"
                                 onClick={() => handleStateAction("withdraw")}
                                 disabled={busy} data-testid="withdraw-appraisal-btn">
                             Withdraw
                         </Button>
                     )}
-                    {(a.state === "Rejected" || a.state === "Approved") && canEdit && (
+                    {(a.status === "Rejected" || a.status === "Approved") && canEdit && (
                         <Button variant="outline"
                                 onClick={() => handleStateAction("reopen")}
                                 disabled={busy} data-testid="reopen-appraisal-btn">
-                            {a.state === "Approved" ? "Reopen (new version)" : "Reopen"}
+                            {a.status === "Approved" ? "Reopen (new version)" : "Reopen for editing"}
                         </Button>
                     )}
                 </div>
             </div>
 
             {/* ---------- State-based banners ---------- */}
-            {a.state === "Superseded" && (
+            {a.status === "Superseded" && (
                 <div className="border border-slate-300 bg-slate-50 text-slate-700 p-3 rounded text-sm"
                      data-testid="superseded-banner">
                     This version has been superseded. See the most-recent Draft
                     on the project's appraisal list.
                 </div>
             )}
-            {a.state === "Rejected" && a.rejection_reason && (
+            {a.status === "Withdrawn" && (
+                <div className="border border-slate-300 bg-slate-50 text-slate-600 italic p-3 rounded text-sm"
+                     data-testid="withdrawn-banner">
+                    This appraisal has been withdrawn and is no longer the
+                    current version on the project.
+                </div>
+            )}
+            {a.status === "Rejected" && a.rejection_reason && (
                 <div className="border border-rose-200 bg-rose-50 text-rose-800 p-3 rounded text-sm"
                      data-testid="rejection-reason-banner">
                     <strong>Rejected:</strong> {a.rejection_reason}
                 </div>
             )}
-            {a.state === "Submitted" && (
+            {a.status === "Submitted" && (
                 <div className="border border-amber-200 bg-amber-50 text-amber-800 p-3 rounded text-sm"
                      data-testid="submitted-banner">
                     This appraisal is awaiting approval — fields are read-only.
+                </div>
+            )}
+            {a.status === "Reopened" && (
+                <div className="border border-amber-300 bg-amber-50 text-amber-900 p-3 rounded text-sm"
+                     data-testid="reopened-banner">
+                    Reopened for editing — make changes and re-submit for approval.
                 </div>
             )}
 

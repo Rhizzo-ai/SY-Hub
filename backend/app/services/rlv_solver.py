@@ -76,7 +76,7 @@ def solve(
     current = Decimal(appraisal.land_purchase_price or 0)
     if current <= _ZERO:
         # Use 10% of total_gdv as a starter — anchored to output.
-        seed_gdv = Decimal(appraisal.total_gdv or 0)
+        seed_gdv = Decimal(appraisal.gdv_total or 0)
         current = seed_gdv * Decimal("0.10") if seed_gdv > _ZERO else Decimal("100000")
 
     L0 = current

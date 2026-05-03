@@ -19,7 +19,7 @@
  * │ Everything else:                                                           │
  * │   • cost line effective_value (Percentage_Of_* lines)                      │
  * │   • SDLT_Engine / Finance_Engine / RLV_Engine auto lines                   │
- * │   • Header KPIs (total_gdv, total_cost, profit, margins)                   │
+ * │   • Header KPIs (gdv_total, total_cost, profit, margins)                   │
  * │   • RLV outputs                                                            │
  * │                                                                            │
  * │ These show a "STALE" pill while the user has unsaved edits. On save, the   │

@@ -103,11 +103,11 @@ export default function SummaryTab({ a, editable, stale, onReload }) {
             } />
 
             <div className="grid grid-cols-4 gap-4">
-                <Kpi label="Total GDV" value={fmtGBP(a.total_gdv)}
+                <Kpi label="Total GDV" value={fmtGBP(a.gdv_total)}
                      stale={stale} testId="kpi-total-gdv" />
                 <Kpi label="Total cost" value={fmtGBP(a.total_cost)}
                      stale={stale} testId="kpi-total-cost" />
-                <Kpi label="Profit" value={fmtGBP(a.total_profit)}
+                <Kpi label="Profit" value={fmtGBP(a.profit_total)}
                      stale={stale} testId="kpi-profit" />
                 <Kpi label="Profit on cost" value={fmtPct(a.profit_on_cost_pct)}
                      stale={stale} testId="kpi-profit-on-cost" />

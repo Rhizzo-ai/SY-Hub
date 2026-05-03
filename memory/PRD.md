@@ -75,6 +75,80 @@ SY Homes is a UK property development company. This platform replaces spreadshee
 
 ## What's Been Implemented
 
+### 2026-05-03 — Prompt 2.3 Checkpoint 1: Appraisal Retrofit ✅
+
+**Migration 0021** (`/app/backend/alembic/versions/0021_appraisal_retrofit.py`)
+- Renames on `appraisals`: `version`→`version_number`, `state`→`status`,
+  `total_gdv`→`gdv_total`, `total_profit`→`profit_total` (`total_cost` unchanged).
+- Adds `appraisal_group_id` (uuid NOT NULL, model-side default `uuid.uuid4`),
+  `is_current` (bool NOT NULL DEFAULT false), `scenario` (`appraisal_scenario_enum`
+  NOT NULL DEFAULT 'Base').
+- Extends `appraisal_state` enum with `Withdrawn` + `Reopened`; extends
+  `audit_action` enum with `Appraisal.NewVersion`, `Appraisal.ScenarioCreate`,
+  `Appraisal.DecisionLog`, `Appraisal.Withdraw` — all wrapped in
+  `autocommit_block()` per PG 15.16 enum-extension rule.
+- Drops `uq_appraisals_project_version` UNIQUE CONSTRAINT (R0 verified it was
+  a CONSTRAINT, not bare INDEX). Creates `uq_appraisals_project_scenario_version`
+  (composite UNIQUE) and `uq_appraisals_current_per_project_scenario`
+  (partial UNIQUE WHERE is_current=true).
+- Backfills `appraisal_group_id` (one UUID per project_id) and `is_current=true`
+  for the latest non-terminal version per (project, scenario). Pre-retrofit row
+  count was 0 so backfill was a no-op; assertions guard re-runs with data.
+- ALTER TABLE lock duration: 0.45s.
+
+**Backend code rename pass** — files: `app/models/appraisals.py`,
+`app/routers/appraisals.py`, `app/services/appraisal_calc.py`,
+`app/services/appraisal_versioning.py`, `app/services/rlv_solver.py`,
+`app/models/audit.py`, `tests/test_appraisals.py`.
+
+**State machine extension**:
+- `is_editable` whitelist now includes `Reopened` per Phase B.1.
+- `ALLOWED_TRANSITIONS`: Draft→{Submitted,Withdrawn}; Submitted→{Approved,
+  Rejected,Draft,Withdrawn}; Approved→{Superseded,Reopened}; Rejected→{Reopened};
+  Reopened→{Submitted,Withdrawn}; Withdrawn/Superseded terminal.
+
+**Endpoint behaviour split** (Phase F + B.2 — option ii: defer `/new-version` to C2):
+- `/appraisals/{id}/withdraw` — rewritten. Sources: Draft, Submitted, Reopened.
+  Sets `status='Withdrawn'`, `is_current=false`. **Submitter-only restriction
+  removed**: any `appraisals.edit` holder may withdraw. Audit action:
+  `Appraisal.Withdraw`. Returns 400 `NOT_WITHDRAWABLE` for non-allowed sources.
+- `/appraisals/{id}/reopen` — partial rewrite. Rejected→Reopened (was Draft);
+  rejection_reason cleared. Approved-clone path retained with
+  `# TODO 2.3 C2:` comment so 2.2 clone tests continue to pass post-rename.
+  is_current handover atomic: source flipped false BEFORE new row flipped true.
+- `/new-version` — deferred entirely to Checkpoint 2.
+
+**Frontend retrofit**: `STATE_BADGE` extended in both `atoms.jsx` and inline
+copy in `AppraisalsList.jsx` (Withdrawn = muted gray italic, Reopened = amber).
+All field reads renamed across `AppraisalPage.jsx`, `AppraisalsList.jsx`,
+`SummaryTab.jsx`, `UnitsTab.jsx`. Edit-gate broadened to Draft+Reopened.
+Withdraw CTA visible to any `appraisals.edit` holder when status ∈
+{Draft, Submitted, Reopened}. New banners for Withdrawn and Reopened.
+
+**Tests**: 30+ existing 2.2 tests updated for renames + new endpoint semantics
+(in particular: `test_reopen_rejected_returns_to_reopened` was
+`test_reopen_rejected_returns_to_draft`; state-machine matrix expanded).
+6 new C1 acceptance tests added under `TestRetrofit23C1`:
+1. `test_create_sets_retrofit_columns` (group_id, is_current, scenario, version_number)
+2. `test_withdraw_from_draft`
+3. `test_withdraw_from_submitted`
+4. `test_withdraw_from_approved_blocked` (NOT_WITHDRAWABLE)
+5. `test_reopened_appraisal_is_editable` (edit-gate post-Reopened)
+6. `test_audit_log_carries_appraisal_withdraw_action`
+**Full suite: 537/537 passing** (was 531).
+
+**Phase 1 spec deviations resolved (CHANGELOG-documented)**:
+- Drafted migration said `audit_action_enum` and `DROP INDEX`; actual PG types
+  are `audit_action` and the original was a UNIQUE CONSTRAINT — corrected.
+- `/reopen` Approved-clone retained for C1 (option ii); to be split in C2.
+- Withdraw broadened from submitter-only to any `appraisals.edit` holder.
+- Rejected→Reopened (was Rejected→Draft).
+- New 2.3 audit values use `Appraisal.*` namespace; existing flat values
+  (`Reopen`, `Submit`) untouched. Inconsistency accepted, CHANGELOG-noted.
+
+**STOP** — checkpoint complete. Awaiting user go-ahead before Checkpoint 2
+(Migration 0022 + 3 new tables + immutability triggers + services + endpoints).
+
 ### 2026-04-23 — Prompt 1.5: Projects + Project Team Members ✅
 
 **Schema (Alembic 0008 + 0009)**

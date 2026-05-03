@@ -98,8 +98,8 @@ export default function UnitsTab({ a, editable, onReload, onDirty }) {
                      value={fmtGBP(liveBuild)}
                      testId="live-build-kpi" />
                 <Kpi label="Server GDV (last save)"
-                     value={fmtGBP(a.total_gdv)}
-                     stale={!liveGdv.eq(D(a.total_gdv || 0))}
+                     value={fmtGBP(a.gdv_total)}
+                     stale={!liveGdv.eq(D(a.gdv_total || 0))}
                      testId="server-gdv-kpi" />
             </div>
 

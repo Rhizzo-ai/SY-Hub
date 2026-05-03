@@ -152,7 +152,7 @@ def recompute(
     meta["has_land_line"] = has_land_line
 
     # ---------- 3. GDV header ------------------------------------------
-    appraisal.total_gdv = total_gdv
+    appraisal.gdv_total = total_gdv
 
     # ---------- 4. SDLT engine -----------------------------------------
     cat = classify_sdlt(
@@ -264,7 +264,7 @@ def recompute(
     appraisal.total_sales_cost = _penny(sales)
     appraisal.total_other_cost = _penny(other)
     appraisal.total_cost = total_cost
-    appraisal.total_profit = total_profit
+    appraisal.profit_total = total_profit
     appraisal.profit_on_cost_pct = poc
     appraisal.profit_on_gdv_pct = pog
 

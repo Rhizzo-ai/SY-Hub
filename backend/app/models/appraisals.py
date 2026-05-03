@@ -20,7 +20,9 @@ from sqlalchemy.orm import relationship
 from app.db import Base
 
 
-APPRAISAL_STATES = ("Draft", "Submitted", "Approved", "Rejected", "Superseded")
+APPRAISAL_STATES = ("Draft", "Submitted", "Approved", "Rejected", "Superseded",
+                    "Withdrawn", "Reopened")
+APPRAISAL_SCENARIOS = ("Base", "Upside", "Downside", "Sensitivity")
 UNIT_TYPES = ("Detached", "Semi_Detached", "Terraced", "Flat", "Bungalow",
               "Commercial", "Other")
 TENURE_TYPES = ("Open_Market", "Affordable_Rent", "Shared_Ownership",
@@ -51,13 +53,20 @@ class Appraisal(Base):
     project_id = Column(UUID(as_uuid=True),
                         ForeignKey("projects.id", ondelete="CASCADE"),
                         nullable=False)
-    version = Column(Integer, nullable=False, default=1)
+    version_number = Column(Integer, nullable=False, default=1)
     previous_version_id = Column(UUID(as_uuid=True),
                                  ForeignKey("appraisals.id", ondelete="SET NULL"))
     name = Column(String(255), nullable=False)
-    state = Column(_e(APPRAISAL_STATES, "appraisal_state"),
-                   nullable=False, default="Draft")
+    status = Column(_e(APPRAISAL_STATES, "appraisal_state"),
+                    nullable=False, default="Draft")
     reference_date = Column(Date, nullable=False)
+
+    # 2.3 retrofit columns
+    appraisal_group_id = Column(UUID(as_uuid=True), nullable=False,
+                                default=uuid.uuid4)
+    is_current = Column(Boolean, nullable=False, default=False)
+    scenario = Column(_e(APPRAISAL_SCENARIOS, "appraisal_scenario_enum"),
+                      nullable=False, default="Base")
 
     land_purchase_price = Column(Numeric(14, 2), nullable=False, default=0)
     sdlt_category = Column(String(40), nullable=False,
@@ -69,7 +78,7 @@ class Appraisal(Base):
     target_profit_on_gdv_pct = Column(Numeric(6, 3), nullable=False, default=17)
     project_duration_months = Column(Integer, nullable=False, default=18)
 
-    total_gdv = Column(Numeric(14, 2), nullable=False, default=0)
+    gdv_total = Column(Numeric(14, 2), nullable=False, default=0)
     total_acquisition_cost = Column(Numeric(14, 2), nullable=False, default=0)
     total_build_cost = Column(Numeric(14, 2), nullable=False, default=0)
     total_professional_fees = Column(Numeric(14, 2), nullable=False, default=0)
@@ -79,7 +88,7 @@ class Appraisal(Base):
     total_sales_cost = Column(Numeric(14, 2), nullable=False, default=0)
     total_other_cost = Column(Numeric(14, 2), nullable=False, default=0)
     total_cost = Column(Numeric(14, 2), nullable=False, default=0)
-    total_profit = Column(Numeric(14, 2), nullable=False, default=0)
+    profit_total = Column(Numeric(14, 2), nullable=False, default=0)
     profit_on_cost_pct = Column(Numeric(8, 4), nullable=False, default=0)
     profit_on_gdv_pct = Column(Numeric(8, 4), nullable=False, default=0)
 
@@ -110,8 +119,8 @@ class Appraisal(Base):
                         server_default=func.now())
 
     __table_args__ = (
-        UniqueConstraint("project_id", "version",
-                         name="uq_appraisals_project_version"),
+        UniqueConstraint("project_id", "scenario", "version_number",
+                         name="uq_appraisals_project_scenario_version"),
     )
 
     units = relationship("AppraisalUnit", cascade="all, delete-orphan",
