@@ -72,7 +72,11 @@ Confirmed via `\d appraisals`:
 
 ```
 appraisals_pkey                — UNIQUE (id) — keep
-uq_appraisals_project_version  — UNIQUE (project_id, version) — DROP in 0021 step A.8
+uq_appraisals_project_version  — UNIQUE CONSTRAINT (project_id, version) — DROP in 0021 step A.8
+                                 ⚠️ Confirmed during C1 R0 as a UNIQUE CONSTRAINT,
+                                 not a bare INDEX. Use `ALTER TABLE … DROP CONSTRAINT`,
+                                 not `DROP INDEX`. Downgrade rebuilds via
+                                 `op.create_unique_constraint`.
 ix_appraisals_project          — INDEX (project_id) — keep
 ix_appraisals_state            — INDEX (state) — keep (state→status, index name retained)
 ix_appraisals_project_state    — INDEX (project_id, state) — keep (compound)
