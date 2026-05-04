@@ -586,6 +586,28 @@ def create_appraisal(
     _apply_defaults_on_create(db, a, project, current)
     # Initial recompute.
     appraisal_calc.recompute(db, a)
+
+    # 2.3 C2: ensure a Base-scenario anchor row exists for this group.
+    # Backfill-equivalent at create time. The DB UNIQUE on (group_id,
+    # scenario_label) makes this no-op-safe if another Base v1 already
+    # anchors the group.
+    from app.models.appraisal_governance import AppraisalScenario
+    existing_base_anchor = db.execute(
+        select(AppraisalScenario).where(
+            AppraisalScenario.appraisal_group_id == group_id,
+            AppraisalScenario.scenario_label == "Base",
+        )
+    ).scalar_one_or_none()
+    if existing_base_anchor is None:
+        db.add(AppraisalScenario(
+            appraisal_group_id=group_id,
+            scenario_appraisal_id=a.id,
+            parent_scenario_appraisal_id=None,
+            scenario_label="Base",
+            scenario_description="Base scenario (auto-created at v1).",
+            created_by_user_id=current.id,
+        ))
+        db.flush()
     record_audit(
         db, action="Create", resource_type="appraisals",
         resource_id=a.id, actor_user_id=current.id,
@@ -896,66 +918,61 @@ def reopen_appraisal(
     perms: UserPermissions = Depends(require_permission("appraisals.edit")),
     db: Session = Depends(get_db),
 ):
-    """Reopen Approved (clone, legacy) or Rejected (toggle to Reopened).
+    """Reopen an Approved or Rejected appraisal (2.3 C2 final form).
 
-    TODO 2.3 C2: split /reopen and /new-version per Phase B.2 of v6 prompt.
-    In C1 we retain the Approved-clone path so existing 2.2 clone tests pass
-    post-rename. C2 will move clone behaviour into a new POST /new-version
-    endpoint (with revision_reason + summary_of_changes body, writing an
-    appraisal_revisions row in the same transaction). After C2:
-      - /reopen handles Approved AND Rejected by toggling status='Reopened'
-        (no clone, no version bump, is_current unchanged).
-      - /new-version handles the Approved/Rejected → clone → Draft path.
+    Both Approved and Rejected sources flip to status='Reopened' on the
+    SAME row — no clone, no version bump, is_current unchanged. The
+    previous clone-on-Approved behaviour is now a separate endpoint:
+    POST /appraisals/{id}/new-version.
+
+    Preconditions:
+    - Source status IN {Approved, Rejected}.
+    - is_current == True (cannot reopen a stale version).
     """
     a = _load_appraisal(db, appraisal_id, current, perms)
 
-    if a.status == "Rejected":
-        # Rewritten in 2.3: target is now Reopened (was Draft in 2.2).
-        try:
-            assert_transition(a.status, "Reopened")
-        except TransitionError as e:
-            raise HTTPException(409, str(e))
-        a.status = "Reopened"
-        a.rejection_reason = None
-        # is_current unchanged per Phase B.2 matrix.
-        record_audit(
-            db, action="Reopen", resource_type="appraisals",
-            resource_id=a.id, actor_user_id=current.id,
-            project_id=a.project_id, field_changes=[],
-            metadata={"kind": "state_transition", "to": "Reopened",
-                      "from": "Rejected"},
-            request=request,
+    if a.status not in ("Approved", "Rejected"):
+        raise HTTPException(
+            409,
+            detail={
+                "code": "NOT_REOPENABLE",
+                "message": (
+                    f"Cannot reopen appraisal in status {a.status!r}. "
+                    f"Only Approved or Rejected may be reopened."
+                ),
+            },
         )
-        db.commit()
-        db.refresh(a)
-        return _serialise_header(a, perms)
-
-    if a.status == "Approved":
-        # Legacy clone path retained for C1. Atomic is_current handover:
-        # source flips to false BEFORE new row flips to true so the partial
-        # unique uq_appraisals_current_per_project_scenario never sees two
-        # currents simultaneously.
-        a.is_current = False
-        db.flush()
-        new = clone_as_new_version(db, a, created_by_user_id=current.id)
-        mark_superseded(a)
-        new.is_current = True
-        db.flush()
-        appraisal_calc.recompute(db, new)
-        record_audit(
-            db, action="Reopen", resource_type="appraisals",
-            resource_id=new.id, actor_user_id=current.id,
-            project_id=a.project_id, field_changes=[],
-            metadata={"kind": "new_version_clone",
-                      "previous_version_id": str(a.id),
-                      "new_version": new.version_number},
-            request=request,
+    if not a.is_current:
+        raise HTTPException(
+            400,
+            detail={
+                "code": "NOT_REOPENABLE",
+                "message": (
+                    "Cannot reopen a non-current appraisal version. "
+                    "Only the latest version may be reopened."
+                ),
+            },
         )
-        db.commit()
-        db.refresh(new)
-        return _serialise_full(new, perms)
 
-    raise HTTPException(409, f"Cannot reopen an appraisal in status {a.status!r}.")
+    previous_status = a.status
+    try:
+        assert_transition(a.status, "Reopened")
+    except TransitionError as e:
+        raise HTTPException(409, str(e))
+    a.status = "Reopened"
+    a.rejection_reason = None
+    # is_current unchanged per Phase B.2.
+    record_audit(
+        db, action="Reopen", resource_type="appraisals",
+        resource_id=a.id, actor_user_id=current.id,
+        project_id=a.project_id, field_changes=[],
+        metadata={"kind": "state_transition", "to": "Reopened",
+                  "from": previous_status},
+        request=request,
+    )
+    db.commit()
+    db.refresh(a)
+    return _serialise_header(a, perms)
 
 
 # ---------------------------------------------------------------------

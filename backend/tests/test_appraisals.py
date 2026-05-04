@@ -78,6 +78,12 @@ def _wipe_appraisals(engine):
         c.execute(text("DELETE FROM appraisal_finance_model"))
         c.execute(text("DELETE FROM appraisal_cost_lines"))
         c.execute(text("DELETE FROM appraisal_units"))
+        # 2.3 C2: append-only triggers + FKs on governance tables.
+        c.execute(text("ALTER TABLE appraisal_decision_log DISABLE TRIGGER USER"))
+        c.execute(text("DELETE FROM appraisal_decision_log"))
+        c.execute(text("ALTER TABLE appraisal_decision_log ENABLE TRIGGER USER"))
+        c.execute(text("DELETE FROM appraisal_revisions"))
+        c.execute(text("DELETE FROM appraisal_scenarios"))
         c.execute(text("DELETE FROM appraisals"))
         c.execute(text("DELETE FROM project_team_members"))
         c.execute(text("DELETE FROM user_role_projects"))
@@ -753,10 +759,14 @@ class TestAppraisalRouter:
         assert rp.json()["status"] == "Reopened"
         assert rp.json()["rejection_reason"] is None
 
-    def test_reopen_approved_creates_new_version(self, admin, project):
+    def test_reopen_approved_returns_to_reopened(self, admin, project):
+        """2.3 C2 final form: Approved → Reopened (toggle, no clone).
+
+        The clone-on-Approved behaviour moved to POST /new-version.
+        """
         r = admin.post(
             f"{BASE_URL}/api/v1/projects/{project['id']}/appraisals",
-            json={"name": "V-clone", "land_purchase_price": "100000"},
+            json={"name": "V-toggle", "land_purchase_price": "100000"},
         )
         aid = r.json()["id"]
         initial_version = r.json()["version_number"]
@@ -764,14 +774,12 @@ class TestAppraisalRouter:
         admin.post(f"{BASE_URL}/api/v1/appraisals/{aid}/approve")
         rp = admin.post(f"{BASE_URL}/api/v1/appraisals/{aid}/reopen")
         assert rp.status_code == 200, rp.text
-        new = rp.json()
-        assert new["status"] == "Draft"
-        assert new["version_number"] == initial_version + 1
-        assert new["is_current"] is True
-        # Original is now Superseded and not current.
-        orig = admin.get(f"{BASE_URL}/api/v1/appraisals/{aid}")
-        assert orig.json()["status"] == "Superseded"
-        assert orig.json()["is_current"] is False
+        body = rp.json()
+        # Same row, toggled to Reopened; version_number + is_current unchanged.
+        assert body["id"] == aid
+        assert body["status"] == "Reopened"
+        assert body["version_number"] == initial_version
+        assert body["is_current"] is True
 
     def test_units_crud(self, admin, project):
         r = admin.post(

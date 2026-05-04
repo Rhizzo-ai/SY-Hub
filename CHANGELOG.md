@@ -1,5 +1,67 @@
 # CHANGELOG
 
+## 2.3 Checkpoint 2 — Appraisal governance backend (2026-05-04)
+
+### Migration 0022
+- **New tables**: `appraisal_revisions`, `appraisal_scenarios`, `appraisal_decision_log`.
+- **New enums**: `appraisal_revision_reason_enum` (8 values: GDV_Updated, Costs_Updated, Planning_Change, Finance_Terms_Change, Market_Change, Scope_Change, Error_Correction, Other); `decision_type_enum` (6 values: Go, No_Go, Defer, Request_Revision, Conditional_Go, Correction).
+- **Triggers**:
+  - `trg_scenarios_validate_parent` (BEFORE INSERT/UPDATE on `appraisal_scenarios`) — blocks any row whose `parent_scenario_appraisal_id` does not reference a Base-scenario appraisal.
+  - `trg_decision_log_no_update` / `trg_decision_log_no_delete` (BEFORE UPDATE/DELETE on `appraisal_decision_log`) — append-only enforcement via `reject_decision_log_mutation()` plpgsql function. Mirrors the 1.4 `audit_log` immutability pattern.
+- **Backfill**: one `Base` row inserted into `appraisal_scenarios` per distinct `appraisal_group_id` in `appraisals` (pre-2.3 row count = 0 → no-op). `DO` block asserts count = distinct group count; raises if mismatched.
+- **System config seed**: `appraisal_decisions_required_threshold = 3` (value_type `Integer`, category `Appraisal`, `minimum_role_to_edit` = super_admin). Schema deviation from spec corrected — actual `system_config` columns are `config_key/config_value/value_type/category/description/is_system_locked/minimum_role_to_edit/default_value`; migration amended accordingly before apply.
+- **Schema deviation resolved**: Build Pack specified generic `system_config (key, value, value_type, description)`; corrected INSERT against actual 1.7 schema. Extension `pgcrypto` verified present → `gen_random_uuid()` retained (matches 0019).
+
+### New endpoints
+- `POST /appraisals/{id}/new-version` — canonical Approved/Rejected → new Draft clone. Body `{revision_reason, summary_of_changes(min 10)}`. Permission `appraisals.edit`. Runs in single transaction: source.is_current=false (flush) → mark_superseded (Approved only) → clone_as_new_version → new.is_current=true (flush) → insert `appraisal_revisions` row → recompute. Atomic handover satisfies partial unique `uq_appraisals_current_per_project_scenario`.
+- `GET /appraisals/{id}/revisions` — lineage for this (group, scenario) pair: appraisals by version_number ASC + revisions by to_version ASC.
+- `GET /projects/{project_id}/revisions` — nested per-group per-scenario lineage.
+- `POST /appraisals/{base_id}/scenarios` — spawn Upside/Downside/Sensitivity from the Base v1 anchor. Body `{scenario_label, scenario_description(min 10)}`. Permission `appraisals.edit`. Both Base and new scenario coexist with `is_current=true` (different (project, scenario) tuples).
+- `GET /appraisal-groups/{group_id}/scenarios` — ordered metadata list (Base → Upside → Downside → Sensitivity).
+- `GET /appraisal-groups/{group_id}/comparator` — absolute-values KPI comparator payload; frontend computes deltas.
+- `POST /appraisals/{id}/decisions` — permission `appraisals.approve`. Rich validation: `is_current` gate, version match, rationale min 10, Conditional_Go↔conditions XOR, Correction↔correction_of_decision_id XOR, future-dated rejection via Europe/London zoneinfo, server-set `decision_maker_user_id` (client cannot proxy — payload `extra='forbid'`). Audit action `Appraisal.DecisionLog`.
+- `GET /appraisals/{id}/decisions` — paginated list (limit 1–200, default 50) ordered by decision_date DESC, created_at DESC.
+- `GET /projects/{project_id}/nudge` — nudge state for current Approved Base. Counts distinct deciders logging Go/No_Go/Defer (Conditional_Go/Request_Revision/Correction excluded). Threshold read fresh from system_config per call. Returns `{should_show, threshold, distinct_decision_makers, current_appraisal_id, actor_has_decided, message}`.
+
+### Endpoint behaviour changes
+- `/reopen` Approved-clone branch **removed**. Approved sources now toggle to `status='Reopened'` on the same row (no clone, no version bump, is_current unchanged) — same semantics as the Rejected branch. The clone behaviour moved entirely to `/new-version`.
+- `/reopen` additional precondition: source must be `is_current=true`. Non-current (stale) versions return 400 `NOT_REOPENABLE`.
+- Appraisal create endpoint now also auto-inserts an anchor row in `appraisal_scenarios` (scenario_label=`Base`) when the group is new. DB UNIQUE on (group_id, scenario_label) makes this no-op-safe.
+
+### Services
+- `app/services/appraisal_revisions.py` — `create_new_version` (single-transaction orchestrator) + `RevisionError`.
+- `app/services/appraisal_scenarios.py` — `create_scenario`, `list_group_scenarios`, `get_group_comparator`, `_passes_hurdle`.
+- `app/services/appraisal_decisions.py` — `log_decision` (full validation cascade), `list_for_appraisal`, `get_nudge_state` (Europe/London for today comparison).
+- `app/services/appraisal_calc.py` — 9th pipeline step `_recompute_revision_deltas` appended; idempotent (no-op for v1-of-any-scenario rows). Deltas populate `delta_gdv`, `delta_total_cost`, `delta_profit` on every save of a `to` appraisal.
+
+### Routers
+- New file `app/routers/appraisal_governance.py` (module hygiene — `appraisals.py` already at ~1200 lines). Mounts under `/api/v1`, alongside the existing appraisals router.
+
+### Tests
+- **New file** `tests/test_appraisal_governance.py`: 44 tests across 7 classes (TestMigration0022, TestDecisionLogImmutability, TestScenarioParentTrigger, TestNewVersionEndpoint, TestReopenFinalForm, TestScenarios, TestDecisions, TestNudge). Covers H.2, H.4, H.5, H.6, H.7, H.8 from the Build Pack.
+- **DB-layer trigger verification**: raw SQL UPDATE/DELETE against `appraisal_decision_log` raises; raw SQL INSERT with non-Base parent against `appraisal_scenarios` raises.
+- **Modified test in `test_appraisals.py`**: `test_reopen_approved_creates_new_version` → `test_reopen_approved_returns_to_reopened` (asserts toggle, not clone; same id, same version_number, still current).
+- **Modified test in `test_system_config.py`**: `test_seed_creates_38_keys` → `test_seed_creates_39_keys` (added nudge threshold row).
+- Full suite **581/581 passing** (was 537 post-C1 → +44 new, 0 removed, 2 modified).
+
+### Phase 1 spec deviations documented in CHANGELOG (not new, but carried forward)
+- `scenario_appraisal_id` column present on `appraisal_scenarios` per spec (needed for "which scenario describes appraisal X" lookup).
+- `correction_of_decision_id` is a real self-FK on `appraisal_decision_log`.
+- `decision_maker_user_id` is server-set; no client proxy in 2.3.
+- Decisions permitted only on `is_current=true` appraisals.
+- No DB CHECK on `decision_date <= CURRENT_DATE` (CURRENT_DATE not IMMUTABLE in PG); enforced at service layer via `zoneinfo("Europe/London")`.
+- Withdraw status restrictions: only Draft/Submitted/Reopened withdrawable.
+- Reopen requires `is_current=true` source.
+- One-of-each non-Base label per group (UNIQUE on `(appraisal_group_id, scenario_label)`).
+
+### Schema state
+- alembic head: `0022_appraisal_governance`
+- Migration apply time: 0.44s on the dev pod.
+- Backend tests: 581 passing (0 failing, 2 warnings).
+- E2E: NOT RUN in C2 (deferred to C3 per spec sequencing).
+
+
+
 ## 2.3 Checkpoint 1 — Appraisal retrofit (2026-05-03)
 
 ### Migration

@@ -75,6 +75,66 @@ SY Homes is a UK property development company. This platform replaces spreadshee
 
 ## What's Been Implemented
 
+
+### 2026-05-04 — Prompt 2.3 Checkpoint 2: Appraisal Governance ✅
+
+**Migration 0022** (`/app/backend/alembic/versions/0022_appraisal_governance.py`)
+- Three new tables with triggers and constraints:
+  - `appraisal_revisions` (11 cols, 3 CHECKs, 4 indexes incl. UNIQUE on `appraisal_id_to`).
+  - `appraisal_scenarios` (8 cols, 1 CHECK Base/parent XOR, 5 indexes incl. 2 UNIQUEs).
+  - `appraisal_decision_log` (12 cols, 4 CHECKs, 5 indexes, self-FK).
+- New enums: `appraisal_revision_reason_enum` (8 values) + `decision_type_enum` (6 values).
+- `validate_scenario_parent` trigger function blocks non-Base parents.
+- `reject_decision_log_mutation` trigger function enforces append-only on
+  decision log (UPDATE + DELETE → exception).
+- `appraisal_scenarios` backfill (Base row per group; no-op with 0 rows).
+- `system_config` seed: `appraisal_decisions_required_threshold = 3`
+  (Integer, Appraisal category). **Spec deviation resolved**: drafted
+  migration assumed `(key, value, value_type, description)` columns;
+  actual 1.7 schema uses `(config_key, config_value, value_type, category,
+  description, is_system_locked, minimum_role_to_edit, default_value)` —
+  migration INSERT corrected before apply.
+- Lock duration: 0.44s.
+
+**Services** (3 new files under `app/services/`)
+- `appraisal_revisions.py::create_new_version` — single-transaction orchestration: source.is_current=false (flush) → mark_superseded if Approved → clone_as_new_version → new.is_current=true (flush) → revision row → recompute. Atomic handover satisfies partial-unique gate.
+- `appraisal_scenarios.py` — `create_scenario` (from Base v1 anchor only), `list_group_scenarios` (fixed Base→Upside→Downside→Sensitivity order), `get_group_comparator` (absolute values only; frontend computes deltas).
+- `appraisal_decisions.py` — `log_decision` (Europe/London timezone enforcement, Conditional_Go XOR conditions, Correction XOR reference, version match, is_current gate), `list_for_appraisal`, `get_nudge_state` (counts distinct Go/No_Go/Defer deciders).
+- `appraisal_calc.py::_recompute_revision_deltas` appended as pipeline step 9 (idempotent).
+
+**Router** (new file `app/routers/appraisal_governance.py`)
+- 9 endpoints under `/api/v1`:
+  - `POST /appraisals/{id}/new-version` (appraisals.edit, 201)
+  - `GET /appraisals/{id}/revisions` (appraisals.view)
+  - `GET /projects/{id}/revisions` (appraisals.view)
+  - `POST /appraisals/{base_id}/scenarios` (appraisals.edit, 201)
+  - `GET /appraisal-groups/{group_id}/scenarios` (appraisals.view)
+  - `GET /appraisal-groups/{group_id}/comparator` (appraisals.view)
+  - `POST /appraisals/{id}/decisions` (**appraisals.approve**, 201)
+  - `GET /appraisals/{id}/decisions` (appraisals.view)
+  - `GET /projects/{id}/nudge` (appraisals.view)
+
+**Endpoint behaviour changes in `app/routers/appraisals.py`**
+- `/reopen` Approved-clone branch **removed** per spec B.4. Approved and
+  Rejected both now toggle to status=`Reopened` on the same row; no clone,
+  no version bump, is_current unchanged. Both also require `is_current=true`.
+- Appraisal create endpoint backfills Base-scenario anchor for new groups.
+
+**Tests**: `tests/test_appraisal_governance.py` (44 tests across 8 classes).
+- `TestMigration0022` — 3 tests (tables, enum values, system_config seed).
+- `TestDecisionLogImmutability` — 2 tests (DB-layer UPDATE + DELETE raise).
+- `TestScenarioParentTrigger` — 1 test (raw SQL insert with non-Base parent raises).
+- `TestNewVersionEndpoint` — 8 tests (Approved, Rejected, Draft-blocked, short summary, invalid reason, source-not-current, lineage, deltas populated, readonly-forbidden).
+- `TestReopenFinalForm` — 4 tests (Rejected toggle, Approved toggle no clone, Draft blocked, non-current blocked).
+- `TestScenarios` — 8 tests (create Upside, short description, Base rejected, duplicate label, non-Base source, ordered listing, comparator shape, readonly forbidden).
+- `TestDecisions` — 11 tests (Go happy, Conditional_Go require + happy, conditions-for-Go blocked, future-dated, version mismatch, non-current blocked, Correction require + happy, client proxy rejected, list ordering, readonly-forbidden).
+- `TestNudge` — 5 tests (no Approved Base, under threshold, at threshold, non-core types excluded, readonly can view).
+
+**Full suite: 581/581 passing** (was 537 → +44 governance tests + 2 modified; 0 regressions).
+
+**STOP** — Checkpoint 2 complete. Awaiting user go-ahead before Checkpoint 3 (frontend: RevisionTimeline, ScenariosPanel, ScenarioComparator, DecisionsTab, nudge banner).
+
+
 ### 2026-05-03 — Prompt 2.3 Checkpoint 1: Appraisal Retrofit ✅
 
 **Migration 0021** (`/app/backend/alembic/versions/0021_appraisal_retrofit.py`)
