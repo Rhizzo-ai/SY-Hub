@@ -91,4 +91,38 @@ Surfaced at 0017, recurred at 0018/0019 (2.2), and recurred TWICE during Prompt 
 
 ---
 
-## 2. (placeholder — future entries appended here)
+## 2. `appraisal_scenarios` FK ON DELETE RESTRICT blocks test cascade — **P1**
+
+- **Surfaced in**: bootstrap-fix-p0 verification run (2026-05-04). The
+  pytest suite passes only when invoked with
+  `--ignore=tests/test_c3_governance_smoke.py`; including the smoke test
+  pollutes downstream fixtures because its teardown cannot delete the
+  parent `projects` / `appraisals` rows.
+- **Severity**: P1 — blocks clean test cascades and will block Prompt
+  2.4 (Budgets) cascade work that needs to delete projects in fixture
+  teardown.
+- **Description**: Migration 0022 (`appraisal_governance`) created
+  `appraisal_scenarios.scenario_appraisal_id_fkey` with `ON DELETE
+  RESTRICT`. This blocks the natural project → appraisal → scenario
+  delete cascade used by test fixture teardowns. Two sub-issues:
+  - **(a)** `tests/test_c3_governance_smoke.py` has no teardown at all,
+    so even with a permissive FK the rows would leak between tests;
+  - **(b)** the FK should be `ON DELETE CASCADE` so the parent project
+    delete propagates to scenarios without bespoke teardown logic per
+    test.
+- **Proposed resolution**:
+  1. Refactor `tests/test_c3_governance_smoke.py` to use the standard
+     project/appraisal fixtures and explicit teardown (or autouse
+     transactional rollback fixture) — sub-issue (a).
+  2. New alembic migration `0023_appraisal_scenarios_fk_cascade` to
+     `ALTER TABLE appraisal_scenarios DROP CONSTRAINT
+     scenario_appraisal_id_fkey` and re-add it with `ON DELETE
+     CASCADE` — sub-issue (b).
+  3. Remove the `--ignore=tests/test_c3_governance_smoke.py` workaround
+     from CI / docs once both sub-issues are green.
+- **Owner / Target prompt**: must be resolved before Prompt 2.4
+  (Budgets) cascade work begins.
+
+---
+
+## 3. (placeholder — future entries appended here)

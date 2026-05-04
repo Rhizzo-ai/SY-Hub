@@ -73,7 +73,10 @@ rc=$?
 
 # 6. Diagnose + propagate. The orchestrator already logged the cause on
 #    failure; we just translate the exit code to a human-readable line so
-#    log skim is fast.
+#    log skim is fast. On rc=0 we explicitly start the backend program in
+#    supervisor — supervisord.conf has `autostart=false autorestart=false`
+#    on [program:backend], so the backend cannot serve traffic unless this
+#    block runs to completion.
 case "${rc}" in
     0)  log "bootstrap ok (rc=0)" ;;
     1)  log "bootstrap FAIL precheck (rc=1) — fix BOOTSTRAP_ADMIN_* / DATABASE_URL in .env" ;;
@@ -85,5 +88,24 @@ case "${rc}" in
     7)  log "bootstrap FAIL unexpected (rc=7) — see traceback above" ;;
     *)  log "bootstrap FAIL unknown rc=${rc}" ;;
 esac
+
+# 7. Gate supervisor: only flip [program:backend] to RUNNING when bootstrap
+#    succeeded. On any non-zero rc the backend stays STOPPED so it cannot
+#    serve requests against a half-initialised DB. We do NOT stop the
+#    backend on failure — supervisord.conf already has autostart=false, and
+#    if a previous good boot left it running we want operators to see the
+#    drift via `supervisorctl status` rather than have it silently killed.
+if [[ "${rc}" -eq 0 ]]; then
+    log "starting backend via supervisorctl"
+    if sudo supervisorctl start backend >&2; then
+        log "backend start requested ok"
+    else
+        sup_rc=$?
+        log "FATAL supervisorctl start backend failed (rc=${sup_rc})"
+        exit "${sup_rc}"
+    fi
+else
+    log "skipping supervisorctl start backend (bootstrap rc=${rc})"
+fi
 
 exit "${rc}"
