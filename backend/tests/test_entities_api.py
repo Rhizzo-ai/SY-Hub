@@ -14,7 +14,7 @@ from tests.conftest import login_with_auto_enroll
 
 BASE_URL = os.environ.get('REACT_APP_BACKEND_URL', '').rstrip('/')
 if not BASE_URL:
-    BASE_URL = "https://governance-ui.preview.emergentagent.com"
+    BASE_URL = "https://spec-baseline-1.preview.emergentagent.com"
 
 TEST_PREFIX = "TEST_"
 

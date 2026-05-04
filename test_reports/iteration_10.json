@@ -60,7 +60,7 @@
   ],
   "success_rate": {"backend": "100% (6/6 governance smoke tests)", "frontend": "100% (18/18 C3 acceptance scenarios)"},
   "test_credentials": "test-admin@example.test / TestUser-Dev-2026! — MFA auto-enrolled fresh after seed reset. Cookies (access_token + refresh_token) extracted post-/mfa/enroll/confirm and injected into Playwright context.",
-  "seed_data_creation": "Project 'TEST_C3_E2E' (id=d1d32c50-03b5-4874-8ade-cad459a4ae3b, code TC3-001) with Base v1 appraisal (id=f5a4bc11-3d8c-4932-8dba-2a7106764510) — submit→approve→log Go decision; 1x Upside scenario sibling created. Group id 04a3bc00-5b1d-4065-9fe5-50d09bdddf5d.",
+  "seed_data_creation": "Project 'TEST_C3_E2E' (id=spec-baseline-1, code TC3-001) with Base v1 appraisal (id=spec-baseline-1) — submit→approve→log Go decision; 1x Upside scenario sibling created. Group id 04a3bc00-5b1d-4065-9fe5-50d09bdddf5d.",
   "retest_needed": false,
   "main_agent_can_self_test": true,
   "context_for_next_testing_agent": "C3 frontend is GREEN. Re-use /app/test_reports/helpers/full_setup.py to obtain fresh cookies + the TEST_C3_E2E project/appraisal/group ids (idempotent — re-runs reset MFA + reuse data). Backend governance smoke is at /app/backend/tests/test_c3_governance_smoke.py and runs in <3s. Two minor cleanup items in action_items are P3/P4 — not blocking. To exercise F5 new-version create→redirect end-to-end, complete the form in NewVersionModal (currently we only verified mount + close); a follow-up assertion on URL change to a new appraisal id is the only flow not asserted here."
