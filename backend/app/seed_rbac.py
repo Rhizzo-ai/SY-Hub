@@ -356,9 +356,17 @@ def _seed_bootstrap_admin(db: Session, roles_by_code: dict[str, Role], tenant: T
     email = os.environ.get("BOOTSTRAP_ADMIN_EMAIL")
     password = os.environ.get("BOOTSTRAP_ADMIN_PASSWORD")
     if not email or not password:
+        # Tightened by bootstrap-fix-p0 §R4: invariant must surface the
+        # canonical fix path. The bootstrap orchestrator catches RuntimeError
+        # from this call and remaps it to its own "seed_failed" cause; the
+        # message text below is also asserted by tests/test_bootstrap.py.
         raise RuntimeError(
-            "Set BOOTSTRAP_ADMIN_EMAIL and BOOTSTRAP_ADMIN_PASSWORD in backend/.env "
-            "before first boot (required to seed the super_admin user)."
+            "BOOTSTRAP_ADMIN_EMAIL and BOOTSTRAP_ADMIN_PASSWORD must be set in "
+            "/app/backend/.env before bootstrap can seed the super_admin user. "
+            "These are the production-tier credentials for the platform owner; "
+            "without them the orchestrator cannot satisfy the "
+            "super_admin_user_missing invariant. See app.bootstrap module "
+            "docstring for full troubleshooting guidance."
         )
     email = email.strip().lower()
 

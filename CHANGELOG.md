@@ -10,6 +10,41 @@ Each entry: date, prompt reference (if applicable), change, rationale.
 
 ## Entries
 
+## bootstrap-fix-p0 — Cold-start orchestrator (2026-05-04)
+
+### New: `/app/backend/app/bootstrap.py`
+- Single, idempotent entrypoint for cold-start sequencing.
+- Steps: env precheck → wait_for_postgres → pg_try_advisory_lock(hashtext('sy_hub_bootstrap')) → detect_db_state (logged) → staged alembic + seeds (alembic→0017, seed tenant, seed_rbac filtered to existing enum actions, alembic→head, seed_rbac full) → seed_system_config (role grants + 39 keys) → seed_test_users → verify_invariants → release lock.
+- Failure modes mapped to exit codes 1–7 with structured `[bootstrap] step=... result=fail cause=...` log lines.
+- `verify_invariants` asserts: alembic current == head, permissions count == len(PERMISSION_CATALOGUE), roles count == len(ROLE_CATALOGUE), super_admin user exists for BOOTSTRAP_ADMIN_EMAIL with Active user_role on super_admin role, every ROLE_PERMISSIONS code resolves to a permissions row.
+- Module docstring includes a runbook (one paragraph per cause key) and a "Sandbox provisioning notes" section for the next agent who lands on a fresh fork without Postgres installed.
+
+### New: `/root/.emergent/on-restart.sh`
+- Pod-boot orchestrator. Sources `/app/backend/.env`, activates `/root/.venv`, cd's to `/app/backend`, invokes `python -m app.bootstrap`, propagates exit code with a human-readable diagnostic line per code.
+- Concurrency-safe: relies on the orchestrator's advisory lock — a parallel `on-restart.sh` invocation exits 3 (lock_unavailable) without touching the DB.
+- Did not exist on this fork prior to bootstrap-fix-p0; the absent script was the live failure mode, treated as case (d) under §1 of the build pack.
+
+### New: `/app/backend/tests/test_bootstrap.py`
+- 15 tests; suite count moves from **581 → 596 backend tests**, all green (with `--ignore=tests/test_c3_governance_smoke.py`, the long-standing live-preview probe that has no teardown and pollutes test_projects fixtures — see Test count caveat below).
+- Coverage: env-var precheck (email, password missing), pg_unreachable timeout, detect_db_state at head + on truly unstamped DB, alembic_heads helper, verify_invariants happy path + every failure cause (super_admin_user_missing, perm_count_mismatch, role_count_mismatch, role_perm_unknown_code), concurrent advisory lock, idempotent re-run on green DB, end-to-end cold-start against ephemeral DB, snapshot-restore simulation (build to 0019, verify enum lacks 0020 values, run bootstrap, assert self-heal to head with `submit` + `view_financials` enum values present).
+- Destructive tests use a session-scoped `syhomes_bootstrap_test` ephemeral DB created via the `syhomes` role; the live DB is mutated only by monkeypatched catalogue overrides (rolled back at test end).
+
+### Tightened: `/app/backend/app/seed_rbac.py::_seed_bootstrap_admin`
+- Error message now names the canonical fix path (`/app/backend/.env`), explains *why* these credentials are required (production-tier platform owner, satisfies the super_admin_user_missing invariant), and points at the bootstrap module docstring for the full runbook.
+
+### Sandbox provisioning (first-time only on a fresh Emergent fork)
+- This session was the first to provision Postgres on this sandbox: PGDG Postgres 16 (Debian 12 / bookworm), syhomes role + db + pgcrypto extension, `[program:postgres]` supervisor block at `/etc/supervisor/conf.d/supervisord_postgres.conf`. Steps documented inline in `app/bootstrap.py`'s "Sandbox provisioning notes" section.
+
+### Test count caveat
+- The canonical 581-green baseline is achieved with `pytest --ignore=tests/test_c3_governance_smoke.py`. That smoke test has no teardown and creates a project + appraisal + scenarios that survive into the next module's fixture, breaking `test_projects.py::_wipe_projects` (a `DELETE FROM projects` cascades to `appraisals`, but the `appraisal_scenarios.scenario_appraisal_id_fkey` FK is `ON DELETE RESTRICT` and blocks the cascade). Treat the smoke test as a post-deploy live probe, not part of the unit suite. This is pre-existing behaviour; bootstrap-fix-p0 deliberately does not touch existing test files (build pack §7).
+
+### §R7 verification results
+- §R7.1 Idempotence (3 consecutive `on-restart.sh` runs on green DB): rc=0, total_elapsed=1.42s / 1.41s / 1.41s; one `step=verify result=ok` per run.
+- §R7.2 Concurrent (two `on-restart.sh` invocations 50 ms apart): one rc=0, one rc=3 with `cause=lock_unavailable`.
+- §R7.3 Failure-mode tests: 5 verify-failure causes covered by `tests/test_bootstrap.py` + 3 process-level failures (env, pg, lock).
+- §R7.4 Cold-start (DROP + CREATE DATABASE syhomes; CREATE EXTENSION pgcrypto; run `on-restart.sh`): rc=0, total_elapsed=2.04s; post-state alembic at head (0022), 83 perms, 10 roles, 8 users, 39 system_config rows.
+- §R7.5 Snapshot-restore (build ephemeral DB to 0019 with seed data, verify `permission_action` enum lacks `submit` + `view_financials`, run `python -m app.bootstrap`): rc=0, alembic advances to 0022, both enum values present after.
+
 ## 2.3 Checkpoint 3 — Appraisal governance frontend + E2E (2026-05-04)
 
 ### New components (under `/app/frontend/src/components/appraisal/`)

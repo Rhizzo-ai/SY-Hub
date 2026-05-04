@@ -15,7 +15,37 @@ Format per entry:
 
 ---
 
-## 1. Fresh-DB bootstrap ordering — **P0 (RECURRING)**
+## 1. Fresh-DB bootstrap ordering — **P0 → RESOLVED (bootstrap-fix-p0, 2026-05-04)**
+
+Resolved by introducing `app/bootstrap.py` as the canonical pod-restart
+entrypoint, invoked by `/root/.emergent/on-restart.sh` on every container
+boot. The orchestrator embeds the staged migration + seed dance (alembic
+to 0017 → tenant seed → filtered RBAC seed → alembic to head → full RBAC
+top-up → system_config seeds → test users → verify) as the single,
+idempotent code path. A Postgres advisory lock prevents concurrent
+runs; verify_invariants asserts the post-seed shape (alembic at head,
+permission count, role count, super_admin user, every ROLE_PERMISSIONS
+code resolves). 15 new tests under `tests/test_bootstrap.py` exercise
+every failure mode plus a true cold-start (drop+create DB, run script,
+assert green) and a snapshot-restore simulation (build to 0019, verify
+enum lacks the 0020 values, run bootstrap, assert self-heal). The
+runbook lives in the module docstring of `app.bootstrap`.
+
+Production failure modes covered:
+- BOOTSTRAP_ADMIN_* missing       → exit 1 with cause=env_missing
+- Postgres unreachable in N s     → exit 2 with cause=pg_unreachable
+- Concurrent bootstrap            → exit 3 with cause=lock_unavailable
+- Migration error                 → exit 4 with alembic stderr captured
+- Any seed failure                → exit 5 with cause=seed_failed
+- Invariant drift (any of 6)      → exit 6 with cause=&lt;specific&gt;
+
+Sandbox provisioning steps for future fresh forks (Postgres install,
+syhomes role/db creation, supervisor wiring) are documented in
+`app.bootstrap`'s "Sandbox provisioning notes" section.
+
+(Original P0 / P1 history retained below for context.)
+
+## 1a. Fresh-DB bootstrap ordering — **P0 (RECURRING) [historical]**
 
 Surfaced at 0017, recurred at 0018/0019 (2.2), and recurred TWICE during Prompt 2.3 Step 0 (May 2026). Three confirmed pod-restart triggers in two months. Documented runbook works (manual sequence: seed → seed_rbac partial → seed_test_users → alembic upgrade → seed_rbac full) but it's a manual hot-fix every time.
 
@@ -23,7 +53,7 @@ Surfaced at 0017, recurred at 0018/0019 (2.2), and recurred TWICE during Prompt 
 
 (Original P1 entry retained below for context.)
 
-## 1a. Fresh-DB bootstrap ordering (original entry)
+## 1b. Fresh-DB bootstrap ordering (original P1 entry, historical)
 
 - **Surfaced in**: Prompt 2.1 (migration 0017 — first time); Prompt 2.2
   (migrations 0018 + 0019 — recurrence)
