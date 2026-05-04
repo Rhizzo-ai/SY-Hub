@@ -22,6 +22,8 @@ const STATE_BADGE = {
     Approved: "bg-emerald-50 text-emerald-800 border-emerald-200",
     Rejected: "bg-rose-50 text-rose-700 border-rose-200",
     Superseded: "bg-slate-50 text-slate-500 border-slate-200",
+    Withdrawn: "bg-slate-100 text-slate-500 border-slate-200 italic",
+    Reopened: "bg-amber-100 text-amber-900 border-amber-300",
 };
 
 
@@ -124,7 +126,7 @@ export default function AppraisalsList() {
                             <tr className="text-xs uppercase tracking-wide text-slate-500">
                                 <th className="px-4 py-3">Version</th>
                                 <th className="px-4 py-3">Name</th>
-                                <th className="px-4 py-3">State</th>
+                                <th className="px-4 py-3">Status</th>
                                 {canSeeFin && <th className="px-4 py-3 text-right">Total GDV</th>}
                                 {canSeeFin && <th className="px-4 py-3 text-right">Total cost</th>}
                                 {canSeeFin && <th className="px-4 py-3 text-right">Profit on cost</th>}
@@ -135,16 +137,16 @@ export default function AppraisalsList() {
                         <tbody>
                             {items.map((a) => (
                                 <tr key={a.id} className="border-t border-slate-100 hover:bg-slate-50"
-                                    data-testid={`appraisal-row-${a.version}`}>
-                                    <td className="px-4 py-3 font-mono text-xs">v{a.version}</td>
+                                    data-testid={`appraisal-row-${a.version_number}`}>
+                                    <td className="px-4 py-3 font-mono text-xs">v{a.version_number}</td>
                                     <td className="px-4 py-3">{a.name}</td>
                                     <td className="px-4 py-3">
-                                        <span className={`inline-flex items-center px-2 py-0.5 text-xs font-medium border rounded ${STATE_BADGE[a.state] || ""}`}
-                                              data-testid={`appraisal-state-${a.version}`}>
-                                            {a.state}
+                                        <span className={`inline-flex items-center px-2 py-0.5 text-xs font-medium border rounded ${STATE_BADGE[a.status] || ""}`}
+                                              data-testid={`appraisal-state-${a.version_number}`}>
+                                            {a.status}
                                         </span>
                                     </td>
-                                    {canSeeFin && <td className="px-4 py-3 text-right font-mono">{fmtGBP(a.total_gdv)}</td>}
+                                    {canSeeFin && <td className="px-4 py-3 text-right font-mono">{fmtGBP(a.gdv_total)}</td>}
                                     {canSeeFin && <td className="px-4 py-3 text-right font-mono">{fmtGBP(a.total_cost)}</td>}
                                     {canSeeFin && <td className="px-4 py-3 text-right font-mono">{fmtPct(a.profit_on_cost_pct)}</td>}
                                     <td className="px-4 py-3 text-xs text-slate-500">
@@ -153,7 +155,7 @@ export default function AppraisalsList() {
                                     <td className="px-4 py-3 text-right">
                                         <Link to={`/appraisals/${a.id}`}
                                               className="text-sm text-blue-600 hover:underline"
-                                              data-testid={`open-appraisal-${a.version}`}>
+                                              data-testid={`open-appraisal-${a.version_number}`}>
                                             Open →
                                         </Link>
                                     </td>

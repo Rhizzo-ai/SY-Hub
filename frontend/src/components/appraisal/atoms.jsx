@@ -15,6 +15,8 @@ export const STATE_BADGE = {
     Approved: "bg-emerald-50 text-emerald-800 border-emerald-200",
     Rejected: "bg-rose-50 text-rose-700 border-rose-200",
     Superseded: "bg-slate-50 text-slate-500 border-slate-200",
+    Withdrawn: "bg-slate-100 text-slate-500 border-slate-200 italic",
+    Reopened: "bg-amber-100 text-amber-900 border-amber-300",
 };
 
 export const SDLT_CATEGORIES = [

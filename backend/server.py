@@ -30,6 +30,7 @@ from app.jobs.planning_expiry import (  # noqa: E402
 from app.jobs.role_expiry import start_role_expiry_scheduler, stop_role_expiry_scheduler  # noqa: E402
 from app.routers.audit import router as audit_router  # noqa: E402
 from app.routers.appraisals import router as appraisals_router  # noqa: E402
+from app.routers.appraisal_governance import router as appraisal_governance_router  # noqa: E402
 from app.routers.auth import router as auth_router  # noqa: E402
 from app.routers.cost_codes import router as cost_codes_router  # noqa: E402
 from app.routers.entities import router as entities_router  # noqa: E402
@@ -139,6 +140,7 @@ v1_router.include_router(system_config_router)
 v1_router.include_router(notifications_router)
 v1_router.include_router(reference_data_router)
 v1_router.include_router(appraisals_router)
+v1_router.include_router(appraisal_governance_router)
 api_router.include_router(v1_router)
 
 app.include_router(api_router)

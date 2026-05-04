@@ -152,7 +152,7 @@ def recompute(
     meta["has_land_line"] = has_land_line
 
     # ---------- 3. GDV header ------------------------------------------
-    appraisal.total_gdv = total_gdv
+    appraisal.gdv_total = total_gdv
 
     # ---------- 4. SDLT engine -----------------------------------------
     cat = classify_sdlt(
@@ -264,7 +264,7 @@ def recompute(
     appraisal.total_sales_cost = _penny(sales)
     appraisal.total_other_cost = _penny(other)
     appraisal.total_cost = total_cost
-    appraisal.total_profit = total_profit
+    appraisal.profit_total = total_profit
     appraisal.profit_on_cost_pct = poc
     appraisal.profit_on_gdv_pct = pog
 
@@ -276,6 +276,12 @@ def recompute(
         prev_meta.update(meta)
         prev_meta["computed_at"] = appraisal.updated_at.isoformat()
     appraisal.computation_metadata = prev_meta
+
+    # ---------- 9. revision deltas (2.3 C2) ----------------------------
+    # If this appraisal is the `to` side of a revision row, refresh its
+    # delta_gdv / delta_total_cost / delta_profit. Idempotent — no-op for
+    # v1-of-any-scenario rows without an inbound revision.
+    _recompute_revision_deltas(db, appraisal)
 
     return RecomputeResult(
         total_gdv=total_gdv,
@@ -295,3 +301,37 @@ def recompute(
         sdlt_amount=sdlt_amount,
         metadata=meta,
     )
+
+
+
+def _recompute_revision_deltas(db: Session, appraisal: Appraisal) -> None:
+    """Refresh delta_gdv / delta_total_cost / delta_profit for this appraisal.
+
+    If this appraisal is the `to` side of an appraisal_revisions row, compute
+    the delta against the `from` side. Idempotent — no-op for appraisals
+    without an inbound revision (e.g. v1 of any scenario).
+    """
+    # Lazy import to avoid a circular dependency at module load time.
+    from app.models.appraisal_governance import AppraisalRevision
+    from sqlalchemy import select
+
+    rev = db.execute(
+        select(AppraisalRevision).where(
+            AppraisalRevision.appraisal_id_to == appraisal.id,
+        )
+    ).scalar_one_or_none()
+    if rev is None:
+        return
+    src = db.get(Appraisal, rev.appraisal_id_from)
+    if src is None:
+        return
+    rev.delta_gdv = _penny(
+        Decimal(appraisal.gdv_total or 0) - Decimal(src.gdv_total or 0)
+    )
+    rev.delta_total_cost = _penny(
+        Decimal(appraisal.total_cost or 0) - Decimal(src.total_cost or 0)
+    )
+    rev.delta_profit = _penny(
+        Decimal(appraisal.profit_total or 0) - Decimal(src.profit_total or 0)
+    )
+    db.flush()

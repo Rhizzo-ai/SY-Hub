@@ -75,6 +75,168 @@ SY Homes is a UK property development company. This platform replaces spreadshee
 
 ## What's Been Implemented
 
+
+### 2026-05-04 — Prompt 2.3 Checkpoint 3: Appraisal Governance Frontend + E2E ✅
+
+**Five new components** (`/app/frontend/src/components/appraisal/`)
+- `RevisionTimeline.jsx` — vertical lineage; mounted in SummaryTab right column. HoverCard delta chips (S8) + j/k keyboard nav (S9) + click-to-navigate (G6).
+- `ScenariosPanel.jsx` — top-level Scenarios tab (Base only, between Finance & Summary). 2×2 slot grid + anchor detection (F1) + CreateScenarioModal (trim-then-min-length F2 + Cmd+Enter S9).
+- `ScenarioComparator.jsx` — sticky-first-column table (G5) with hover row+col highlight + sortable headers (Base pinned col 0; S4) + framer-motion column slide-in (S6+S10). decimal.js deltas (F4) with favourable-direction colour mapping.
+- `DecisionsTab.jsx` — final tab. 2/3 list + 1/3 form. Form gate: `appraisals.approve` AND `is_current=true` (matches server enforcement per R0 read). Optimistic UI on POST (S2). `supporting_documents` omitted (Decision D). `formatInTimeZone('Europe/London')` for date picker (Decision E). Fires `nudge-refresh` event on success (F3).
+- `NudgeBanner.jsx` — mounted on `ProjectDetail.jsx` ONLY (G2). Not dismissible (G1). Avatar stack (S3) + framer-motion slide-down/up (S6+S10). Listens for `nudge-refresh` event.
+- `NewVersionModal.jsx` — header CTA on Approved+is_current. Navigates to new appraisal id on 201 (F5).
+
+**Page extensions**
+- `AppraisalPage.jsx` — +Scenarios (conditional) + Decisions tabs (7 on Base, 6 on non-Base). Header CTAs split (Decision B): "Reopen for editing" + "New version". `?tab=decisions` deep-link handler scrolls log-form into view.
+- `SummaryTab.jsx` — KPIs in 3-col grid; RevisionTimeline in right column below RLV.
+- `ProjectDetail.jsx` — NudgeBanner mounted at top.
+
+**Library extensions**
+- `src/lib/api.js` — +9 governance endpoint wrappers.
+- `src/lib/appraisalMath.js` — `formatMoney`, `computeScenarioDelta`, `formatDelta` (decimal.js + Intl.NumberFormat en-GB, S5).
+
+**New dependency**: `framer-motion@12.38.0` (animations gated on `useReducedMotion()`, S10).
+
+**Testing**: `testing_agent_v3_fork` iteration_10 — PASS. All five locked decisions (A–E), sub-decisions (F1–F5, G1–G6), and SOTA hooks (S1–S10) verified live against public preview URL. Two minor design observations addressed in same commit (DecisionsTab empty-state copy keyed off form visibility; RevisionTimeline duplicate testid removed). 581/581 backend tests still passing (no backend changes in C3).
+
+**R0 bootstrap recovery**: 5th occurrence. Procedure ran cleanly in ~12s. Recurrence count signals the P0 fix is overdue — logged for next planning round.
+
+**STOP** — Checkpoint 3 complete. Awaiting user acceptance + branch merge.
+
+
+### 2026-05-04 — Prompt 2.3 Checkpoint 2: Appraisal Governance ✅
+
+**Migration 0022** (`/app/backend/alembic/versions/0022_appraisal_governance.py`)
+- Three new tables with triggers and constraints:
+  - `appraisal_revisions` (11 cols, 3 CHECKs, 4 indexes incl. UNIQUE on `appraisal_id_to`).
+  - `appraisal_scenarios` (8 cols, 1 CHECK Base/parent XOR, 5 indexes incl. 2 UNIQUEs).
+  - `appraisal_decision_log` (12 cols, 4 CHECKs, 5 indexes, self-FK).
+- New enums: `appraisal_revision_reason_enum` (8 values) + `decision_type_enum` (6 values).
+- `validate_scenario_parent` trigger function blocks non-Base parents.
+- `reject_decision_log_mutation` trigger function enforces append-only on
+  decision log (UPDATE + DELETE → exception).
+- `appraisal_scenarios` backfill (Base row per group; no-op with 0 rows).
+- `system_config` seed: `appraisal_decisions_required_threshold = 3`
+  (Integer, Appraisal category). **Spec deviation resolved**: drafted
+  migration assumed `(key, value, value_type, description)` columns;
+  actual 1.7 schema uses `(config_key, config_value, value_type, category,
+  description, is_system_locked, minimum_role_to_edit, default_value)` —
+  migration INSERT corrected before apply.
+- Lock duration: 0.44s.
+
+**Services** (3 new files under `app/services/`)
+- `appraisal_revisions.py::create_new_version` — single-transaction orchestration: source.is_current=false (flush) → mark_superseded if Approved → clone_as_new_version → new.is_current=true (flush) → revision row → recompute. Atomic handover satisfies partial-unique gate.
+- `appraisal_scenarios.py` — `create_scenario` (from Base v1 anchor only), `list_group_scenarios` (fixed Base→Upside→Downside→Sensitivity order), `get_group_comparator` (absolute values only; frontend computes deltas).
+- `appraisal_decisions.py` — `log_decision` (Europe/London timezone enforcement, Conditional_Go XOR conditions, Correction XOR reference, version match, is_current gate), `list_for_appraisal`, `get_nudge_state` (counts distinct Go/No_Go/Defer deciders).
+- `appraisal_calc.py::_recompute_revision_deltas` appended as pipeline step 9 (idempotent).
+
+**Router** (new file `app/routers/appraisal_governance.py`)
+- 9 endpoints under `/api/v1`:
+  - `POST /appraisals/{id}/new-version` (appraisals.edit, 201)
+  - `GET /appraisals/{id}/revisions` (appraisals.view)
+  - `GET /projects/{id}/revisions` (appraisals.view)
+  - `POST /appraisals/{base_id}/scenarios` (appraisals.edit, 201)
+  - `GET /appraisal-groups/{group_id}/scenarios` (appraisals.view)
+  - `GET /appraisal-groups/{group_id}/comparator` (appraisals.view)
+  - `POST /appraisals/{id}/decisions` (**appraisals.approve**, 201)
+  - `GET /appraisals/{id}/decisions` (appraisals.view)
+  - `GET /projects/{id}/nudge` (appraisals.view)
+
+**Endpoint behaviour changes in `app/routers/appraisals.py`**
+- `/reopen` Approved-clone branch **removed** per spec B.4. Approved and
+  Rejected both now toggle to status=`Reopened` on the same row; no clone,
+  no version bump, is_current unchanged. Both also require `is_current=true`.
+- Appraisal create endpoint backfills Base-scenario anchor for new groups.
+
+**Tests**: `tests/test_appraisal_governance.py` (44 tests across 8 classes).
+- `TestMigration0022` — 3 tests (tables, enum values, system_config seed).
+- `TestDecisionLogImmutability` — 2 tests (DB-layer UPDATE + DELETE raise).
+- `TestScenarioParentTrigger` — 1 test (raw SQL insert with non-Base parent raises).
+- `TestNewVersionEndpoint` — 8 tests (Approved, Rejected, Draft-blocked, short summary, invalid reason, source-not-current, lineage, deltas populated, readonly-forbidden).
+- `TestReopenFinalForm` — 4 tests (Rejected toggle, Approved toggle no clone, Draft blocked, non-current blocked).
+- `TestScenarios` — 8 tests (create Upside, short description, Base rejected, duplicate label, non-Base source, ordered listing, comparator shape, readonly forbidden).
+- `TestDecisions` — 11 tests (Go happy, Conditional_Go require + happy, conditions-for-Go blocked, future-dated, version mismatch, non-current blocked, Correction require + happy, client proxy rejected, list ordering, readonly-forbidden).
+- `TestNudge` — 5 tests (no Approved Base, under threshold, at threshold, non-core types excluded, readonly can view).
+
+**Full suite: 581/581 passing** (was 537 → +44 governance tests + 2 modified; 0 regressions).
+
+**STOP** — Checkpoint 2 complete. Awaiting user go-ahead before Checkpoint 3 (frontend: RevisionTimeline, ScenariosPanel, ScenarioComparator, DecisionsTab, nudge banner).
+
+
+### 2026-05-03 — Prompt 2.3 Checkpoint 1: Appraisal Retrofit ✅
+
+**Migration 0021** (`/app/backend/alembic/versions/0021_appraisal_retrofit.py`)
+- Renames on `appraisals`: `version`→`version_number`, `state`→`status`,
+  `total_gdv`→`gdv_total`, `total_profit`→`profit_total` (`total_cost` unchanged).
+- Adds `appraisal_group_id` (uuid NOT NULL, model-side default `uuid.uuid4`),
+  `is_current` (bool NOT NULL DEFAULT false), `scenario` (`appraisal_scenario_enum`
+  NOT NULL DEFAULT 'Base').
+- Extends `appraisal_state` enum with `Withdrawn` + `Reopened`; extends
+  `audit_action` enum with `Appraisal.NewVersion`, `Appraisal.ScenarioCreate`,
+  `Appraisal.DecisionLog`, `Appraisal.Withdraw` — all wrapped in
+  `autocommit_block()` per PG 15.16 enum-extension rule.
+- Drops `uq_appraisals_project_version` UNIQUE CONSTRAINT (R0 verified it was
+  a CONSTRAINT, not bare INDEX). Creates `uq_appraisals_project_scenario_version`
+  (composite UNIQUE) and `uq_appraisals_current_per_project_scenario`
+  (partial UNIQUE WHERE is_current=true).
+- Backfills `appraisal_group_id` (one UUID per project_id) and `is_current=true`
+  for the latest non-terminal version per (project, scenario). Pre-retrofit row
+  count was 0 so backfill was a no-op; assertions guard re-runs with data.
+- ALTER TABLE lock duration: 0.45s.
+
+**Backend code rename pass** — files: `app/models/appraisals.py`,
+`app/routers/appraisals.py`, `app/services/appraisal_calc.py`,
+`app/services/appraisal_versioning.py`, `app/services/rlv_solver.py`,
+`app/models/audit.py`, `tests/test_appraisals.py`.
+
+**State machine extension**:
+- `is_editable` whitelist now includes `Reopened` per Phase B.1.
+- `ALLOWED_TRANSITIONS`: Draft→{Submitted,Withdrawn}; Submitted→{Approved,
+  Rejected,Draft,Withdrawn}; Approved→{Superseded,Reopened}; Rejected→{Reopened};
+  Reopened→{Submitted,Withdrawn}; Withdrawn/Superseded terminal.
+
+**Endpoint behaviour split** (Phase F + B.2 — option ii: defer `/new-version` to C2):
+- `/appraisals/{id}/withdraw` — rewritten. Sources: Draft, Submitted, Reopened.
+  Sets `status='Withdrawn'`, `is_current=false`. **Submitter-only restriction
+  removed**: any `appraisals.edit` holder may withdraw. Audit action:
+  `Appraisal.Withdraw`. Returns 400 `NOT_WITHDRAWABLE` for non-allowed sources.
+- `/appraisals/{id}/reopen` — partial rewrite. Rejected→Reopened (was Draft);
+  rejection_reason cleared. Approved-clone path retained with
+  `# TODO 2.3 C2:` comment so 2.2 clone tests continue to pass post-rename.
+  is_current handover atomic: source flipped false BEFORE new row flipped true.
+- `/new-version` — deferred entirely to Checkpoint 2.
+
+**Frontend retrofit**: `STATE_BADGE` extended in both `atoms.jsx` and inline
+copy in `AppraisalsList.jsx` (Withdrawn = muted gray italic, Reopened = amber).
+All field reads renamed across `AppraisalPage.jsx`, `AppraisalsList.jsx`,
+`SummaryTab.jsx`, `UnitsTab.jsx`. Edit-gate broadened to Draft+Reopened.
+Withdraw CTA visible to any `appraisals.edit` holder when status ∈
+{Draft, Submitted, Reopened}. New banners for Withdrawn and Reopened.
+
+**Tests**: 30+ existing 2.2 tests updated for renames + new endpoint semantics
+(in particular: `test_reopen_rejected_returns_to_reopened` was
+`test_reopen_rejected_returns_to_draft`; state-machine matrix expanded).
+6 new C1 acceptance tests added under `TestRetrofit23C1`:
+1. `test_create_sets_retrofit_columns` (group_id, is_current, scenario, version_number)
+2. `test_withdraw_from_draft`
+3. `test_withdraw_from_submitted`
+4. `test_withdraw_from_approved_blocked` (NOT_WITHDRAWABLE)
+5. `test_reopened_appraisal_is_editable` (edit-gate post-Reopened)
+6. `test_audit_log_carries_appraisal_withdraw_action`
+**Full suite: 537/537 passing** (was 531).
+
+**Phase 1 spec deviations resolved (CHANGELOG-documented)**:
+- Drafted migration said `audit_action_enum` and `DROP INDEX`; actual PG types
+  are `audit_action` and the original was a UNIQUE CONSTRAINT — corrected.
+- `/reopen` Approved-clone retained for C1 (option ii); to be split in C2.
+- Withdraw broadened from submitter-only to any `appraisals.edit` holder.
+- Rejected→Reopened (was Rejected→Draft).
+- New 2.3 audit values use `Appraisal.*` namespace; existing flat values
+  (`Reopen`, `Submit`) untouched. Inconsistency accepted, CHANGELOG-noted.
+
+**STOP** — checkpoint complete. Awaiting user go-ahead before Checkpoint 2
+(Migration 0022 + 3 new tables + immutability triggers + services + endpoints).
+
 ### 2026-04-23 — Prompt 1.5: Projects + Project Team Members ✅
 
 **Schema (Alembic 0008 + 0009)**

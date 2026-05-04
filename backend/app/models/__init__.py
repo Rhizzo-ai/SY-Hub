@@ -64,6 +64,10 @@ from app.models.appraisals import (
     APPRAISAL_STATES, UNIT_TYPES, TENURE_TYPES,
     AUTO_SOURCES, COST_CATEGORIES, FINANCE_TYPES, INTEREST_MODES,
 )
+from app.models.appraisal_governance import (
+    AppraisalRevision, AppraisalScenario, AppraisalDecisionLog,
+    APPRAISAL_REVISION_REASONS, DECISION_TYPES,
+)
 
 __all__ = [
     "Tenant",

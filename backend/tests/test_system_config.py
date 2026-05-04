@@ -10,7 +10,7 @@ from tests.conftest import login_with_auto_enroll, plain_login
 
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "").rstrip("/")
 if not BASE_URL:
-    BASE_URL = "https://construction-command-5.preview.emergentagent.com"
+    BASE_URL = "https://governance-ui.preview.emergentagent.com"
 
 ADMIN = "test-admin@example.test"
 DIRECTOR = "test-director@example.test"
@@ -41,16 +41,18 @@ def readonly_session():
 # =============================================================================
 
 class TestSeed:
-    def test_seed_creates_38_keys(self, admin_session):
+    def test_seed_creates_39_keys(self, admin_session):
+        """38 keys from 1.7 seed + 1 from 2.3 C2 migration 0022
+        (`appraisal_decisions_required_threshold`)."""
         r = admin_session.get(f"{BASE_URL}/api/v1/system-config")
         assert r.status_code == 200
         data = r.json()
-        assert data["count"] == 38
+        assert data["count"] == 39
 
     def test_seed_covers_expected_categories(self, admin_session):
         r = admin_session.get(f"{BASE_URL}/api/v1/system-config")
         cats = set(r.json()["by_category"].keys())
-        # 9 categories actually populated by the 38 keys (CashFlow,
+        # 9 categories populated by the seeded keys (CashFlow,
         # Document, System are reserved enum values without seed data).
         expected = {
             "Finance", "Appraisal", "Budget", "Security",

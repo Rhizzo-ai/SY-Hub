@@ -50,7 +50,7 @@
   "updated_files": [],
   "success_rate": {"backend": "N/A (skipped per request)", "frontend": "100% (18/18 refactor-regression scenarios verified)"},
   "test_credentials": "test-admin@example.test / TestUser-Dev-2026! — MFA auto-enrol via pyotp (scripts/seed_test_users.py reset + /api/auth/mfa/enroll/start → /confirm). Cookies (access_token, refresh_token) injected into Playwright context.",
-  "seed_data_creation": "Re-used existing project 'TEST_Appraisal_E2E' (id=d6d9da9a-e8ab-4a64-b23b-b3bd045d04db) from iteration_8. Created fresh Draft v3 appraisal (id=e4b10e5d-6d3f-4200-9432-9cba32ac3d92) named 'TEST_Regression_v3' for this sweep; drove it through the full state machine to Approved.",
+  "seed_data_creation": "Re-used existing project 'TEST_Appraisal_E2E' (id=appraisal-revisions) from iteration_8. Created fresh Draft v3 appraisal (id=appraisal-revisions) named 'TEST_Regression_v3' for this sweep; drove it through the full state machine to Approved.",
   "retest_needed": false,
   "main_agent_can_self_test": true,
   "context_for_next_testing_agent": "Refactor regression for Prompt 2.2 is verified GREEN. AppraisalPage.jsx successfully split from 1176 → 232-line shell + 6 per-tab/atom components, all under the 700-line guideline. Every data-testid the review-request spec names resolves on the live preview URL. Two RLV testid naming schemes coexist (dynamic rlv-panel-${state} AND static rlv-state-*); pick one long-term. The TEST_Appraisal_E2E project now has v1=Approved, v2=Rejected, v3=Approved (post-regression sweep) — next agent can reopen v3 for a new draft instead of creating v4."

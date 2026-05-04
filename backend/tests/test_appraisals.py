@@ -78,6 +78,12 @@ def _wipe_appraisals(engine):
         c.execute(text("DELETE FROM appraisal_finance_model"))
         c.execute(text("DELETE FROM appraisal_cost_lines"))
         c.execute(text("DELETE FROM appraisal_units"))
+        # 2.3 C2: append-only triggers + FKs on governance tables.
+        c.execute(text("ALTER TABLE appraisal_decision_log DISABLE TRIGGER USER"))
+        c.execute(text("DELETE FROM appraisal_decision_log"))
+        c.execute(text("ALTER TABLE appraisal_decision_log ENABLE TRIGGER USER"))
+        c.execute(text("DELETE FROM appraisal_revisions"))
+        c.execute(text("DELETE FROM appraisal_scenarios"))
         c.execute(text("DELETE FROM appraisals"))
         c.execute(text("DELETE FROM project_team_members"))
         c.execute(text("DELETE FROM user_role_projects"))
@@ -284,7 +290,7 @@ class TestRecomputePipeline:
         from app.services.appraisal_versioning import next_version_for_project
         a = Appraisal(
             project_id=uuid.UUID(project_id),
-            version=next_version_for_project(db, uuid.UUID(project_id)),
+            version_number=next_version_for_project(db, uuid.UUID(project_id)),
             name="Calc Test",
             reference_date=date(2025, 6, 1),
             land_purchase_price=land,
@@ -485,7 +491,7 @@ class TestRlvSolver:
         try:
             a = Appraisal(
                 project_id=uuid.UUID(project["id"]),
-                version=next_version_for_project(db, uuid.UUID(project["id"])),
+                version_number=next_version_for_project(db, uuid.UUID(project["id"])),
                 name="RLV", reference_date=date(2025, 6, 1),
                 land_purchase_price=Decimal("100000"),
                 sdlt_category="Residential_Standard",
@@ -523,7 +529,7 @@ class TestRlvSolver:
         try:
             a = Appraisal(
                 project_id=uuid.UUID(project["id"]),
-                version=next_version_for_project(db, uuid.UUID(project["id"])),
+                version_number=next_version_for_project(db, uuid.UUID(project["id"])),
                 name="RLV-2", reference_date=date(2025, 6, 1),
                 land_purchase_price=Decimal("400000"),
                 sdlt_category="Residential_Standard",
@@ -560,7 +566,7 @@ class TestRlvSolver:
         try:
             a = Appraisal(
                 project_id=uuid.UUID(project["id"]),
-                version=next_version_for_project(db, uuid.UUID(project["id"])),
+                version_number=next_version_for_project(db, uuid.UUID(project["id"])),
                 name="RLV-3", reference_date=date(2025, 6, 1),
                 land_purchase_price=Decimal("100000"),
                 sdlt_category="Residential_Standard",
@@ -595,10 +601,19 @@ class TestRlvSolver:
 class TestStateMachine:
     def test_allowed_transitions_are_exhaustive(self):
         from app.services.appraisal_versioning import ALLOWED_TRANSITIONS
-        assert ALLOWED_TRANSITIONS["Draft"] == {"Submitted"}
+        # 2.3 retrofit: Draft can also go to Withdrawn.
+        assert ALLOWED_TRANSITIONS["Draft"] == {"Submitted", "Withdrawn"}
         assert "Approved" in ALLOWED_TRANSITIONS["Submitted"]
         assert "Rejected" in ALLOWED_TRANSITIONS["Submitted"]
+        assert "Withdrawn" in ALLOWED_TRANSITIONS["Submitted"]
         assert ALLOWED_TRANSITIONS["Superseded"] == set()
+        assert ALLOWED_TRANSITIONS["Withdrawn"] == set()
+        # Reopened is editable + can be submitted or withdrawn.
+        assert ALLOWED_TRANSITIONS["Reopened"] == {"Submitted", "Withdrawn"}
+        # Rejected → Reopened (was Draft in 2.2).
+        assert ALLOWED_TRANSITIONS["Rejected"] == {"Reopened"}
+        # Approved → Superseded OR Reopened (toggle vs clone).
+        assert ALLOWED_TRANSITIONS["Approved"] == {"Superseded", "Reopened"}
 
     def test_assert_transition_raises_on_illegal(self):
         from app.services.appraisal_versioning import (
@@ -608,17 +623,23 @@ class TestStateMachine:
             assert_transition("Approved", "Draft")
         with pytest.raises(TransitionError):
             assert_transition("Superseded", "Draft")
+        with pytest.raises(TransitionError):
+            assert_transition("Withdrawn", "Draft")
 
     def test_is_editable_only_draft(self):
         from app.models.appraisals import Appraisal
         from app.services.appraisal_versioning import is_editable
-        a = Appraisal(state="Draft", project_id=uuid.uuid4(), version=1,
+        a = Appraisal(status="Draft", project_id=uuid.uuid4(), version_number=1,
                       name="x", reference_date=date.today(),
                       created_by_user_id=uuid.uuid4())
         assert is_editable(a) is True
-        a.state = "Submitted"
+        a.status = "Submitted"
         assert is_editable(a) is False
-        a.state = "Approved"
+        a.status = "Approved"
+        assert is_editable(a) is False
+        a.status = "Reopened"
+        assert is_editable(a) is True
+        a.status = "Withdrawn"
         assert is_editable(a) is False
 
 
@@ -637,8 +658,8 @@ class TestAppraisalRouter:
         )
         assert r.status_code == 201, r.text
         data = r.json()
-        assert data["state"] == "Draft"
-        assert data["version"] == 1
+        assert data["status"] == "Draft"
+        assert data["version_number"] == 1
         # Defaults consumed — hurdles and contingency set.
         assert Decimal(data["target_profit_on_cost_pct"]) > Decimal("0")
         assert Decimal(data["contingency_pct"]) > Decimal("0")
@@ -682,7 +703,7 @@ class TestAppraisalRouter:
         if resp.status_code == 200:
             body = resp.json()
             # PM has view_financials in our seed.
-            assert "total_gdv" in body
+            assert "gdv_total" in body
 
     def test_submit_flow(self, admin, project):
         r = admin.post(
@@ -692,7 +713,7 @@ class TestAppraisalRouter:
         aid = r.json()["id"]
         s = admin.post(f"{BASE_URL}/api/v1/appraisals/{aid}/submit")
         assert s.status_code == 200
-        assert s.json()["state"] == "Submitted"
+        assert s.json()["status"] == "Submitted"
         # Submitting again is illegal.
         s2 = admin.post(f"{BASE_URL}/api/v1/appraisals/{aid}/submit")
         assert s2.status_code == 409
@@ -706,7 +727,7 @@ class TestAppraisalRouter:
         admin.post(f"{BASE_URL}/api/v1/appraisals/{aid}/submit")
         ap = admin.post(f"{BASE_URL}/api/v1/appraisals/{aid}/approve")
         assert ap.status_code == 200
-        assert ap.json()["state"] == "Approved"
+        assert ap.json()["status"] == "Approved"
 
     def test_reject_requires_reason(self, admin, project):
         r = admin.post(
@@ -721,9 +742,9 @@ class TestAppraisalRouter:
         ok = admin.post(f"{BASE_URL}/api/v1/appraisals/{aid}/reject",
                         json={"reason": "Costs too high for target."})
         assert ok.status_code == 200
-        assert ok.json()["state"] == "Rejected"
+        assert ok.json()["status"] == "Rejected"
 
-    def test_reopen_rejected_returns_to_draft(self, admin, project):
+    def test_reopen_rejected_returns_to_reopened(self, admin, project):
         r = admin.post(
             f"{BASE_URL}/api/v1/projects/{project['id']}/appraisals",
             json={"name": "Reopen", "land_purchase_price": "100000"},
@@ -734,25 +755,31 @@ class TestAppraisalRouter:
                    json={"reason": "bad reason"})
         rp = admin.post(f"{BASE_URL}/api/v1/appraisals/{aid}/reopen")
         assert rp.status_code == 200
-        assert rp.json()["state"] == "Draft"
+        # 2.3 retrofit: Rejected→Reopened (was Draft in 2.2).
+        assert rp.json()["status"] == "Reopened"
+        assert rp.json()["rejection_reason"] is None
 
-    def test_reopen_approved_creates_new_version(self, admin, project):
+    def test_reopen_approved_returns_to_reopened(self, admin, project):
+        """2.3 C2 final form: Approved → Reopened (toggle, no clone).
+
+        The clone-on-Approved behaviour moved to POST /new-version.
+        """
         r = admin.post(
             f"{BASE_URL}/api/v1/projects/{project['id']}/appraisals",
-            json={"name": "V-clone", "land_purchase_price": "100000"},
+            json={"name": "V-toggle", "land_purchase_price": "100000"},
         )
         aid = r.json()["id"]
-        initial_version = r.json()["version"]
+        initial_version = r.json()["version_number"]
         admin.post(f"{BASE_URL}/api/v1/appraisals/{aid}/submit")
         admin.post(f"{BASE_URL}/api/v1/appraisals/{aid}/approve")
         rp = admin.post(f"{BASE_URL}/api/v1/appraisals/{aid}/reopen")
         assert rp.status_code == 200, rp.text
-        new = rp.json()
-        assert new["state"] == "Draft"
-        assert new["version"] == initial_version + 1
-        # Original is now Superseded.
-        orig = admin.get(f"{BASE_URL}/api/v1/appraisals/{aid}")
-        assert orig.json()["state"] == "Superseded"
+        body = rp.json()
+        # Same row, toggled to Reopened; version_number + is_current unchanged.
+        assert body["id"] == aid
+        assert body["status"] == "Reopened"
+        assert body["version_number"] == initial_version
+        assert body["is_current"] is True
 
     def test_units_crud(self, admin, project):
         r = admin.post(
@@ -771,7 +798,7 @@ class TestAppraisalRouter:
         unit_id = u.json()["id"]
         # After add: GDV = 3 * 500k = 1,500,000.
         hdr = admin.get(f"{BASE_URL}/api/v1/appraisals/{aid}").json()
-        assert Decimal(hdr["total_gdv"]) == Decimal("1500000.00")
+        assert Decimal(hdr["gdv_total"]) == Decimal("1500000.00")
         # Update quantity.
         u2 = admin.put(
             f"{BASE_URL}/api/v1/appraisals/{aid}/units/{unit_id}",
@@ -782,13 +809,13 @@ class TestAppraisalRouter:
         )
         assert u2.status_code == 200
         hdr2 = admin.get(f"{BASE_URL}/api/v1/appraisals/{aid}").json()
-        assert Decimal(hdr2["total_gdv"]) == Decimal("2500000.00")
+        assert Decimal(hdr2["gdv_total"]) == Decimal("2500000.00")
         # Delete.
         d = admin.delete(
             f"{BASE_URL}/api/v1/appraisals/{aid}/units/{unit_id}")
         assert d.status_code == 204
         hdr3 = admin.get(f"{BASE_URL}/api/v1/appraisals/{aid}").json()
-        assert Decimal(hdr3["total_gdv"]) == Decimal("0.00")
+        assert Decimal(hdr3["gdv_total"]) == Decimal("0.00")
 
     def test_cannot_edit_submitted(self, admin, project):
         r = admin.post(
@@ -851,12 +878,12 @@ class TestFieldGating:
         assert resp.status_code == 200
         body = resp.json()
         # Gated keys must be ABSENT (not null).
-        for k in ("land_purchase_price", "total_gdv", "total_cost",
-                  "total_profit", "profit_on_cost_pct"):
+        for k in ("land_purchase_price", "gdv_total", "total_cost",
+                  "profit_total", "profit_on_cost_pct"):
             assert k not in body, f"expected {k!r} to be omitted"
         # Non-gated keys still present.
-        assert "state" in body
-        assert "version" in body
+        assert "status" in body
+        assert "version_number" in body
 
     def test_admin_sees_financials(self, admin, project):
         r = admin.post(
@@ -866,7 +893,7 @@ class TestFieldGating:
         aid = r.json()["id"]
         body = admin.get(f"{BASE_URL}/api/v1/appraisals/{aid}").json()
         assert "land_purchase_price" in body
-        assert "total_gdv" in body
+        assert "gdv_total" in body
 
 
 
@@ -939,5 +966,103 @@ class TestEnumFidelity:
             ), {"rid": aid}).first()
             assert row is not None
             assert row[0] == "Submit"
+        finally:
+            db.close()
+
+
+
+# --------------------------------------------------------------------------
+# Prompt 2.3 Checkpoint 1 — Retrofit acceptance tests
+# --------------------------------------------------------------------------
+
+class TestRetrofit23C1:
+    """Verify the new state machine + endpoint behaviour after the 2.3
+    Checkpoint 1 retrofit (Migration 0021 + endpoint behaviour split,
+    option ii)."""
+
+    def test_create_sets_retrofit_columns(self, admin, project):
+        r = admin.post(
+            f"{BASE_URL}/api/v1/projects/{project['id']}/appraisals",
+            json={"name": "Retrofit-1", "land_purchase_price": "200000"},
+        )
+        assert r.status_code == 201, r.text
+        data = r.json()
+        assert data["scenario"] == "Base"
+        assert data["is_current"] is True
+        assert data["appraisal_group_id"]  # uuid present
+        assert data["version_number"] >= 1
+
+    def test_withdraw_from_draft(self, admin, project):
+        r = admin.post(
+            f"{BASE_URL}/api/v1/projects/{project['id']}/appraisals",
+            json={"name": "Wd-Draft", "land_purchase_price": "100000"},
+        )
+        aid = r.json()["id"]
+        wd = admin.post(f"{BASE_URL}/api/v1/appraisals/{aid}/withdraw")
+        assert wd.status_code == 200, wd.text
+        body = wd.json()
+        assert body["status"] == "Withdrawn"
+        assert body["is_current"] is False
+
+    def test_withdraw_from_submitted(self, admin, project):
+        r = admin.post(
+            f"{BASE_URL}/api/v1/projects/{project['id']}/appraisals",
+            json={"name": "Wd-Submit", "land_purchase_price": "100000"},
+        )
+        aid = r.json()["id"]
+        admin.post(f"{BASE_URL}/api/v1/appraisals/{aid}/submit")
+        wd = admin.post(f"{BASE_URL}/api/v1/appraisals/{aid}/withdraw")
+        assert wd.status_code == 200, wd.text
+        assert wd.json()["status"] == "Withdrawn"
+
+    def test_withdraw_from_approved_blocked(self, admin, project):
+        r = admin.post(
+            f"{BASE_URL}/api/v1/projects/{project['id']}/appraisals",
+            json={"name": "Wd-Block", "land_purchase_price": "100000"},
+        )
+        aid = r.json()["id"]
+        admin.post(f"{BASE_URL}/api/v1/appraisals/{aid}/submit")
+        admin.post(f"{BASE_URL}/api/v1/appraisals/{aid}/approve")
+        wd = admin.post(f"{BASE_URL}/api/v1/appraisals/{aid}/withdraw")
+        assert wd.status_code == 400
+        assert wd.json()["detail"]["code"] == "NOT_WITHDRAWABLE"
+
+    def test_reopened_appraisal_is_editable(self, admin, project):
+        r = admin.post(
+            f"{BASE_URL}/api/v1/projects/{project['id']}/appraisals",
+            json={"name": "Reopen-Edit", "land_purchase_price": "100000"},
+        )
+        aid = r.json()["id"]
+        admin.post(f"{BASE_URL}/api/v1/appraisals/{aid}/submit")
+        admin.post(f"{BASE_URL}/api/v1/appraisals/{aid}/reject",
+                   json={"reason": "needs work"})
+        rp = admin.post(f"{BASE_URL}/api/v1/appraisals/{aid}/reopen")
+        assert rp.status_code == 200
+        assert rp.json()["status"] == "Reopened"
+        # Editing must succeed in Reopened (edit-gate updated for 2.3).
+        upd = admin.put(f"{BASE_URL}/api/v1/appraisals/{aid}",
+                        json={"name": "Reopened name"})
+        assert upd.status_code == 200, upd.text
+        assert upd.json()["name"] == "Reopened name"
+
+    def test_audit_log_carries_appraisal_withdraw_action(self, admin, project):
+        from app.db import SessionLocal
+        from sqlalchemy import text as _t
+        r = admin.post(
+            f"{BASE_URL}/api/v1/projects/{project['id']}/appraisals",
+            json={"name": "Wd-Audit", "land_purchase_price": "100000"},
+        )
+        aid = r.json()["id"]
+        admin.post(f"{BASE_URL}/api/v1/appraisals/{aid}/withdraw")
+        db = SessionLocal()
+        try:
+            row = db.execute(_t(
+                "SELECT action FROM audit_log "
+                "WHERE resource_type='appraisals' AND resource_id=:rid "
+                "AND action='Appraisal.Withdraw' "
+                "ORDER BY created_at DESC LIMIT 1"
+            ), {"rid": aid}).first()
+            assert row is not None
+            assert row[0] == "Appraisal.Withdraw"
         finally:
             db.close()

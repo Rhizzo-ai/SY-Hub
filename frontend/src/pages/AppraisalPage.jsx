@@ -22,7 +22,7 @@
  *   └─────────────────────────────────────────────────────────────────────┘
  */
 import React, { useCallback, useEffect, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { ArrowLeft, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -37,6 +37,9 @@ import UnitsTab from "@/components/appraisal/UnitsTab";
 import CostsTab from "@/components/appraisal/CostsTab";
 import FinanceTab from "@/components/appraisal/FinanceTab";
 import SummaryTab from "@/components/appraisal/SummaryTab";
+import ScenariosPanel from "@/components/appraisal/ScenariosPanel";
+import DecisionsTab from "@/components/appraisal/DecisionsTab";
+import NewVersionModal from "@/components/appraisal/NewVersionModal";
 
 
 export default function AppraisalPage() {
@@ -55,6 +58,9 @@ export default function AppraisalPage() {
     const [err, setErr] = useState(null);
     const [busy, setBusy] = useState(false);
     const [stale, setStale] = useState(false);  // local "dirty" marker
+    const [tab, setTab] = useState("header");
+    const [newVersionOpen, setNewVersionOpen] = useState(false);
+    const [searchParams, setSearchParams] = useSearchParams();
 
     const load = useCallback(async () => {
         try {
@@ -67,6 +73,24 @@ export default function AppraisalPage() {
     }, [id]);
 
     useEffect(() => { load(); }, [load]);
+
+    // ?tab=decisions URL param handler — select Decisions and scroll log-form into view.
+    useEffect(() => {
+        const wanted = searchParams.get("tab");
+        if (a && wanted === "decisions") {
+            setTab("decisions");
+            // Scroll log-form into view if visible.
+            setTimeout(() => {
+                const el = document.querySelector('[data-testid="log-decision-form"]');
+                if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+            }, 200);
+            // Clear the param so refresh doesn't re-trigger.
+            const next = new URLSearchParams(searchParams);
+            next.delete("tab");
+            setSearchParams(next, { replace: true });
+        }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [a]);
 
     if (err) {
         return (
@@ -83,17 +107,12 @@ export default function AppraisalPage() {
         );
     }
 
-    const editable = a.state === "Draft" && canEdit;
+    const editable = (a.status === "Draft" || a.status === "Reopened") && canEdit;
 
     const handleStateAction = async (action, body = {}) => {
         setBusy(true);
         try {
             const r = await api.post(`/v1/appraisals/${id}/${action}`, body);
-            if (action === "reopen" && r.data.version && r.data.id !== id) {
-                // Approved→new-version clone — navigate to new row.
-                navigate(`/appraisals/${r.data.id}`);
-                return;
-            }
             await load();
             toast.success(`Appraisal ${
                 action === "approve" ? "approved" :
@@ -119,20 +138,20 @@ export default function AppraisalPage() {
                     <div className="flex items-center gap-3 mt-2">
                         <h1 className="font-heading text-3xl font-bold text-slate-900"
                             data-testid="appraisal-name">{a.name}</h1>
-                        <span className={`inline-flex items-center px-2 py-0.5 text-xs font-medium border rounded ${STATE_BADGE[a.state]}`}
-                              data-testid="appraisal-state-badge">{a.state}</span>
-                        <span className="text-xs text-slate-500 font-mono">v{a.version}</span>
+                        <span className={`inline-flex items-center px-2 py-0.5 text-xs font-medium border rounded ${STATE_BADGE[a.status]}`}
+                              data-testid="appraisal-state-badge">{a.status}</span>
+                        <span className="text-xs text-slate-500 font-mono">v{a.version_number}</span>
                         <StalePill stale={stale} />
                     </div>
                 </div>
                 <div className="flex items-center gap-2">
-                    {a.state === "Draft" && canSubmit && (
+                    {(a.status === "Draft" || a.status === "Reopened") && canSubmit && (
                         <Button onClick={() => handleStateAction("submit")}
                                 disabled={busy} data-testid="submit-appraisal-btn">
                             Submit for approval
                         </Button>
                     )}
-                    {a.state === "Submitted" && canApprove && (
+                    {a.status === "Submitted" && canApprove && (
                         <>
                             <Button variant="outline"
                                     onClick={() => {
@@ -152,51 +171,76 @@ export default function AppraisalPage() {
                             </Button>
                         </>
                     )}
-                    {a.state === "Submitted" && a.submitted_by_user_id === me?.id && (
+                    {/* 2.3: Withdraw available to anyone with appraisals.edit
+                        when status ∈ {Draft, Submitted, Reopened}. */}
+                    {(a.status === "Draft" || a.status === "Submitted" || a.status === "Reopened") && canEdit && (
                         <Button variant="outline"
                                 onClick={() => handleStateAction("withdraw")}
                                 disabled={busy} data-testid="withdraw-appraisal-btn">
                             Withdraw
                         </Button>
                     )}
-                    {(a.state === "Rejected" || a.state === "Approved") && canEdit && (
+                    {(a.status === "Rejected" || a.status === "Approved") && a.is_current && canEdit && (
                         <Button variant="outline"
                                 onClick={() => handleStateAction("reopen")}
                                 disabled={busy} data-testid="reopen-appraisal-btn">
-                            {a.state === "Approved" ? "Reopen (new version)" : "Reopen"}
+                            Reopen for editing
+                        </Button>
+                    )}
+                    {a.status === "Approved" && a.is_current && canEdit && (
+                        <Button onClick={() => setNewVersionOpen(true)}
+                                disabled={busy} data-testid="new-version-btn">
+                            New version
                         </Button>
                     )}
                 </div>
             </div>
 
             {/* ---------- State-based banners ---------- */}
-            {a.state === "Superseded" && (
+            {a.status === "Superseded" && (
                 <div className="border border-slate-300 bg-slate-50 text-slate-700 p-3 rounded text-sm"
                      data-testid="superseded-banner">
                     This version has been superseded. See the most-recent Draft
                     on the project's appraisal list.
                 </div>
             )}
-            {a.state === "Rejected" && a.rejection_reason && (
+            {a.status === "Withdrawn" && (
+                <div className="border border-slate-300 bg-slate-50 text-slate-600 italic p-3 rounded text-sm"
+                     data-testid="withdrawn-banner">
+                    This appraisal has been withdrawn and is no longer the
+                    current version on the project.
+                </div>
+            )}
+            {a.status === "Rejected" && a.rejection_reason && (
                 <div className="border border-rose-200 bg-rose-50 text-rose-800 p-3 rounded text-sm"
                      data-testid="rejection-reason-banner">
                     <strong>Rejected:</strong> {a.rejection_reason}
                 </div>
             )}
-            {a.state === "Submitted" && (
+            {a.status === "Submitted" && (
                 <div className="border border-amber-200 bg-amber-50 text-amber-800 p-3 rounded text-sm"
                      data-testid="submitted-banner">
                     This appraisal is awaiting approval — fields are read-only.
                 </div>
             )}
+            {a.status === "Reopened" && (
+                <div className="border border-amber-300 bg-amber-50 text-amber-900 p-3 rounded text-sm"
+                     data-testid="reopened-banner">
+                    Reopened for editing — make changes and re-submit for approval.
+                </div>
+            )}
 
-            <Tabs defaultValue="header" data-testid="appraisal-tabs">
+            <Tabs value={tab} onValueChange={setTab} data-testid="appraisal-tabs">
                 <TabsList>
                     <TabsTrigger value="header" data-testid="tab-header">Header</TabsTrigger>
                     <TabsTrigger value="units" data-testid="tab-units">Units</TabsTrigger>
                     {canFin && <TabsTrigger value="costs" data-testid="tab-costs">Costs</TabsTrigger>}
                     {canFin && <TabsTrigger value="finance" data-testid="tab-finance">Finance</TabsTrigger>}
+                    {a.scenario === "Base" && (
+                        <TabsTrigger value="scenarios" data-testid="tab-scenarios">Scenarios</TabsTrigger>
+                    )}
                     {canFin && <TabsTrigger value="summary" data-testid="tab-summary">Summary</TabsTrigger>}
+                    <TabsTrigger value="decisions" data-testid="tab-decisions">Decisions</TabsTrigger>
                 </TabsList>
 
                 <TabsContent value="header" className="mt-4">
@@ -220,13 +264,25 @@ export default function AppraisalPage() {
                                     onReload={load} onDirty={() => setStale(true)} />
                     </TabsContent>
                 )}
+                {a.scenario === "Base" && (
+                    <TabsContent value="scenarios" className="mt-4">
+                        <ScenariosPanel appraisal={a} canEdit={canEdit} />
+                    </TabsContent>
+                )}
                 {canFin && (
                     <TabsContent value="summary" className="mt-4">
                         <SummaryTab a={a} editable={editable} stale={stale}
                                     onReload={load} />
                     </TabsContent>
                 )}
+                <TabsContent value="decisions" className="mt-4">
+                    <DecisionsTab appraisal={a} canApprove={canApprove} />
+                </TabsContent>
             </Tabs>
+
+            <NewVersionModal open={newVersionOpen}
+                             onClose={() => setNewVersionOpen(false)}
+                             appraisalId={a.id} />
         </div>
     );
 }

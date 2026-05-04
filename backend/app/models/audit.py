@@ -21,6 +21,11 @@ AUDIT_ACTIONS = (
     # (was 'Create' + metadata.kind='seed_run'). See
     # /app/backend/alembic/versions/0017_audit_remediation_patch_3.py.
     "Seed_Run",
+    # 2.3 Checkpoint 1 retrofit (Migration 0021).
+    "Appraisal.NewVersion",
+    "Appraisal.ScenarioCreate",
+    "Appraisal.DecisionLog",
+    "Appraisal.Withdraw",
 )
 
 

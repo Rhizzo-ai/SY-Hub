@@ -101,3 +101,35 @@ api.interceptors.response.use(
 export function authedFetch(url, init = {}) {
     return fetch(url, { credentials: "include", ...init });
 }
+
+
+// =========================================================================
+// Prompt 2.3 Checkpoint 3 — Appraisal Governance endpoints
+// =========================================================================
+
+export const fetchRevisions = (appraisalId) =>
+    api.get(`/v1/appraisals/${appraisalId}/revisions`).then((r) => r.data);
+
+export const fetchProjectRevisions = (projectId) =>
+    api.get(`/v1/projects/${projectId}/revisions`).then((r) => r.data);
+
+export const createNewVersion = (appraisalId, body) =>
+    api.post(`/v1/appraisals/${appraisalId}/new-version`, body).then((r) => r.data);
+
+export const fetchGroupScenarios = (groupId) =>
+    api.get(`/v1/appraisal-groups/${groupId}/scenarios`).then((r) => r.data);
+
+export const fetchComparator = (groupId) =>
+    api.get(`/v1/appraisal-groups/${groupId}/comparator`).then((r) => r.data);
+
+export const createScenario = (baseId, body) =>
+    api.post(`/v1/appraisals/${baseId}/scenarios`, body).then((r) => r.data);
+
+export const fetchDecisions = (appraisalId) =>
+    api.get(`/v1/appraisals/${appraisalId}/decisions`).then((r) => r.data);
+
+export const logDecision = (appraisalId, body) =>
+    api.post(`/v1/appraisals/${appraisalId}/decisions`, body).then((r) => r.data);
+
+export const fetchNudge = (projectId) =>
+    api.get(`/v1/projects/${projectId}/nudge`).then((r) => r.data);

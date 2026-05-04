@@ -15,7 +15,15 @@ Format per entry:
 
 ---
 
-## 1. Fresh-DB bootstrap ordering
+## 1. Fresh-DB bootstrap ordering — **P0 (RECURRING)**
+
+Surfaced at 0017, recurred at 0018/0019 (2.2), and recurred TWICE during Prompt 2.3 Step 0 (May 2026). Three confirmed pod-restart triggers in two months. Documented runbook works (manual sequence: seed → seed_rbac partial → seed_test_users → alembic upgrade → seed_rbac full) but it's a manual hot-fix every time.
+
+**Mandatory fix before next Track 2 prompt**: split inline INSERT seeds out of migrations 0018, 0019, 0020 into a dedicated post-migration data-seed module that runs at the lifespan phase AFTER `alembic upgrade head` AND `seed()` + `seed_rbac()`. Add a CI smoke test that drops the DB, runs cold-start, and asserts pytest passes.
+
+(Original P1 entry retained below for context.)
+
+## 1a. Fresh-DB bootstrap ordering (original entry)
 
 - **Surfaced in**: Prompt 2.1 (migration 0017 — first time); Prompt 2.2
   (migrations 0018 + 0019 — recurrence)

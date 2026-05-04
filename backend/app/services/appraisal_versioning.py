@@ -1,27 +1,28 @@
-"""Appraisal versioning / state machine — Prompt 2.2.
+"""Appraisal versioning / state machine — Prompt 2.2 + 2.3 Checkpoint 1.
 
-State machine:
+State machine (post-2.3 retrofit):
 
-    Draft ─submit─▶ Submitted ─approve─▶ Approved ┐
-      ▲                │                           │
-      │                └─reject─▶ Rejected ───reopen─▶ Draft
-      │                                            │
-      └──── reopen (Approved row is Superseded, new Draft cloned) ──┘
+    Draft ─submit──▶ Submitted ─approve─▶ Approved ┐
+      │ ▲              │                            │
+      │ │              ├─reject─▶ Rejected ─reopen─▶ Reopened ◀──┐
+      │ │              │                                          │
+      │ └──── reopen (Approved → cloned new Draft, source ─┐      │
+      │      Superseded) — TODO 2.3 C2: split into         │      │
+      │      /new-version endpoint                          │      │
+      │                                                     ▼      │
+      ├─withdraw─▶ Withdrawn (terminal)                            │
+      │                                                            │
+      └────── (Reopened is editable like Draft) ───────────────────┘
 
 Rules:
-- ONLY `Draft` rows can be edited (units/cost lines/finance/fields).
-- `Submitted` awaits approval; approver ≠ submitter unless policy override.
-- `Rejected` can be reopened into a new Draft.
-- `Approved` can be reopened: previous row becomes `Superseded` and a new
-  Draft is cloned bumped to next version.
-- `Superseded` is terminal; read-only.
+- ONLY `Draft` and `Reopened` rows can be edited.
+- `Withdrawn` and `Superseded` are terminal.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import Optional
 
 from sqlalchemy import select, func
 from sqlalchemy.orm import Session
@@ -31,12 +32,14 @@ from app.models.appraisals import (
 )
 
 
-# State transition rules.
+# State transition rules (post-2.3 retrofit).
 ALLOWED_TRANSITIONS: dict[str, set[str]] = {
-    "Draft":      {"Submitted"},
-    "Submitted":  {"Approved", "Rejected", "Draft"},  # Draft = withdraw
-    "Approved":   {"Superseded"},  # via new-version clone
-    "Rejected":   {"Draft"},        # via reopen
+    "Draft":      {"Submitted", "Withdrawn"},
+    "Submitted":  {"Approved", "Rejected", "Draft", "Withdrawn"},
+    "Approved":   {"Superseded", "Reopened"},
+    "Rejected":   {"Reopened"},
+    "Reopened":   {"Submitted", "Withdrawn"},
+    "Withdrawn":  set(),
     "Superseded": set(),
 }
 
@@ -56,19 +59,20 @@ def assert_transition(current: str, target: str) -> None:
 
 
 def is_editable(appraisal: Appraisal) -> bool:
-    """Only Draft rows take edits to data."""
-    return appraisal.state == "Draft"
+    """Draft and Reopened rows take edits to data (Phase B.1)."""
+    return appraisal.status in ("Draft", "Reopened")
 
 
-def next_version_for_project(db: Session, project_id) -> int:
-    """Return the next appraisal version number for a project.
+def next_version_for_project(db: Session, project_id, scenario: str = "Base") -> int:
+    """Return the next appraisal version number for a project + scenario.
 
-    Versions are per-project contiguous (1, 2, 3, …). The DB unique
-    (project_id, version) guards against races.
+    Versions are per (project_id, scenario) contiguous (1, 2, 3, …). The DB
+    unique (project_id, scenario, version_number) guards against races.
     """
     row = db.execute(
-        select(func.coalesce(func.max(Appraisal.version), 0)).where(
+        select(func.coalesce(func.max(Appraisal.version_number), 0)).where(
             Appraisal.project_id == project_id,
+            Appraisal.scenario == scenario,
         )
     ).scalar_one()
     return int(row or 0) + 1
@@ -80,18 +84,23 @@ def clone_as_new_version(
     *,
     created_by_user_id,
 ) -> Appraisal:
-    """Deep-clone an appraisal into a new Draft at version = max + 1.
+    """Deep-clone an appraisal into a new Draft at version_number = max + 1.
 
-    Units, cost lines, and finance facilities are all copied. The new
-    row's `previous_version_id` points at the source. The source is NOT
-    mutated here — caller decides whether to mark it Superseded.
+    Units, cost lines, and finance facilities are all copied. The new row's
+    `previous_version_id` points at the source. The source is NOT mutated
+    here — caller decides whether to mark it Superseded and whether to flip
+    is_current. New row starts with is_current=False; caller flips it true
+    AFTER setting source.is_current=False (Phase B.2 atomicity).
     """
     new = Appraisal(
         project_id=source.project_id,
-        version=next_version_for_project(db, source.project_id),
+        appraisal_group_id=source.appraisal_group_id,
+        scenario=source.scenario,
+        is_current=False,
+        version_number=next_version_for_project(db, source.project_id, source.scenario),
         previous_version_id=source.id,
         name=source.name,
-        state="Draft",
+        status="Draft",
         reference_date=source.reference_date,
         land_purchase_price=Decimal(source.land_purchase_price or 0),
         sdlt_category=source.sdlt_category,
@@ -146,5 +155,5 @@ def clone_as_new_version(
 
 
 def mark_superseded(appraisal: Appraisal) -> None:
-    appraisal.state = "Superseded"
+    appraisal.status = "Superseded"
     appraisal.updated_at = datetime.now(timezone.utc)

@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { displayEnum, formatDate, formatDateTime, formatMoney, formatPercent } from "@/lib/format";
 import { toast } from "sonner";
+import NudgeBanner from "@/components/appraisal/NudgeBanner";
 
 const STAGES = [
     "Lead", "Appraisal", "Deal_Pipeline", "Planning", "Pre_Con",
@@ -119,6 +120,8 @@ export default function ProjectDetail() {
                     data-testid="back-to-projects">
                 <ArrowLeft size={14} /> Back to projects
             </button>
+
+            <NudgeBanner projectId={id} />
 
             {/* Header */}
             <header className="flex items-start justify-between gap-6">

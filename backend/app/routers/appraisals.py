@@ -76,7 +76,7 @@ router = APIRouter(tags=["appraisals"])
 # Fields visible only with appraisals.view_financials
 FINANCIAL_KEYS: tuple[str, ...] = (
     "land_purchase_price",
-    "total_gdv",
+    "gdv_total",
     "total_acquisition_cost",
     "total_build_cost",
     "total_professional_fees",
@@ -86,7 +86,7 @@ FINANCIAL_KEYS: tuple[str, ...] = (
     "total_sales_cost",
     "total_other_cost",
     "total_cost",
-    "total_profit",
+    "profit_total",
     "profit_on_cost_pct",
     "profit_on_gdv_pct",
     "target_profit_on_cost_pct",
@@ -295,10 +295,13 @@ def _serialise_header(a: Appraisal, perms: UserPermissions) -> dict:
     d: dict[str, Any] = {
         "id": str(a.id),
         "project_id": str(a.project_id),
-        "version": a.version,
+        "version_number": a.version_number,
         "previous_version_id": str(a.previous_version_id) if a.previous_version_id else None,
         "name": a.name,
-        "state": a.state,
+        "status": a.status,
+        "appraisal_group_id": str(a.appraisal_group_id) if a.appraisal_group_id else None,
+        "is_current": a.is_current,
+        "scenario": a.scenario,
         "reference_date": a.reference_date.isoformat(),
         "sdlt_category": a.sdlt_category,
         "developer_relief": a.developer_relief,
@@ -329,7 +332,7 @@ def _serialise_header(a: Appraisal, perms: UserPermissions) -> dict:
     # Financial-field gating: add keys only if caller has view_financials.
     if perms.has("appraisals.view_financials") or perms.is_super_admin:
         d["land_purchase_price"] = str(a.land_purchase_price)
-        d["total_gdv"] = str(a.total_gdv)
+        d["gdv_total"] = str(a.gdv_total)
         d["total_acquisition_cost"] = str(a.total_acquisition_cost)
         d["total_build_cost"] = str(a.total_build_cost)
         d["total_professional_fees"] = str(a.total_professional_fees)
@@ -339,7 +342,7 @@ def _serialise_header(a: Appraisal, perms: UserPermissions) -> dict:
         d["total_sales_cost"] = str(a.total_sales_cost)
         d["total_other_cost"] = str(a.total_other_cost)
         d["total_cost"] = str(a.total_cost)
-        d["total_profit"] = str(a.total_profit)
+        d["profit_total"] = str(a.profit_total)
         d["profit_on_cost_pct"] = str(a.profit_on_cost_pct)
         d["profit_on_gdv_pct"] = str(a.profit_on_gdv_pct)
         d["target_profit_on_cost_pct"] = str(a.target_profit_on_cost_pct)
@@ -372,7 +375,7 @@ def _serialise_full(a: Appraisal, perms: UserPermissions) -> dict:
 def _ensure_editable(a: Appraisal) -> None:
     if not is_editable(a):
         raise HTTPException(
-            409, f"Appraisal is {a.state!r} — only Draft rows may be edited."
+            409, f"Appraisal is {a.status!r} — only Draft or Reopened rows may be edited."
         )
 
 
@@ -515,7 +518,7 @@ def list_appraisals(
     rows = db.scalars(
         select(Appraisal)
         .where(Appraisal.project_id == project_id)
-        .order_by(Appraisal.version.desc())
+        .order_by(Appraisal.version_number.desc())
     ).all()
     return {
         "project_id": str(project_id),
@@ -537,12 +540,39 @@ def create_appraisal(
         raise HTTPException(400, f"Unknown sdlt_category: {body.sdlt_category}")
     project = _load_project(db, project_id, current, perms)
     ref_date = body.reference_date or date.today()
-    version = next_version_for_project(db, project_id)
+    scenario = "Base"
+    version = next_version_for_project(db, project_id, scenario)
+
+    # Reuse the project's existing appraisal_group_id if any; else mint one.
+    existing_group_id = db.scalar(
+        select(Appraisal.appraisal_group_id)
+        .where(Appraisal.project_id == project_id)
+        .limit(1)
+    )
+    group_id = existing_group_id or uuid.uuid4()
+
+    # Demote any existing is_current row for this (project, scenario) to
+    # honour partial unique uq_appraisals_current_per_project_scenario.
+    existing_currents = db.scalars(
+        select(Appraisal).where(
+            Appraisal.project_id == project_id,
+            Appraisal.scenario == scenario,
+            Appraisal.is_current.is_(True),
+        )
+    ).all()
+    for ec in existing_currents:
+        ec.is_current = False
+    if existing_currents:
+        db.flush()
+
     a = Appraisal(
         project_id=project_id,
-        version=version,
+        appraisal_group_id=group_id,
+        scenario=scenario,
+        is_current=True,
+        version_number=version,
         name=body.name,
-        state="Draft",
+        status="Draft",
         reference_date=ref_date,
         land_purchase_price=Decimal(body.land_purchase_price),
         sdlt_category=body.sdlt_category,
@@ -556,6 +586,28 @@ def create_appraisal(
     _apply_defaults_on_create(db, a, project, current)
     # Initial recompute.
     appraisal_calc.recompute(db, a)
+
+    # 2.3 C2: ensure a Base-scenario anchor row exists for this group.
+    # Backfill-equivalent at create time. The DB UNIQUE on (group_id,
+    # scenario_label) makes this no-op-safe if another Base v1 already
+    # anchors the group.
+    from app.models.appraisal_governance import AppraisalScenario
+    existing_base_anchor = db.execute(
+        select(AppraisalScenario).where(
+            AppraisalScenario.appraisal_group_id == group_id,
+            AppraisalScenario.scenario_label == "Base",
+        )
+    ).scalar_one_or_none()
+    if existing_base_anchor is None:
+        db.add(AppraisalScenario(
+            appraisal_group_id=group_id,
+            scenario_appraisal_id=a.id,
+            parent_scenario_appraisal_id=None,
+            scenario_label="Base",
+            scenario_description="Base scenario (auto-created at v1).",
+            created_by_user_id=current.id,
+        ))
+        db.flush()
     record_audit(
         db, action="Create", resource_type="appraisals",
         resource_id=a.id, actor_user_id=current.id,
@@ -738,10 +790,10 @@ def submit_appraisal(
 ):
     a = _load_appraisal(db, appraisal_id, current, perms)
     try:
-        assert_transition(a.state, "Submitted")
+        assert_transition(a.status, "Submitted")
     except TransitionError as e:
         raise HTTPException(409, str(e))
-    a.state = "Submitted"
+    a.status = "Submitted"
     a.submitted_by_user_id = current.id
     a.submitted_at = datetime.now(timezone.utc)
     record_audit(
@@ -766,10 +818,10 @@ def approve_appraisal(
 ):
     a = _load_appraisal(db, appraisal_id, current, perms)
     try:
-        assert_transition(a.state, "Approved")
+        assert_transition(a.status, "Approved")
     except TransitionError as e:
         raise HTTPException(409, str(e))
-    a.state = "Approved"
+    a.status = "Approved"
     a.approved_by_user_id = current.id
     a.approved_at = datetime.now(timezone.utc)
     meta = stamp_self_approval(
@@ -800,10 +852,10 @@ def reject_appraisal(
         raise HTTPException(400, "A rejection reason (min 5 chars) is required.")
     a = _load_appraisal(db, appraisal_id, current, perms)
     try:
-        assert_transition(a.state, "Rejected")
+        assert_transition(a.status, "Rejected")
     except TransitionError as e:
         raise HTTPException(409, str(e))
-    a.state = "Rejected"
+    a.status = "Rejected"
     a.rejection_reason = body.reason.strip()
     record_audit(
         db, action="Reject", resource_type="appraisals",
@@ -826,22 +878,31 @@ def withdraw_appraisal(
     perms: UserPermissions = Depends(require_permission("appraisals.edit")),
     db: Session = Depends(get_db),
 ):
-    """Submitter can pull back a Submitted row into Draft."""
+    """Withdraw an in-flight appraisal — Phase F (2.3 retrofit).
+
+    Allowed sources: Draft, Submitted, Reopened. Sets status='Withdrawn',
+    is_current=false. No submitter restriction (2.2 behaviour change —
+    documented in CHANGELOG).
+    """
     a = _load_appraisal(db, appraisal_id, current, perms)
-    if a.submitted_by_user_id != current.id and not perms.is_super_admin:
-        raise HTTPException(403, "Only the submitter may withdraw this appraisal.")
-    try:
-        assert_transition(a.state, "Draft")
-    except TransitionError as e:
-        raise HTTPException(409, str(e))
-    a.state = "Draft"
-    a.submitted_at = None
-    a.submitted_by_user_id = None
+    if a.status not in ("Draft", "Submitted", "Reopened"):
+        raise HTTPException(
+            400,
+            detail={
+                "code": "NOT_WITHDRAWABLE",
+                "message": (
+                    f"Cannot withdraw appraisal in status {a.status!r}. "
+                    "Only Draft, Submitted, or Reopened may be withdrawn."
+                ),
+            },
+        )
+    a.status = "Withdrawn"
+    a.is_current = False
     record_audit(
-        db, action="Update", resource_type="appraisals",
+        db, action="Appraisal.Withdraw", resource_type="appraisals",
         resource_id=a.id, actor_user_id=current.id,
         project_id=a.project_id, field_changes=[],
-        metadata={"kind": "state_transition", "to": "Draft", "action": "withdraw"},
+        metadata={"kind": "state_transition", "to": "Withdrawn"},
         request=request,
     )
     db.commit()
@@ -857,49 +918,61 @@ def reopen_appraisal(
     perms: UserPermissions = Depends(require_permission("appraisals.edit")),
     db: Session = Depends(get_db),
 ):
-    """Rejected/Approved → new Draft (clone; source → Superseded when Approved).
+    """Reopen an Approved or Rejected appraisal (2.3 C2 final form).
 
-    Rejected → source moves back to Draft (no clone).
-    Approved → clone to new version; source becomes Superseded.
+    Both Approved and Rejected sources flip to status='Reopened' on the
+    SAME row — no clone, no version bump, is_current unchanged. The
+    previous clone-on-Approved behaviour is now a separate endpoint:
+    POST /appraisals/{id}/new-version.
+
+    Preconditions:
+    - Source status IN {Approved, Rejected}.
+    - is_current == True (cannot reopen a stale version).
     """
     a = _load_appraisal(db, appraisal_id, current, perms)
-    if a.state == "Rejected":
-        try:
-            assert_transition(a.state, "Draft")
-        except TransitionError as e:
-            raise HTTPException(409, str(e))
-        a.state = "Draft"
-        a.rejection_reason = None
-        record_audit(
-            db, action="Reopen", resource_type="appraisals",
-            resource_id=a.id, actor_user_id=current.id,
-            project_id=a.project_id, field_changes=[],
-            metadata={"kind": "state_transition", "to": "Draft",
-                      "from": "Rejected"},
-            request=request,
-        )
-        db.commit()
-        db.refresh(a)
-        return _serialise_header(a, perms)
 
-    if a.state == "Approved":
-        new = clone_as_new_version(db, a, created_by_user_id=current.id)
-        mark_superseded(a)
-        appraisal_calc.recompute(db, new)
-        record_audit(
-            db, action="Reopen", resource_type="appraisals",
-            resource_id=new.id, actor_user_id=current.id,
-            project_id=a.project_id, field_changes=[],
-            metadata={"kind": "new_version_clone",
-                      "previous_version_id": str(a.id),
-                      "new_version": new.version},
-            request=request,
+    if a.status not in ("Approved", "Rejected"):
+        raise HTTPException(
+            409,
+            detail={
+                "code": "NOT_REOPENABLE",
+                "message": (
+                    f"Cannot reopen appraisal in status {a.status!r}. "
+                    f"Only Approved or Rejected may be reopened."
+                ),
+            },
         )
-        db.commit()
-        db.refresh(new)
-        return _serialise_full(new, perms)
+    if not a.is_current:
+        raise HTTPException(
+            400,
+            detail={
+                "code": "NOT_REOPENABLE",
+                "message": (
+                    "Cannot reopen a non-current appraisal version. "
+                    "Only the latest version may be reopened."
+                ),
+            },
+        )
 
-    raise HTTPException(409, f"Cannot reopen an appraisal in state {a.state!r}.")
+    previous_status = a.status
+    try:
+        assert_transition(a.status, "Reopened")
+    except TransitionError as e:
+        raise HTTPException(409, str(e))
+    a.status = "Reopened"
+    a.rejection_reason = None
+    # is_current unchanged per Phase B.2.
+    record_audit(
+        db, action="Reopen", resource_type="appraisals",
+        resource_id=a.id, actor_user_id=current.id,
+        project_id=a.project_id, field_changes=[],
+        metadata={"kind": "state_transition", "to": "Reopened",
+                  "from": previous_status},
+        request=request,
+    )
+    db.commit()
+    db.refresh(a)
+    return _serialise_header(a, perms)
 
 
 # ---------------------------------------------------------------------
