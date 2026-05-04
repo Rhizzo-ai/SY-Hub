@@ -411,9 +411,9 @@ export default function DecisionsTab({ appraisal, canApprove }) {
                             No decisions logged
                         </div>
                         <div className="text-xs text-slate-500 mt-1 max-w-md mx-auto">
-                            {appraisal.status === "Approved"
+                            {showForm
                                 ? "Log the first Go/No-Go to start tracking sentiment."
-                                : "Approve the appraisal first, then log Go/No-Go."}
+                                : "Decisions will appear here once a director logs a Go/No-Go."}
                         </div>
                     </div>
                 ) : (

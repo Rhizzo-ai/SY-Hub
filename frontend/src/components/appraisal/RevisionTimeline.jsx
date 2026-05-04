@@ -147,7 +147,7 @@ export default function RevisionTimeline({ appraisalId }) {
     const apps = data.appraisals || [];
     if (apps.length <= 1 && (data.revisions || []).length === 0) {
         return (
-            <div data-testid="revision-timeline">
+            <div>
                 <div className="text-xs uppercase tracking-wide font-semibold text-slate-500 mb-2">
                     Version timeline
                 </div>

@@ -1,5 +1,46 @@
 # CHANGELOG
 
+## 2.3 Checkpoint 3 — Appraisal governance frontend + E2E (2026-05-04)
+
+### New components (under `/app/frontend/src/components/appraisal/`)
+- `RevisionTimeline.jsx` — vertical lineage of versions for one (group, scenario). Mounted in SummaryTab right column (3-col grid). HoverCard with Δ chips + reason + summary on non-v1 nodes (S8). Click to navigate (G6). j/k keyboard nav (S9). Skeleton + Empty states (S1, S7).
+- `ScenariosPanel.jsx` — top-level tab between Finance and Summary; conditional on `appraisal.scenario === 'Base'`. 2×2 slot grid (Base, Upside, Downside, Sensitivity). Anchor detection (F1) hides create CTAs on non-Base-v1; banner with link to anchor v1 shown instead. CreateScenarioModal validates `scenario_description ≥ 10` (trim-then-length, F2). Cmd+Enter submits (S9).
+- `ScenarioComparator.jsx` — sticky-first-column table (G5) with hover row+column highlight, sortable headers (Base pinned col 0; S4), framer-motion column slide-in (S6 + S10 reduced-motion). All deltas via `decimal.js` (F4). Favourable directions per metric (positive: GDV/Profit/RLV/PoC%/PoG%/Units; negative: Total cost; bool: passes_hurdle).
+- `DecisionsTab.jsx` — top-level tab after Summary. 2/3 list + 1/3 form layout. Form gate matches server: `appraisals.approve` AND `is_current === true` (Decision C — R0 read confirmed server enforces only `is_current` + version match, not `status==Approved`). Optimistic UI on submit (S2): pending card with `aria-busy=true`, ~55% opacity, replaced on 201, removed on 400. `supporting_documents` OMITTED (Decision D). Date picker uses `formatInTimeZone('Europe/London')` for default + max (Decision E). Fires `nudge-refresh` event on success (F3).
+- `NudgeBanner.jsx` — mounted on `ProjectDetail.jsx` ONLY (G2 — NOT on AppraisalsList). NOT dismissible (G1). Avatar stack (S3): coloured initials circles for deciders + dashed ghost slots for remaining; tooltip shows name + decision pill + relative date. CTA hidden when actor lacks `appraisals.approve` — replaced with "Awaiting director sign-off" + tooltip. Listens for `nudge-refresh` event (F3). Framer-motion slide-down/up on enter/exit (S6 + S10).
+- `NewVersionModal.jsx` — header CTA on Approved + is_current. Form: revision_reason select (8 enum values) + summary_of_changes textarea (min 10 trim-checked). On 201, navigates to new appraisal id (F5).
+
+### Page extensions
+- `AppraisalPage.jsx`:
+  - +2 tabs: `Scenarios` (Base only) between Finance & Summary; `Decisions` after Summary. 7 tabs on Base, 6 on non-Base.
+  - Header buttons split (Decision B): `Reopen for editing` (secondary) on Approved/Rejected + is_current + `appraisals.edit`; `New version` (primary) on Approved + is_current + `appraisals.edit` (opens NewVersionModal).
+  - Reopen no longer triggers a clone-and-redirect (the C2 backend made `/reopen` a pure toggle; navigation handler simplified accordingly).
+  - `?tab=decisions` URL param handler: on mount, selects Decisions tab, scrolls log-form into view, then clears the param.
+  - Tab control switched to controlled (`value` + `onValueChange`) to support deep-link.
+- `SummaryTab.jsx`: KPI grid wrapped in 3-col layout; RevisionTimeline mounted in right column below RLV.
+- `ProjectDetail.jsx`: `<NudgeBanner projectId={id} />` mounted at top of page (G2).
+
+### Library extensions
+- `src/lib/api.js`: +9 governance route wrappers — `fetchRevisions`, `fetchProjectRevisions`, `createNewVersion`, `fetchGroupScenarios`, `fetchComparator`, `createScenario`, `fetchDecisions`, `logDecision`, `fetchNudge`.
+- `src/lib/appraisalMath.js`: `formatMoney(v, {decimals=0})` (Intl.NumberFormat en-GB, S5; accepts Decimal | number | string), `computeScenarioDelta(base, compare, field)` → Decimal (F4), `formatDelta(d, {currency, percent, dp, favourable})` → `{text, className, isZero}` with sign + colour mapping.
+
+### New dependency
+- `framer-motion@12.38.0` — animations gated on `useReducedMotion()` (S10) for tab switches, modal open/close, NudgeBanner enter/exit, decision card append, comparator column slide-in.
+
+### R0 bootstrap recovery — 5th occurrence
+The DB-wipe / chicken-and-egg issue (migrations need permissions seeded before they apply) fired again on this fork. Recovery procedure (seed → upgrade → re-seed → seed test users) ran cleanly in ~12s and brought DB to head 0022. **Recurrence count: 5/5** — strong signal that the P0 backlog item to fix bootstrap ordering is overdue. Logged in handoff §3.9 for the next planning round.
+
+### Testing
+- `testing_agent_v3_fork` iteration 10: PASS. Backend governance API smoke 6/6, frontend Playwright sweep across all C3 surfaces. All five locked decisions (A–E), F1–F5, G1–G6, and SOTA hooks (S1–S10) verified live against the public preview URL. No critical issues. Two minor design observations addressed in this commit:
+  - DecisionsTab empty-state copy now keys off `showForm` instead of `appraisal.status` to avoid mixed-message UX when form is visible on a Draft.
+  - RevisionTimeline empty branch dropped duplicated outer `data-testid` to leave a single empty-state hook for tooling.
+- One peripheral 401 noted on ProjectDetail (notifications/feed call); does NOT block governance flows. Tracked for polish-pass.
+
+### Backend tests
+- 581/581 passing (unchanged from C2 baseline). C3 was pure frontend.
+
+---
+
 ## 2.3 Checkpoint 2 — Appraisal governance backend (2026-05-04)
 
 ### Migration 0022
