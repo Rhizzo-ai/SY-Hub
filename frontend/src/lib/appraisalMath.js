@@ -94,3 +94,84 @@ export function fmtPct(x, { dp = 2 } = {}) {
         minimumFractionDigits: dp, maximumFractionDigits: dp,
     }).format(Number(d.toFixed(dp)))}%`;
 }
+
+
+// =========================================================================
+// Prompt 2.3 Checkpoint 3 — governance helpers
+// =========================================================================
+
+/**
+ * Whole-pound currency formatter (Intl.NumberFormat en-GB).
+ * Use for KPIs, headers, comparator cells. Accepts Decimal | number | string.
+ * `decimals=2` for line-item details only.
+ */
+export function formatMoney(value, { decimals = 0 } = {}) {
+    if (value === null || value === undefined || value === "") return "—";
+    const d = D(value);
+    return new Intl.NumberFormat("en-GB", {
+        style: "currency",
+        currency: "GBP",
+        minimumFractionDigits: decimals,
+        maximumFractionDigits: decimals,
+    }).format(Number(d.toFixed(decimals)));
+}
+
+/**
+ * Decimal-only delta computation: compare[field] − base[field].
+ * Returns a Decimal (zero if either side is null/undefined).
+ */
+export function computeScenarioDelta(base, compare, field) {
+    const b = base?.[field];
+    const c = compare?.[field];
+    if (b === null || b === undefined) return new Decimal(0);
+    if (c === null || c === undefined) return new Decimal(0);
+    return D(c).minus(D(b));
+}
+
+/**
+ * Format a Decimal delta with sign + colour class.
+ * @param d Decimal
+ * @param opts.currency boolean — render as money (default true)
+ * @param opts.percent boolean — render as percent (overrides currency)
+ * @param opts.dp number — decimal places (defaults: 0 for currency, 2 for percent)
+ * @param opts.favourable "positive" | "negative" — direction in which +Δ is good
+ */
+export function formatDelta(d, opts = {}) {
+    const {
+        currency = true,
+        percent = false,
+        dp = percent ? 2 : 0,
+        favourable = "positive",
+    } = opts;
+    const dec = d instanceof Decimal ? d : D(d);
+    const isZero = dec.eq(0);
+    const isPositive = dec.gt(0);
+    const sign = isZero ? "" : (isPositive ? "+" : "−");
+    const abs = dec.abs();
+
+    let body;
+    if (percent) {
+        body = `${new Intl.NumberFormat("en-GB", {
+            minimumFractionDigits: dp, maximumFractionDigits: dp,
+        }).format(Number(abs.toFixed(dp)))}%`;
+    } else if (currency) {
+        body = new Intl.NumberFormat("en-GB", {
+            style: "currency", currency: "GBP",
+            minimumFractionDigits: dp, maximumFractionDigits: dp,
+        }).format(Number(abs.toFixed(dp)));
+    } else {
+        body = new Intl.NumberFormat("en-GB", {
+            minimumFractionDigits: dp, maximumFractionDigits: dp,
+        }).format(Number(abs.toFixed(dp)));
+    }
+
+    let className = "text-slate-400";
+    if (!isZero) {
+        const isFavourable =
+            favourable === "positive" ? isPositive : !isPositive;
+        className = isFavourable
+            ? "text-emerald-700"
+            : "text-rose-700";
+    }
+    return { text: `${sign}${body}`, className, isZero };
+}

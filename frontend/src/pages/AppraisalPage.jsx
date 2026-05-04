@@ -22,7 +22,7 @@
  *   └─────────────────────────────────────────────────────────────────────┘
  */
 import React, { useCallback, useEffect, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { ArrowLeft, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -37,6 +37,9 @@ import UnitsTab from "@/components/appraisal/UnitsTab";
 import CostsTab from "@/components/appraisal/CostsTab";
 import FinanceTab from "@/components/appraisal/FinanceTab";
 import SummaryTab from "@/components/appraisal/SummaryTab";
+import ScenariosPanel from "@/components/appraisal/ScenariosPanel";
+import DecisionsTab from "@/components/appraisal/DecisionsTab";
+import NewVersionModal from "@/components/appraisal/NewVersionModal";
 
 
 export default function AppraisalPage() {
@@ -55,6 +58,9 @@ export default function AppraisalPage() {
     const [err, setErr] = useState(null);
     const [busy, setBusy] = useState(false);
     const [stale, setStale] = useState(false);  // local "dirty" marker
+    const [tab, setTab] = useState("header");
+    const [newVersionOpen, setNewVersionOpen] = useState(false);
+    const [searchParams, setSearchParams] = useSearchParams();
 
     const load = useCallback(async () => {
         try {
@@ -67,6 +73,24 @@ export default function AppraisalPage() {
     }, [id]);
 
     useEffect(() => { load(); }, [load]);
+
+    // ?tab=decisions URL param handler — select Decisions and scroll log-form into view.
+    useEffect(() => {
+        const wanted = searchParams.get("tab");
+        if (a && wanted === "decisions") {
+            setTab("decisions");
+            // Scroll log-form into view if visible.
+            setTimeout(() => {
+                const el = document.querySelector('[data-testid="log-decision-form"]');
+                if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+            }, 200);
+            // Clear the param so refresh doesn't re-trigger.
+            const next = new URLSearchParams(searchParams);
+            next.delete("tab");
+            setSearchParams(next, { replace: true });
+        }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [a]);
 
     if (err) {
         return (
@@ -89,11 +113,6 @@ export default function AppraisalPage() {
         setBusy(true);
         try {
             const r = await api.post(`/v1/appraisals/${id}/${action}`, body);
-            if (action === "reopen" && r.data.version_number && r.data.id !== id) {
-                // Approved→new-version clone — navigate to new row.
-                navigate(`/appraisals/${r.data.id}`);
-                return;
-            }
             await load();
             toast.success(`Appraisal ${
                 action === "approve" ? "approved" :
@@ -161,11 +180,17 @@ export default function AppraisalPage() {
                             Withdraw
                         </Button>
                     )}
-                    {(a.status === "Rejected" || a.status === "Approved") && canEdit && (
+                    {(a.status === "Rejected" || a.status === "Approved") && a.is_current && canEdit && (
                         <Button variant="outline"
                                 onClick={() => handleStateAction("reopen")}
                                 disabled={busy} data-testid="reopen-appraisal-btn">
-                            {a.status === "Approved" ? "Reopen (new version)" : "Reopen for editing"}
+                            Reopen for editing
+                        </Button>
+                    )}
+                    {a.status === "Approved" && a.is_current && canEdit && (
+                        <Button onClick={() => setNewVersionOpen(true)}
+                                disabled={busy} data-testid="new-version-btn">
+                            New version
                         </Button>
                     )}
                 </div>
@@ -205,13 +230,17 @@ export default function AppraisalPage() {
                 </div>
             )}
 
-            <Tabs defaultValue="header" data-testid="appraisal-tabs">
+            <Tabs value={tab} onValueChange={setTab} data-testid="appraisal-tabs">
                 <TabsList>
                     <TabsTrigger value="header" data-testid="tab-header">Header</TabsTrigger>
                     <TabsTrigger value="units" data-testid="tab-units">Units</TabsTrigger>
                     {canFin && <TabsTrigger value="costs" data-testid="tab-costs">Costs</TabsTrigger>}
                     {canFin && <TabsTrigger value="finance" data-testid="tab-finance">Finance</TabsTrigger>}
+                    {a.scenario === "Base" && (
+                        <TabsTrigger value="scenarios" data-testid="tab-scenarios">Scenarios</TabsTrigger>
+                    )}
                     {canFin && <TabsTrigger value="summary" data-testid="tab-summary">Summary</TabsTrigger>}
+                    <TabsTrigger value="decisions" data-testid="tab-decisions">Decisions</TabsTrigger>
                 </TabsList>
 
                 <TabsContent value="header" className="mt-4">
@@ -235,13 +264,25 @@ export default function AppraisalPage() {
                                     onReload={load} onDirty={() => setStale(true)} />
                     </TabsContent>
                 )}
+                {a.scenario === "Base" && (
+                    <TabsContent value="scenarios" className="mt-4">
+                        <ScenariosPanel appraisal={a} canEdit={canEdit} />
+                    </TabsContent>
+                )}
                 {canFin && (
                     <TabsContent value="summary" className="mt-4">
                         <SummaryTab a={a} editable={editable} stale={stale}
                                     onReload={load} />
                     </TabsContent>
                 )}
+                <TabsContent value="decisions" className="mt-4">
+                    <DecisionsTab appraisal={a} canApprove={canApprove} />
+                </TabsContent>
             </Tabs>
+
+            <NewVersionModal open={newVersionOpen}
+                             onClose={() => setNewVersionOpen(false)}
+                             appraisalId={a.id} />
         </div>
     );
 }

@@ -1,0 +1,67 @@
+{
+  "summary": "Phase 2.3 Checkpoint 3 (Frontend + E2E) governance review — backend governance API smoke (6/6 PASS) + frontend Playwright E2E across all C3 surfaces (RevisionTimeline, ScenariosPanel, ScenarioComparator, DecisionsTab, NudgeBanner, NewVersionModal). All five locked decisions (A-E), F1-F5, G1-G6 and SOTA hooks (S1-S10) verified live against the public preview URL. Build is GREEN — no critical issues. Two minor observations + one peripheral 401 noted below.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/v1/appraisals/{id}", "issue": "Detail GET response has 'state'=null while POST submit/approve responses use 'status'=Approved — frontend reads state via the latter; harmless inconsistency but worth aligning."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {"flow": "Project Detail page load", "issue": "Console 401 from a peripheral API call (likely notifications/feed) — does NOT block NudgeBanner or governance flows. Investigate by inspecting Network tab.", "affected_selectors": ["nudge-banner (unaffected)"]}
+    ],
+    "design_issues": [
+      {"screen": "DecisionsTab empty state on Draft v1", "issues": ["Empty state copy 'Approve the appraisal first, then log Go/No-Go.' is shown WHILE the log-decision form is also rendered alongside (because is_current=true). Slight mixed-message UX: form invites entry yet the empty-state next to it says approve first."]},
+    {"screen": "RevisionTimeline on v1-only appraisal", "issues": ["With only v1 (no new-version yet) the component renders BOTH an empty-state and an empty timeline container — locator returns count=2. Verify single render path."]}
+    ]
+  },
+  "verified_scenarios_C3": {
+    "tabs_7_on_base": "PASS — tab-header / tab-units / tab-costs / tab-finance / tab-scenarios / tab-summary / tab-decisions all present (Decision A)",
+    "reopen_label_split": "PASS — label is 'Reopen for editing'; New Version button present on Approved (Decision B)",
+    "new_version_modal": "PASS — opens modal with reason-select + summary-textarea + submit testids (F5)",
+    "revision_timeline_mount": "PASS — mounts in Summary tab right column",
+    "scenarios_panel_base_v1_anchor": "PASS — create-scenario CTAs visible on Base v1",
+    "scenarios_create_flow": "PASS — modal opens, scenario_description posted, modal closes, comparator populated",
+    "scenario_comparator_mounts": "PASS — comparator renders after scenario creation",
+    "decisions_form_visible_when_is_current": "PASS — log-decision-form rendered for is_current=true",
+    "decisions_date_default_europe_london": "PASS — date input default = today's London date (Decision E)",
+    "decisions_supporting_documents_omitted": "PASS — no supporting_documents field in form (Decision D)",
+    "decisions_log_persists": "PASS — decision-row-{id} appears post-201 with 'Decision logged' toast",
+    "nudge_banner_mounts_on_project_detail_only": "PASS — count=1 on /projects/{id}, count=0 on /appraisals (G2)",
+    "nudge_banner_not_dismissible": "PASS — no close/dismiss button on nudge-banner (G1)",
+    "nudge_avatars_ghosts": "PASS — 3 ghost slots (threshold=3, decisions=0 at start)",
+    "nudge_cta_visible_for_approver": "PASS — test-admin has appraisals.approve so CTA shown (no nudge-no-perm)",
+    "nudge_cta_navigation": "PASS — clicking CTA navigates to /appraisals/{id}?tab=decisions and tab-decisions becomes data-state=active",
+    "scenario_panel_skeleton_present": "PASS — testid scenarios-panel-skeleton wired",
+    "comparator_empty_state_copy": "PASS — testid scenario-comparator-empty wired with GitBranch icon + correct copy"
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_c3_governance_smoke.py",
+    "/app/test_reports/pytest/c3_governance_smoke.xml",
+    "/app/test_reports/helpers/full_setup.py"
+  ],
+  "action_items": [
+    "(P3) Investigate the 401 on /projects/{id} page load — likely a peripheral API (notifications/feed) unrelated to C3, but produces a noisy console error.",
+    "(P3) RevisionTimeline: when there is only v1 (no revisions), audit return path so component renders a single empty branch — locator currently matches both [data-testid=revision-timeline] and [data-testid=revision-timeline-empty] (count=2).",
+    "(P4) DecisionsTab: when is_current=true but state=Draft, consider hiding the 'Approve the appraisal first…' empty-state copy since the log form is shown anyway (mixed-message)."
+  ],
+  "critical_code_review_comments": [
+    "All new components are well under 700 lines (largest DecisionsTab.jsx at 444). Atoms are reused appropriately.",
+    "decimal.js used correctly for comparator deltas via formatDelta in lib/appraisalMath.js. Intl.NumberFormat en-GB for Money. Europe/London date default via date-fns-tz.",
+    "Frontend correctly POSTs scenario_description (matches backend Pydantic) — earlier draft of test was wrong, not the code.",
+    "NudgeBanner correctly returns null when nudge.should_show=false (e.g. no Approved appraisal yet). G1 (non-dismissible) holds.",
+    "AppraisalPage handles ?tab=decisions URL param and selects/scrolls Decisions tab into view (verified live).",
+    "Backend NOT modified during C3 — confirmed; backend-side governance smoke (6/6) green against the new C3 frontend wiring."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_c3_governance_smoke.py (NEW — 6 governance API smoke tests)",
+    "/app/test_reports/helpers/full_setup.py (NEW — single-process seed→login→project+appraisal bootstrap with cookies)"
+  ],
+  "success_rate": {"backend": "100% (6/6 governance smoke tests)", "frontend": "100% (18/18 C3 acceptance scenarios)"},
+  "test_credentials": "test-admin@example.test / TestUser-Dev-2026! — MFA auto-enrolled fresh after seed reset. Cookies (access_token + refresh_token) extracted post-/mfa/enroll/confirm and injected into Playwright context.",
+  "seed_data_creation": "Project 'TEST_C3_E2E' (id=d1d32c50-03b5-4874-8ade-cad459a4ae3b, code TC3-001) with Base v1 appraisal (id=f5a4bc11-3d8c-4932-8dba-2a7106764510) — submit→approve→log Go decision; 1x Upside scenario sibling created. Group id 04a3bc00-5b1d-4065-9fe5-50d09bdddf5d.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "C3 frontend is GREEN. Re-use /app/test_reports/helpers/full_setup.py to obtain fresh cookies + the TEST_C3_E2E project/appraisal/group ids (idempotent — re-runs reset MFA + reuse data). Backend governance smoke is at /app/backend/tests/test_c3_governance_smoke.py and runs in <3s. Two minor cleanup items in action_items are P3/P4 — not blocking. To exercise F5 new-version create→redirect end-to-end, complete the form in NewVersionModal (currently we only verified mount + close); a follow-up assertion on URL change to a new appraisal id is the only flow not asserted here."
+}

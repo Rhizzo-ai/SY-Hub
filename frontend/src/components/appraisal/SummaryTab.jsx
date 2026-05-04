@@ -21,6 +21,7 @@ import { api } from "@/lib/api";
 import { fmtGBP, fmtPct } from "@/lib/appraisalMath";
 import { formatDateTime } from "@/lib/format";
 import { Field, Kpi, SectionHeader } from "@/components/appraisal/atoms";
+import RevisionTimeline from "@/components/appraisal/RevisionTimeline";
 
 
 function RlvForm({ form, setForm, onRun, busy, label = "Calculate RLV" }) {
@@ -102,93 +103,101 @@ export default function SummaryTab({ a, editable, stale, onReload }) {
                 )
             } />
 
-            <div className="grid grid-cols-4 gap-4">
-                <Kpi label="Total GDV" value={fmtGBP(a.gdv_total)}
-                     stale={stale} testId="kpi-total-gdv" />
-                <Kpi label="Total cost" value={fmtGBP(a.total_cost)}
-                     stale={stale} testId="kpi-total-cost" />
-                <Kpi label="Profit" value={fmtGBP(a.profit_total)}
-                     stale={stale} testId="kpi-profit" />
-                <Kpi label="Profit on cost" value={fmtPct(a.profit_on_cost_pct)}
-                     stale={stale} testId="kpi-profit-on-cost" />
-            </div>
+            <div className="grid grid-cols-3 gap-6">
+                <div className="col-span-2 space-y-6">
+                    <div className="grid grid-cols-2 gap-4">
+                        <Kpi label="Total GDV" value={fmtGBP(a.gdv_total)}
+                             stale={stale} testId="kpi-total-gdv" />
+                        <Kpi label="Total cost" value={fmtGBP(a.total_cost)}
+                             stale={stale} testId="kpi-total-cost" />
+                        <Kpi label="Profit" value={fmtGBP(a.profit_total)}
+                             stale={stale} testId="kpi-profit" />
+                        <Kpi label="Profit on cost" value={fmtPct(a.profit_on_cost_pct)}
+                             stale={stale} testId="kpi-profit-on-cost" />
+                    </div>
 
-            <div className="grid grid-cols-4 gap-4">
-                <Kpi label="Acquisition" value={fmtGBP(a.total_acquisition_cost)} stale={stale} testId="kpi-acq" />
-                <Kpi label="Build" value={fmtGBP(a.total_build_cost)} stale={stale} testId="kpi-build" />
-                <Kpi label="Finance" value={fmtGBP(a.total_finance_cost)} stale={stale} testId="kpi-fin" />
-                <Kpi label="Profit on GDV" value={fmtPct(a.profit_on_gdv_pct)} stale={stale} testId="kpi-profit-on-gdv" />
-            </div>
+                    <div className="grid grid-cols-2 gap-4">
+                        <Kpi label="Acquisition" value={fmtGBP(a.total_acquisition_cost)} stale={stale} testId="kpi-acq" />
+                        <Kpi label="Build" value={fmtGBP(a.total_build_cost)} stale={stale} testId="kpi-build" />
+                        <Kpi label="Finance" value={fmtGBP(a.total_finance_cost)} stale={stale} testId="kpi-fin" />
+                        <Kpi label="Profit on GDV" value={fmtPct(a.profit_on_gdv_pct)} stale={stale} testId="kpi-profit-on-gdv" />
+                    </div>
 
-            {/* RLV panel — three distinct states. */}
-            <div className="border border-slate-200 rounded p-4 bg-white"
-                 data-testid={`rlv-panel-${rlvState}`}>
-                <div className="flex items-center justify-between mb-3">
-                    <h3 className="font-heading text-base font-bold text-slate-900 flex items-center gap-2">
-                        <Calculator className="w-4 h-4" /> Residual Land Value (RLV)
-                    </h3>
+                    {/* RLV panel — three distinct states. */}
+                    <div className="border border-slate-200 rounded p-4 bg-white"
+                         data-testid={`rlv-panel-${rlvState}`}>
+                        <div className="flex items-center justify-between mb-3">
+                            <h3 className="font-heading text-base font-bold text-slate-900 flex items-center gap-2">
+                                <Calculator className="w-4 h-4" /> Residual Land Value (RLV)
+                            </h3>
+                        </div>
+
+                        {rlvState === "empty" && (
+                            <div>
+                                <p className="text-sm text-slate-600 mb-3">
+                                    Not yet calculated. Pick a target margin and run the solver to
+                                    compute the land price that would meet it, holding everything else constant.
+                                </p>
+                                {editable && <RlvForm form={rlvForm} setForm={setRlvForm}
+                                                      onRun={runRlv} busy={rlvBusy} />}
+                            </div>
+                        )}
+
+                        {rlvState === "calculated" && (
+                            <div>
+                                <div className="flex items-center gap-3 mb-3">
+                                    <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                                    <span className="text-sm text-slate-700">
+                                        Converged in {a.rlv_iterations} iterations
+                                    </span>
+                                    <span className="text-xs text-slate-400 inline-flex items-center gap-1">
+                                        <Calendar className="w-3 h-3" />
+                                        {formatDateTime(a.rlv_computed_at)}
+                                    </span>
+                                </div>
+                                <div className="grid grid-cols-3 gap-4 mb-3">
+                                    <Kpi label="Computed land value"
+                                         value={fmtGBP(a.rlv_computed_land_value)}
+                                         testId="rlv-land-value-kpi" />
+                                    <Kpi label="Target basis"
+                                         value={a.rlv_target_basis}
+                                         testId="rlv-basis-kpi" />
+                                    <Kpi label="Target %"
+                                         value={fmtPct(a.rlv_target_value)}
+                                         testId="rlv-target-kpi" />
+                                </div>
+                                {editable && <RlvForm form={rlvForm} setForm={setRlvForm}
+                                                      onRun={runRlv} busy={rlvBusy}
+                                                      label="Recalculate" />}
+                            </div>
+                        )}
+
+                        {rlvState === "non_convergence" && (
+                            <div>
+                                <div className="border border-rose-200 bg-rose-50 text-rose-800 p-3 rounded text-sm flex items-start gap-2 mb-3">
+                                    <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                                    <div>
+                                        <div className="font-semibold">RLV did not converge</div>
+                                        <div className="text-xs mt-1">
+                                            {rlvMsg?.message ||
+                                             "The solver could not find a land value that meets the target margin within 50 iterations. Try a softer target or review unit pricing."}
+                                        </div>
+                                        <div className="text-xs mt-1">
+                                            Last computed at {formatDateTime(a.rlv_computed_at)} — {a.rlv_iterations} iterations.
+                                        </div>
+                                    </div>
+                                </div>
+                                {editable && <RlvForm form={rlvForm} setForm={setRlvForm}
+                                                      onRun={runRlv} busy={rlvBusy}
+                                                      label="Try again" />}
+                            </div>
+                        )}
+                    </div>
                 </div>
 
-                {rlvState === "empty" && (
-                    <div>
-                        <p className="text-sm text-slate-600 mb-3">
-                            Not yet calculated. Pick a target margin and run the solver to
-                            compute the land price that would meet it, holding everything else constant.
-                        </p>
-                        {editable && <RlvForm form={rlvForm} setForm={setRlvForm}
-                                              onRun={runRlv} busy={rlvBusy} />}
-                    </div>
-                )}
-
-                {rlvState === "calculated" && (
-                    <div>
-                        <div className="flex items-center gap-3 mb-3">
-                            <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                            <span className="text-sm text-slate-700">
-                                Converged in {a.rlv_iterations} iterations
-                            </span>
-                            <span className="text-xs text-slate-400 inline-flex items-center gap-1">
-                                <Calendar className="w-3 h-3" />
-                                {formatDateTime(a.rlv_computed_at)}
-                            </span>
-                        </div>
-                        <div className="grid grid-cols-3 gap-4 mb-3">
-                            <Kpi label="Computed land value"
-                                 value={fmtGBP(a.rlv_computed_land_value)}
-                                 testId="rlv-land-value-kpi" />
-                            <Kpi label="Target basis"
-                                 value={a.rlv_target_basis}
-                                 testId="rlv-basis-kpi" />
-                            <Kpi label="Target %"
-                                 value={fmtPct(a.rlv_target_value)}
-                                 testId="rlv-target-kpi" />
-                        </div>
-                        {editable && <RlvForm form={rlvForm} setForm={setRlvForm}
-                                              onRun={runRlv} busy={rlvBusy}
-                                              label="Recalculate" />}
-                    </div>
-                )}
-
-                {rlvState === "non_convergence" && (
-                    <div>
-                        <div className="border border-rose-200 bg-rose-50 text-rose-800 p-3 rounded text-sm flex items-start gap-2 mb-3">
-                            <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" />
-                            <div>
-                                <div className="font-semibold">RLV did not converge</div>
-                                <div className="text-xs mt-1">
-                                    {rlvMsg?.message ||
-                                     "The solver could not find a land value that meets the target margin within 50 iterations. Try a softer target or review unit pricing."}
-                                </div>
-                                <div className="text-xs mt-1">
-                                    Last computed at {formatDateTime(a.rlv_computed_at)} — {a.rlv_iterations} iterations.
-                                </div>
-                            </div>
-                        </div>
-                        {editable && <RlvForm form={rlvForm} setForm={setRlvForm}
-                                              onRun={runRlv} busy={rlvBusy}
-                                              label="Try again" />}
-                    </div>
-                )}
+                <div className="col-span-1">
+                    <RevisionTimeline appraisalId={a.id} />
+                </div>
             </div>
         </div>
     );

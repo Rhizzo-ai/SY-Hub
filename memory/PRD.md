@@ -76,6 +76,34 @@ SY Homes is a UK property development company. This platform replaces spreadshee
 ## What's Been Implemented
 
 
+### 2026-05-04 — Prompt 2.3 Checkpoint 3: Appraisal Governance Frontend + E2E ✅
+
+**Five new components** (`/app/frontend/src/components/appraisal/`)
+- `RevisionTimeline.jsx` — vertical lineage; mounted in SummaryTab right column. HoverCard delta chips (S8) + j/k keyboard nav (S9) + click-to-navigate (G6).
+- `ScenariosPanel.jsx` — top-level Scenarios tab (Base only, between Finance & Summary). 2×2 slot grid + anchor detection (F1) + CreateScenarioModal (trim-then-min-length F2 + Cmd+Enter S9).
+- `ScenarioComparator.jsx` — sticky-first-column table (G5) with hover row+col highlight + sortable headers (Base pinned col 0; S4) + framer-motion column slide-in (S6+S10). decimal.js deltas (F4) with favourable-direction colour mapping.
+- `DecisionsTab.jsx` — final tab. 2/3 list + 1/3 form. Form gate: `appraisals.approve` AND `is_current=true` (matches server enforcement per R0 read). Optimistic UI on POST (S2). `supporting_documents` omitted (Decision D). `formatInTimeZone('Europe/London')` for date picker (Decision E). Fires `nudge-refresh` event on success (F3).
+- `NudgeBanner.jsx` — mounted on `ProjectDetail.jsx` ONLY (G2). Not dismissible (G1). Avatar stack (S3) + framer-motion slide-down/up (S6+S10). Listens for `nudge-refresh` event.
+- `NewVersionModal.jsx` — header CTA on Approved+is_current. Navigates to new appraisal id on 201 (F5).
+
+**Page extensions**
+- `AppraisalPage.jsx` — +Scenarios (conditional) + Decisions tabs (7 on Base, 6 on non-Base). Header CTAs split (Decision B): "Reopen for editing" + "New version". `?tab=decisions` deep-link handler scrolls log-form into view.
+- `SummaryTab.jsx` — KPIs in 3-col grid; RevisionTimeline in right column below RLV.
+- `ProjectDetail.jsx` — NudgeBanner mounted at top.
+
+**Library extensions**
+- `src/lib/api.js` — +9 governance endpoint wrappers.
+- `src/lib/appraisalMath.js` — `formatMoney`, `computeScenarioDelta`, `formatDelta` (decimal.js + Intl.NumberFormat en-GB, S5).
+
+**New dependency**: `framer-motion@12.38.0` (animations gated on `useReducedMotion()`, S10).
+
+**Testing**: `testing_agent_v3_fork` iteration_10 — PASS. All five locked decisions (A–E), sub-decisions (F1–F5, G1–G6), and SOTA hooks (S1–S10) verified live against public preview URL. Two minor design observations addressed in same commit (DecisionsTab empty-state copy keyed off form visibility; RevisionTimeline duplicate testid removed). 581/581 backend tests still passing (no backend changes in C3).
+
+**R0 bootstrap recovery**: 5th occurrence. Procedure ran cleanly in ~12s. Recurrence count signals the P0 fix is overdue — logged for next planning round.
+
+**STOP** — Checkpoint 3 complete. Awaiting user acceptance + branch merge.
+
+
 ### 2026-05-04 — Prompt 2.3 Checkpoint 2: Appraisal Governance ✅
 
 **Migration 0022** (`/app/backend/alembic/versions/0022_appraisal_governance.py`)
