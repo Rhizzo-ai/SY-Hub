@@ -10,7 +10,18 @@
   - `trg_decision_log_no_update` / `trg_decision_log_no_delete` (BEFORE UPDATE/DELETE on `appraisal_decision_log`) — append-only enforcement via `reject_decision_log_mutation()` plpgsql function. Mirrors the 1.4 `audit_log` immutability pattern.
 - **Backfill**: one `Base` row inserted into `appraisal_scenarios` per distinct `appraisal_group_id` in `appraisals` (pre-2.3 row count = 0 → no-op). `DO` block asserts count = distinct group count; raises if mismatched.
 - **System config seed**: `appraisal_decisions_required_threshold = 3` (value_type `Integer`, category `Appraisal`, `minimum_role_to_edit` = super_admin). Schema deviation from spec corrected — actual `system_config` columns are `config_key/config_value/value_type/category/description/is_system_locked/minimum_role_to_edit/default_value`; migration amended accordingly before apply.
-- **Schema deviation resolved**: Build Pack specified generic `system_config (key, value, value_type, description)`; corrected INSERT against actual 1.7 schema. Extension `pgcrypto` verified present → `gen_random_uuid()` retained (matches 0019).
+- **System_config schema deviation — exact divergence from Build Pack §C.9**:
+  - Build Pack assumed: `(key, value, value_type, description)` — 4 columns.
+  - Actual 1.7 table (migration 0015): 13 columns. Business-critical deltas:
+    - `key` → `config_key` | `value` → `config_value` (rename).
+    - `value_type` enum labels are `String|Integer|Decimal|Boolean|JSON|Date` (spec used `int` — would fail enum cast).
+    - `category` (NOT NULL, `system_config_category` enum) — absent in spec.
+    - `description` is NOT NULL — spec implied optional.
+    - `is_system_locked` (NOT NULL boolean) — absent in spec.
+    - `minimum_role_to_edit` (NOT NULL FK → `roles.id`) — absent in spec.
+    - `default_value` (NOT NULL text) — absent in spec.
+  - Migration 0022 §C.9 INSERT corrected before apply: `value_type='Integer'::system_config_value_type`, `category='Appraisal'::system_config_category`, `minimum_role_to_edit=(SELECT id FROM roles WHERE code='super_admin')`, `default_value='3'`, and replaced `ON CONFLICT (key) DO NOTHING` with `WHERE NOT EXISTS (...)` (no UNIQUE on bare `key`; UNIQUE is on `config_key`). Fresh-DB bootstrap reads the corrected migration verbatim — no re-divergence possible on rebuild.
+- **Extension pre-flight**: `pgcrypto` verified present before apply → `gen_random_uuid()` retained in drafted migration (matches 0019). No fallback to `uuid-ossp::uuid_generate_v4()` needed.
 
 ### New endpoints
 - `POST /appraisals/{id}/new-version` — canonical Approved/Rejected → new Draft clone. Body `{revision_reason, summary_of_changes(min 10)}`. Permission `appraisals.edit`. Runs in single transaction: source.is_current=false (flush) → mark_superseded (Approved only) → clone_as_new_version → new.is_current=true (flush) → insert `appraisal_revisions` row → recompute. Atomic handover satisfies partial unique `uq_appraisals_current_per_project_scenario`.
@@ -38,7 +49,9 @@
 - New file `app/routers/appraisal_governance.py` (module hygiene — `appraisals.py` already at ~1200 lines). Mounts under `/api/v1`, alongside the existing appraisals router.
 
 ### Tests
-- **New file** `tests/test_appraisal_governance.py`: 44 tests across 7 classes (TestMigration0022, TestDecisionLogImmutability, TestScenarioParentTrigger, TestNewVersionEndpoint, TestReopenFinalForm, TestScenarios, TestDecisions, TestNudge). Covers H.2, H.4, H.5, H.6, H.7, H.8 from the Build Pack.
+- **New file** `tests/test_appraisal_governance.py`: 44 tests across 8 classes (TestMigration0022, TestDecisionLogImmutability, TestScenarioParentTrigger, TestNewVersionEndpoint, TestReopenFinalForm, TestScenarios, TestDecisions, TestNudge). Covers H.2, H.4, H.5, H.6, H.7, H.8 from the Build Pack.
+- **Deviation from Build Pack §R7.1–7.7 (test file layout)**: spec recommended six separate files (`test_migration_0022.py`, `test_appraisal_revisions.py`, `test_appraisal_reopen_withdraw.py`, `test_appraisal_scenarios.py`, `test_appraisal_decisions.py`, `test_appraisal_nudge.py`). Consolidated into a single `test_appraisal_governance.py` with 8 classes (one per functional area + two DB-layer trigger classes). Treated spec §H layout as granularity guidance, not a hard split. If a future prompt wants per-resource files, a one-shot class→file split is trivial.
+- **Deviation from Build Pack §R7.1 (TestRetrofit23C1 relocation)**: spec recommended moving C1's `TestRetrofit23C1` from `test_appraisals.py` to `tests/test_retrofit_0021.py`. Deferred — class left in place. Move was marked "optional, recommended" in spec; all 6 C1 acceptance assertions still run as part of `test_appraisals.py`'s module-scoped appraisal cleanup.
 - **DB-layer trigger verification**: raw SQL UPDATE/DELETE against `appraisal_decision_log` raises; raw SQL INSERT with non-Base parent against `appraisal_scenarios` raises.
 - **Modified test in `test_appraisals.py`**: `test_reopen_approved_creates_new_version` → `test_reopen_approved_returns_to_reopened` (asserts toggle, not clone; same id, same version_number, still current).
 - **Modified test in `test_system_config.py`**: `test_seed_creates_38_keys` → `test_seed_creates_39_keys` (added nudge threshold row).
