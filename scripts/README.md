@@ -33,7 +33,7 @@ sudo install -m 0755 /app/scripts/on-restart.sh /root/.emergent/on-restart.sh
 
 `on-restart.sh` is a fail-loud orchestrator. To prevent it from being
 paired with a fail-soft supervisor, `[program:backend]` in
-`/etc/supervisor/conf.d/supervisord.conf` has been edited to:
+`/etc/supervisor/conf.d/supervisord.conf` must have:
 
 ```ini
 [program:backend]
@@ -42,7 +42,7 @@ autostart=false
 autorestart=false
 ```
 
-This is intentional and **required** for the bootstrap-fix-p0 contract:
+This is the bootstrap-fix-p0 contract:
 
 * `autostart=false` — the backend does not come up on container boot.
   It is started only by `on-restart.sh` after `python -m app.bootstrap`
@@ -52,7 +52,30 @@ This is intentional and **required** for the bootstrap-fix-p0 contract:
   STOPPED and visible via `supervisorctl status`; recovery is an
   explicit operator action (re-run `on-restart.sh`).
 
-The hook completes its rc-translation case statement and then runs:
+### Self-healing template (no manual edit required)
+
+The canonical block is checked in at
+[`/app/scripts/supervisord_backend.conf.template`](./supervisord_backend.conf.template).
+`on-restart.sh` runs an idempotent self-heal as **step 0**, before
+bootstrap:
+
+1. Read `/etc/supervisor/conf.d/supervisord.conf`. Look inside
+   `[program:backend]` for `autostart=false`.
+2. **If found:** log `supervisor config already gated` and skip — no
+   rewrite, file is byte-identical between runs.
+3. **If not found:** splice the template into the supervisor conf,
+   preserving any existing `environment=` line from the live block
+   (the platform injects `APP_URL` per pod; we do not clobber it).
+   Then `supervisorctl reread && supervisorctl update`. Log
+   `supervisor config gated (template applied)`.
+4. Hook then proceeds with bootstrap as normal.
+
+This pattern matches the bootstrap orchestrator itself: detect drift,
+self-heal, prove invariants, never require manual operator
+intervention on a fresh fork.
+
+The hook completes its bootstrap rc-translation case statement and
+then runs:
 
 ```bash
 if [[ "${rc}" -eq 0 ]]; then
@@ -64,11 +87,11 @@ so the backend transitions from STOPPED → RUNNING only on a clean
 bootstrap.
 
 `/etc/supervisor/conf.d/supervisord.conf` carries a `# READONLY FILE`
-banner that is convention, not enforcement. The edit above is a
-principled deviation; if Emergent's platform rewrites the file on a
-future system update, the next fork must re-apply it (the inline
-comment block above the autostart lines documents the contract for the
-next reader).
+banner that is convention, not enforcement. The hook's self-heal step
+is the principled, durable answer to that warning: instead of editing
+the file by hand and praying the platform never resets it, we treat
+the template as the source of truth and re-apply it every time we see
+drift.
 
 **Frontend is intentionally not gated.** `[program:frontend]` keeps
 `autostart=true autorestart=true` because the React dev server is
@@ -77,11 +100,24 @@ degrades gracefully when the backend is STOPPED.
 
 ### R7.7 verification (manual)
 
-1. Break a bootstrap invariant (e.g., `DELETE FROM permissions WHERE
-   action = '<some_seeded_action>'`).
-2. Run `sudo /root/.emergent/on-restart.sh`. Expect non-zero rc and a
-   `[on-restart] skipping supervisorctl start backend` line.
+Recreating the failure path:
+
+1. Stop postgres: `sudo supervisorctl stop postgres`.
+2. Run `sudo /root/.emergent/on-restart.sh`. Expect non-zero rc=2 and
+   a `[on-restart] skipping supervisorctl start backend (bootstrap
+   rc=2)` line.
 3. `sudo supervisorctl status backend` → `STOPPED`.
-4. Restore the row (re-run RBAC seed, or re-run bootstrap which is
-   idempotent), run `sudo /root/.emergent/on-restart.sh` again.
-5. `sudo supervisorctl status backend` → `RUNNING`.
+4. Restore: `sudo supervisorctl start postgres`. Re-run hook;
+   `backend` flips to `RUNNING`.
+
+Recreating the supervisor self-heal path:
+
+1. Manually flip `autostart=true` and `autorestart=true` inside
+   `[program:backend]` of the live supervisor conf.
+2. Run `sudo /root/.emergent/on-restart.sh`. Expect a
+   `[on-restart] supervisor config NOT gated; applying template ...`
+   line followed by `[on-restart] supervisor config gated (template
+   applied; backend is now autostart=false autorestart=false)`.
+3. Re-run the hook; expect
+   `[on-restart] supervisor config already gated`. Verify the file is
+   byte-identical between runs (`diff` returns empty).

@@ -31,10 +31,125 @@ set -uo pipefail
 APP_BACKEND_DIR="/app/backend"
 ENV_FILE="${APP_BACKEND_DIR}/.env"
 VENV_ACTIVATE="/root/.venv/bin/activate"
+SUPERVISOR_CONF="/etc/supervisor/conf.d/supervisord.conf"
+BACKEND_TEMPLATE="/app/scripts/supervisord_backend.conf.template"
 
 log() { printf '%s [on-restart] %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$*" >&2; }
 
+# 0. Self-heal supervisor wiring. The bootstrap-fix-p0 contract requires
+#    [program:backend] to have `autostart=false autorestart=false`. On a
+#    fresh container rebuild the supervisor config may be reset to the
+#    Emergent template defaults (autostart=true), so we re-apply the
+#    canonical block from /app/scripts/supervisord_backend.conf.template
+#    every time — but idempotently: if the live config already has
+#    autostart=false inside [program:backend], we skip the rewrite.
+#
+#    The template intentionally omits `environment=` because that line is
+#    pod-specific (APP_URL holds this preview's URL). The Python helper
+#    below preserves any existing `environment=` line from the live block
+#    when splicing the template in, so platform-injected envs survive.
+ensure_backend_gated() {
+    if [[ ! -f "${SUPERVISOR_CONF}" ]]; then
+        log "WARN supervisor conf not found at ${SUPERVISOR_CONF}; skipping self-heal"
+        return 0
+    fi
+    if [[ ! -f "${BACKEND_TEMPLATE}" ]]; then
+        log "FATAL backend template missing at ${BACKEND_TEMPLATE}"
+        exit 1
+    fi
+
+    # Idempotence check: is the live [program:backend] block already gated?
+    # We look for `autostart=false` between `[program:backend]` and the
+    # next `[program:` (or EOF).
+    if awk '
+        /^\[program:backend\]/ { in_block=1; next }
+        in_block && /^\[program:/ { exit }
+        in_block && /^autostart=false[[:space:]]*$/ { found=1 }
+        END { exit (found ? 0 : 1) }
+    ' "${SUPERVISOR_CONF}"; then
+        log "supervisor config already gated (autostart=false on [program:backend])"
+        return 0
+    fi
+
+    log "supervisor config NOT gated; applying template ${BACKEND_TEMPLATE}"
+
+    # Splice template into supervisor conf, preserving any existing
+    # `environment=` line from the [program:backend] block.
+    local tmpfile
+    tmpfile="$(mktemp)"
+    if ! sudo python3 - "${SUPERVISOR_CONF}" "${BACKEND_TEMPLATE}" "${tmpfile}" <<'PY'
+import sys, pathlib
+
+conf_path, template_path, out_path = sys.argv[1], sys.argv[2], sys.argv[3]
+conf = pathlib.Path(conf_path).read_text()
+template = pathlib.Path(template_path).read_text().rstrip("\n") + "\n"
+
+lines = conf.splitlines(keepends=True)
+out, i, n = [], 0, len(lines)
+preserved_env = None
+
+while i < n:
+    line = lines[i]
+    if line.strip() == "[program:backend]":
+        # Capture existing environment= line (if any) inside this block.
+        j = i + 1
+        while j < n and not lines[j].lstrip().startswith("[program:"):
+            stripped = lines[j].lstrip()
+            if stripped.startswith("environment="):
+                preserved_env = lines[j]
+            j += 1
+        # Build the replacement block: template, plus preserved env line
+        # spliced in just before stderr_logfile= so it lands in the same
+        # spot the platform expects.
+        block_lines = template.splitlines(keepends=True)
+        if preserved_env is not None:
+            spliced = []
+            inserted = False
+            for bl in block_lines:
+                if not inserted and bl.startswith("stderr_logfile="):
+                    spliced.append(preserved_env)
+                    inserted = True
+                spliced.append(bl)
+            if not inserted:
+                spliced.append(preserved_env)
+            block_lines = spliced
+        out.extend(block_lines)
+        # Ensure exactly one blank line between this block and the next
+        # section (or EOF).
+        if j < n:
+            out.append("\n")
+        i = j
+        continue
+    out.append(line)
+    i += 1
+
+pathlib.Path(out_path).write_text("".join(out))
+PY
+    then
+        log "FATAL python splice helper failed"
+        rm -f "${tmpfile}"
+        exit 1
+    fi
+
+    if ! sudo install -m 0644 "${tmpfile}" "${SUPERVISOR_CONF}"; then
+        log "FATAL failed to install rewritten supervisor conf"
+        rm -f "${tmpfile}"
+        exit 1
+    fi
+    rm -f "${tmpfile}"
+
+    if ! sudo supervisorctl reread >&2; then
+        log "WARN supervisorctl reread failed"
+    fi
+    if ! sudo supervisorctl update >&2; then
+        log "WARN supervisorctl update failed"
+    fi
+
+    log "supervisor config gated (template applied; backend is now autostart=false autorestart=false)"
+}
+
 log "starting"
+ensure_backend_gated
 
 # 1. Locate the env file. Fail loud if it's missing — the orchestrator can't
 #    do its precheck without DATABASE_URL / BOOTSTRAP_ADMIN_*.
