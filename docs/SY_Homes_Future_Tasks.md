@@ -15,45 +15,31 @@ Format per entry:
 
 ---
 
-## 1. Fresh-DB bootstrap ordering — **P0 → RESOLVED (bootstrap-fix-p0, 2026-05-04)**
+## 1. Fresh-DB bootstrap ordering — **RESOLVED (Chat 14, 5 May 2026)**
 
-Resolved by introducing `app/bootstrap.py` as the canonical pod-restart
-entrypoint, invoked by `/root/.emergent/on-restart.sh` on every container
-boot. The orchestrator embeds the staged migration + seed dance (alembic
-to 0017 → tenant seed → filtered RBAC seed → alembic to head → full RBAC
-top-up → system_config seeds → test users → verify) as the single,
-idempotent code path. A Postgres advisory lock prevents concurrent
-runs; verify_invariants asserts the post-seed shape (alembic at head,
-permission count, role count, super_admin user, every ROLE_PERMISSIONS
-code resolves). 15 new tests under `tests/test_bootstrap.py` exercise
-every failure mode plus a true cold-start (drop+create DB, run script,
-assert green) and a snapshot-restore simulation (build to 0019, verify
-enum lacks the 0020 values, run bootstrap, assert self-heal). The
-runbook lives in the module docstring of `app.bootstrap`.
+**Status: RESOLVED.** Bootstrap orchestrator landed on `main` during Chat 14 (work tracked under logical label `bootstrap-fix-p0`; landed via Emergent auto-commits, not a PR — see chat-14-closing §11). The §R0 manual recovery dance documented in C1/C2/C3 handoffs is now obsolete. Fresh-DB and snapshot-restore boots succeed unattended.
 
-Production failure modes covered:
-- BOOTSTRAP_ADMIN_* missing       → exit 1 with cause=env_missing
-- Postgres unreachable in N s     → exit 2 with cause=pg_unreachable
-- Concurrent bootstrap            → exit 3 with cause=lock_unavailable
-- Migration error                 → exit 4 with alembic stderr captured
-- Any seed failure                → exit 5 with cause=seed_failed
-- Invariant drift (any of 6)      → exit 6 with cause=&lt;specific&gt;
+**What landed:**
+- `/app/backend/app/bootstrap.py` — single entry-point at `python -m app.bootstrap`. Nine-step flow: env-var precheck → wait_for_postgres → acquire pg advisory lock → detect_db_state → alembic upgrade head → seed → seed_rbac → seed_test_users (if present) → verify_invariants → release lock + summary. Concurrency-safe via Postgres advisory lock. Per-step k=v timing logs. Verify-invariants asserts alembic at head, perm count matches `len(PERMISSION_CATALOGUE)`, role count matches `len(ROLE_CATALOGUE)`, super_admin exists + is role-assigned, every code in `ROLE_PERMISSIONS` resolves to a real permission row.
+- `/app/backend/tests/test_bootstrap.py` — 15 tests covering env precheck, Postgres timeout, detect_state branches, verify_invariants happy + 5 failure modes, concurrent-lock test, end-to-end integration. Test count moved 581 → 596.
+- `/app/scripts/supervisord_backend.conf.template` — checked-in template for `[program:backend]` block (`autostart=false`, `autorestart=false`). Source of truth for the supervisor gating contract.
+- `/app/scripts/on-restart.sh` — idempotently applies the supervisor template at the top of every hook fire (self-healing on container rebuild), then runs `python -m app.bootstrap`, then `sudo supervisorctl start backend` only on `rc=0`. Mirrored to live `/root/.emergent/on-restart.sh`.
+- `/app/scripts/README.md` — fresh-fork install instructions; "Supervisor backend gating" section.
+- `/app/docs/SY_Hub_Bootstrap_Fix_P0_Build_Pack.md` — Build Pack v2 verbatim (378 lines), committed alongside the code.
 
-Sandbox provisioning steps for future fresh forks (Postgres install,
-syhomes role/db creation, supervisor wiring) are documented in
-`app.bootstrap`'s "Sandbox provisioning notes" section.
+**Verification:** Cold-start (drop DB → bootstrap → 596 tests pass) ✅. Idempotence (3× consecutive runs, diff = elapsed only) ✅. Concurrency (one rc=0, one rc=3 cause=lock_unavailable) ✅. Snapshot-restore simulation (DB at 0019, missing enum values, bootstrap → orchestrator advances to head, both enum values present) ✅. Supervisor gating (failure path: postgres stopped → bootstrap rc=2 → backend STOPPED, hook exit=2; happy path: bootstrap rc=0 → backend RUNNING, /api/health 200) ✅.
 
-(Original P0 / P1 history retained below for context.)
+**Reference docs:** `chat-14-closing.md` (full session record); `SY_Hub_Bootstrap_Fix_P0_Build_Pack.md` (the spec the fix was built against).
 
-## 1a. Fresh-DB bootstrap ordering — **P0 (RECURRING) [historical]**
+(Original entries retained below for historical context.)
 
-Surfaced at 0017, recurred at 0018/0019 (2.2), and recurred TWICE during Prompt 2.3 Step 0 (May 2026). Three confirmed pod-restart triggers in two months. Documented runbook works (manual sequence: seed → seed_rbac partial → seed_test_users → alembic upgrade → seed_rbac full) but it's a manual hot-fix every time.
+## 1a. Fresh-DB bootstrap ordering — **historical (P0 RECURRING wording, pre-fix)**
+
+Surfaced at 0017, recurred at 0018/0019 (2.2), and recurred TWICE during Prompt 2.3 Step 0 (May 2026). Three confirmed pod-restart triggers in two months. Five total recurrences by the time the fix landed. Documented runbook worked (manual sequence: seed → seed_rbac partial → seed_test_users → alembic upgrade → seed_rbac full) but it was a manual hot-fix every time.
 
 **Mandatory fix before next Track 2 prompt**: split inline INSERT seeds out of migrations 0018, 0019, 0020 into a dedicated post-migration data-seed module that runs at the lifespan phase AFTER `alembic upgrade head` AND `seed()` + `seed_rbac()`. Add a CI smoke test that drops the DB, runs cold-start, and asserts pytest passes.
 
-(Original P1 entry retained below for context.)
-
-## 1b. Fresh-DB bootstrap ordering (original P1 entry, historical)
+## 1b. Fresh-DB bootstrap ordering — **original P1 entry**
 
 - **Surfaced in**: Prompt 2.1 (migration 0017 — first time); Prompt 2.2
   (migrations 0018 + 0019 — recurrence)
@@ -91,80 +77,48 @@ Surfaced at 0017, recurred at 0018/0019 (2.2), and recurred TWICE during Prompt 
 
 ---
 
-## 2. `appraisal_scenarios` FK ON DELETE RESTRICT blocks test cascade — **P1**
+## 2. `appraisal_scenarios` FK ON DELETE RESTRICT — **P1 (gates Prompt 2.4)**
 
-- **Surfaced in**: bootstrap-fix-p0 verification run (2026-05-04). The
-  pytest suite passes only when invoked with
-  `--ignore=tests/test_c3_governance_smoke.py`; including the smoke test
-  pollutes downstream fixtures because its teardown cannot delete the
-  parent `projects` / `appraisals` rows.
-- **Severity**: P1 — blocks clean test cascades and will block Prompt
-  2.4 (Budgets) cascade work that needs to delete projects in fixture
-  teardown.
-- **Description**: Migration 0022 (`appraisal_governance`) created
-  `appraisal_scenarios.scenario_appraisal_id_fkey` with `ON DELETE
-  RESTRICT`. This blocks the natural project → appraisal → scenario
-  delete cascade used by test fixture teardowns. Two sub-issues:
-  - **(a)** `tests/test_c3_governance_smoke.py` has no teardown at all,
-    so even with a permissive FK the rows would leak between tests;
-  - **(b)** the FK should be `ON DELETE CASCADE` so the parent project
-    delete propagates to scenarios without bespoke teardown logic per
-    test.
+- **Surfaced in**: Chat 14 baseline check (5 May 2026) — surfaced as a side-effect of the bootstrap fix's full-suite run; the smoke test pollution issue had been masked by the `--ignore=tests/test_c3_governance_smoke.py` workaround.
+- **Severity**: P1 — blocks Prompt 2.4 (Budgets). Budgets work will introduce more cascade scenarios (project deletion → budgets → budget_changes → actuals); a known broken cascade pattern in the codebase will compound risk.
+- **Description**: `appraisal_scenarios.scenario_appraisal_id_fkey` is `ON DELETE RESTRICT` (introduced in migration 0022 as part of the C2 backend work). This blocks the cascade from `DELETE FROM projects → appraisals → scenarios` in test teardown. The current pytest invocation works around this with `--ignore=tests/test_c3_governance_smoke.py`, which keeps the suite green at 596 but masks the underlying issue.
+
+  Two sub-issues:
+
+  **2a (test infrastructure):** `tests/test_c3_governance_smoke.py` has no teardown. It's a smoke-probe test that should run post-deploy, not as part of the unit regression suite. Even if the FK were `CASCADE`, this test would still pollute the DB state for subsequent tests because it doesn't clean up after itself.
+
+  **2b (data model):** The FK should be `ON DELETE CASCADE`, not `RESTRICT`. The product-level intent is "deleting a project removes all of its appraisals and their scenarios" — `RESTRICT` violates that.
+
 - **Proposed resolution**:
-  1. Refactor `tests/test_c3_governance_smoke.py` to use the standard
-     project/appraisal fixtures and explicit teardown (or autouse
-     transactional rollback fixture) — sub-issue (a).
-  2. New alembic migration `0023_appraisal_scenarios_fk_cascade` to
-     `ALTER TABLE appraisal_scenarios DROP CONSTRAINT
-     scenario_appraisal_id_fkey` and re-add it with `ON DELETE
-     CASCADE` — sub-issue (b).
-  3. Remove the `--ignore=tests/test_c3_governance_smoke.py` workaround
-     from CI / docs once both sub-issues are green.
-- **Owner / Target prompt**: must be resolved before Prompt 2.4
-  (Budgets) cascade work begins.
+  1. Migration `0023_appraisal_scenarios_fk_cascade`: drop the FK, recreate with `ON DELETE CASCADE`. Proper `downgrade()` that recreates the original `RESTRICT` behaviour. Verify both directions with explicit tests.
+  2. Refactor `tests/test_c3_governance_smoke.py` with proper teardown — pytest fixture, same conftest patterns the rest of the suite uses; do not invent new infrastructure.
+  3. Drop the `--ignore=tests/test_c3_governance_smoke.py` flag from pytest invocation. Full suite must be green at the new count (596 + however many smoke tests are in that file).
+  4. Verify the cascade actually works end-to-end: create project → appraisal → scenario → DELETE project → confirm scenario row is gone. Not just "the FK has CASCADE in `pg_constraint`."
+- **Owner / Target prompt**: Chat 15 (Pre-2.4 Cleanup). Both sub-issues land in one PR-equivalent unit of work (logical branch label `pre-2.4-cleanup`). Hard gate: must be resolved before Prompt 2.4 (Budgets).
 
 ---
 
-## 3. CI pipeline + bootstrap anchor smoke test — **P1**
+## 3. CI pipeline (anchor: bootstrap smoke test) — **P1**
 
-- **Surfaced in**: bootstrap-fix-p0 PR review (2026-05-05). Cold-start
-  bootstrap failures hit 5/5 times during 2.3 work; every catch was a
-  human noticing a broken pod. There is currently no CI to catch this
-  class of regression before it lands.
-- **Severity**: P1 — operational risk grows with every new migration
-  and seed step. Without CI gating, the bootstrap-fix-p0 contract
-  decays over time.
-- **Description**: Establish a CI pipeline for the SY Hub repo. The
-  anchor test is a single proof-of-life check:
-  `python -m app.bootstrap` against an ephemeral Postgres 16, asserting
-  `rc=0` and the 6 verify invariants on a freshly created DB. This
-  exact run would have caught all 5 cold-start failures during 2.3.
-- **Scope-as-a-fix (not a one-line addition)** — discrete decisions
-  required:
-  1. **Runner choice** — GitHub Actions (default, free for the org's
-     plan) vs. self-hosted on the Emergent sandbox vs. CircleCI/other.
-     Cost, secrets exposure, and concurrency limits all differ.
-  2. **Test-DB strategy** — service container (`services: postgres:`
-     in GHA), Docker Compose, or `pg_tmp`/`testing.postgresql`. Must
-     match prod Postgres 16 (PGDG, not Debian default 15) and ship
-     `pgcrypto` for `gen_random_uuid()` server-defaults.
-  3. **Secrets handling for `BOOTSTRAP_ADMIN_*`** — needs CI-only
-     dummy values committed to a CI env file or repo-secret-injected
-     at job start. Production `BOOTSTRAP_ADMIN_PASSWORD_HASH` must
-     never be readable in CI logs.
-  4. **Merge-gating policy** — required check on `main`? Required for
-     PR merge? Allowed-to-fail on draft PRs? Define before turning it
-     on so contributors aren't surprised by a red required check.
-  5. **Scope creep guard** — first iteration runs *only* the
-     bootstrap anchor + `pytest --ignore=tests/test_c3_governance_smoke.py`.
-     Expanding to lint / type-check / coverage is a separate ticket.
-- **Proposed resolution**: spike the four decisions above, land a
-  minimal `.github/workflows/ci.yml` (or equivalent) that brings up
-  Postgres 16, runs `python -m app.bootstrap` (assert rc=0), then runs
-  the pytest suite with the documented ignore. Iterate from there.
-- **Owner / Target prompt**: before or alongside Prompt 2.4 (Budgets).
-  Explicitly out of scope for the bootstrap-fix-p0 PR — keep that PR
-  product-surface-clean.
+- **Surfaced in**: Chat 14 (5 May 2026) — proposed by the bootstrap-fix-p0 agent at session close; deferred from that PR to keep scope clean.
+- **Severity**: P1 — not currently gating any specific prompt, but Budgets (Prompt 2.4) will be the highest-stakes financial code in the platform to date. CI catches regressions before they reach Rhys; without it, the only quality gate is agent self-report (which has been shown to drift — see Chat 14's Future_Tasks sync gap).
+- **Description**: Currently SY-Hub has no continuous integration pipeline. Five recurrences of the bootstrap chicken-and-egg during 2.3 work proved the cost of not having one — every recurrence was a manual hot-fix that took 15-30 minutes. A simple smoke test (`python -m app.bootstrap` against an ephemeral Postgres, assert `rc=0`) would have caught all five before they hit a human.
+
+  The proposed CI scope is broader than just the smoke test:
+  - **Anchor:** bootstrap smoke against ephemeral Postgres
+  - **Likely:** full pytest suite (once the §2 `--ignore` flag is dropped)
+  - **Maybe:** lint / type-check passes
+  - **Maybe:** frontend build verification
+
+- **Decisions to make** (none locked yet):
+  - Runner choice: GitHub Actions (free for public repos / cheap for private; native to where the code lives) vs. self-hosted (cost vs. control).
+  - Test-DB strategy in CI: ephemeral Postgres container per run? testcontainers-python? service container?
+  - Secrets handling for `BOOTSTRAP_ADMIN_*`: GitHub Actions secrets if going that route.
+  - Whether CI gates merges to main: recommended yes, but Emergent's "Save to GitHub" pushes directly to main as auto-commits — which means the gate would have to run *post-push* (revert on red) rather than *pre-merge*. Worth thinking through.
+  - What other tests run alongside bootstrap smoke.
+- **Sizing**: Discrete fix, not a one-line addition. Likely a half-session unit of work in its own right. The agent at end of Chat 14 suggested this as a single CI step; on review, that under-scopes the actual work involved.
+- **Recommended sequencing**: After §2 lands (Chat 15), before or alongside Prompt 2.4 (Chat 16+). Most likely candidate for Chat 17 if Chat 15 and 16 stay in scope.
+- **Owner / Target prompt**: Standalone Chat (likely Chat 17), or bundled into the start of Prompt 2.4 if the FK cleanup goes faster than expected.
 
 ---
 
