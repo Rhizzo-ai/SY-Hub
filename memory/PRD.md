@@ -521,6 +521,18 @@ Full suite: **160 passed, 1 skipped, 0 failed** (was 135 → +25).
 - ✅ Tests: 55 new across `test_system_config.py` (~22), `test_notifications.py` (~20), `test_scheduler_jobs.py` (~6), `test_retro_wires.py` (~7). Total suite **457/457** passing (402 baseline + 55).
 - 📋 Polish Pass: persistent APScheduler jobstore for multi-process prod; per-key `minimum_role_to_edit` enforcement; notification body sensitive-field redaction; dispatch queue/worker; tighten `cost_codes` permission catalogue; render read-only ConfigPage values as `<input disabled>` for tooling parity; migrate older `/api/*` routes onto `/api/v1/*`.
 
+## bootstrap-fix-p0 — Cold-Start Orchestrator (2026-05-04 / 2026-05-05)
+
+Standalone session on branch `bootstrap-fix-p0`. **Blocks Prompt 2.4 (Budgets).** No product surface change.
+
+- ✅ `app/bootstrap.py` — idempotent pod-restart orchestrator. Steps: precheck → wait_for_postgres (60 s) → acquire pg_advisory_lock → detect_state → alembic to 0017 → seed_tenant → seed_rbac (filtered) → alembic head → seed_rbac (full) → seed_system_config → seed_test_users → 6-invariant verify → release_lock. Exit codes: 0 ok | 1 precheck | 2 pg_unreachable | 3 lock_unavailable | 4 alembic | 5 seed | 6 verify | 7 unexpected.
+- ✅ `/app/scripts/on-restart.sh` (canonical) and `/root/.emergent/on-restart.sh` (live). Sources `.env`, activates venv, invokes `python -m app.bootstrap`, propagates exit code, **gates supervisorctl start backend on rc=0**.
+- ✅ **Supervisor backend gating (R7.7)**. `[program:backend]` in `/etc/supervisor/conf.d/supervisord.conf` is `autostart=false autorestart=false`. Backend transitions STOPPED → RUNNING only when the hook completes successfully. Frontend not gated (CRA dev server is decoupled, degrades gracefully). Documented in `/app/scripts/README.md` under "Supervisor backend gating".
+- ✅ R7.7 verified end-to-end: cold-start (fresh DB, alembic 0001-0022 applied, all seeds run, all 6 invariants green, backend RUNNING, `/api/health` 200) and failure-path (postgres stopped → bootstrap rc=2 → `[on-restart] skipping supervisorctl start backend` → backend STOPPED, hook propagates rc=2).
+- ✅ `tests/test_bootstrap.py` — 15 tests covering idempotence, lock contention, every failure mode, true cold-start (drop+create DB), and 0019→0020 snapshot-restore self-heal.
+- ✅ Build Pack v2 spec persisted at `/app/docs/SY_Hub_Bootstrap_Fix_P0_Build_Pack.md`.
+- 📋 P1 logged in `SY_Homes_Future_Tasks.md` §2: `appraisal_scenarios.scenario_appraisal_id_fkey ON DELETE RESTRICT` blocks test cascade. Two sub-issues: (a) `test_c3_governance_smoke.py` has no teardown, (b) FK should be CASCADE. **Must resolve before Prompt 2.4.** Workaround: run pytest with `--ignore=tests/test_c3_governance_smoke.py` (596 passing).
+
 ## Process Commitments
 - Never silently defer agreed standards — surface deviations in-channel before changing course.
 - Every prompt delivers: migration + backend + tests + UI + test-fixture coverage.
