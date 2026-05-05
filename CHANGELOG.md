@@ -45,6 +45,36 @@ Each entry: date, prompt reference (if applicable), change, rationale.
 - §R7.4 Cold-start (DROP + CREATE DATABASE syhomes; CREATE EXTENSION pgcrypto; run `on-restart.sh`): rc=0, total_elapsed=2.04s; post-state alembic at head (0022), 83 perms, 10 roles, 8 users, 39 system_config rows.
 - §R7.5 Snapshot-restore (build ephemeral DB to 0019 with seed data, verify `permission_action` enum lacks `submit` + `view_financials`, run `python -m app.bootstrap`): rc=0, alembic advances to 0022, both enum values present after.
 
+### Late additions: supervisor gating + self-healing template
+
+The following items landed in the final third of bootstrap-fix-p0 after the orchestrator core was complete. They close the silent-partial-failure gap (supervisor was previously starting backend regardless of `on-restart.sh` exit code) and make the supervisor wiring self-heal across container rebuilds.
+
+#### New: `/app/scripts/supervisord_backend.conf.template`
+- Checked-in template for the `[program:backend]` block. Contains `autostart=false autorestart=false` plus an inline contract comment explaining the gating intent.
+- Single source of truth for the supervisor-backend gating contract; manual edits to `/etc/supervisor/conf.d/supervisord.conf` are no longer required and not recommended — change the template instead.
+
+#### New: `/app/scripts/on-restart.sh` (canonical) + mirrored to live `/root/.emergent/on-restart.sh`
+- Idempotently applies the supervisor template at the top of every hook fire (self-healing on container rebuild — proven necessary in this session when a mid-session container rebuild stripped both Postgres and supervisor config).
+- Then runs `python -m app.bootstrap`, then `sudo supervisorctl start backend` only on `rc=0`. Non-zero rc logs `[on-restart] skipping supervisorctl start backend (bootstrap rc=N)` and propagates the rc.
+- Frontend service NOT gated — CRA dev server is decoupled from the API at startup and degrades gracefully when API down.
+
+#### New: `/app/scripts/README.md`
+- Install instructions for fresh forks; "Supervisor backend gating" section explaining the readonly-banner deviation; documents the self-healing template-apply pattern.
+
+#### Modified: `/etc/supervisor/conf.d/supervisord.conf`
+- `[program:backend]`: `autostart=false`, `autorestart=false` (with inline contract comment). Both flags required — `autorestart` matters too, otherwise supervisor cycles backend back up after the first stop.
+- Lives outside `/app/`, so this edit may not be captured by Save-to-GitHub's snapshot. The template at `/app/scripts/supervisord_backend.conf.template` is the git-tracked source of truth; `on-restart.sh` re-applies it idempotently every hook fire.
+
+#### New: `/app/docs/SY_Hub_Bootstrap_Fix_P0_Build_Pack.md`
+- Build Pack v2 verbatim (378 lines). Same pattern as `/app/docs/SY_Hub_2.3_Checkpoint*_Build_Pack.md`. Documents the diagnosis, acceptance criteria, R0–R8 build plan, and self-report format that drove this fix.
+
+### §R7 verification results (continued)
+- §R7.6 Pod-restart sanity (after fix landed, run `sudo supervisorctl restart all`): Postgres comes back up, on-restart.sh fires, bootstrap runs, backend ends RUNNING, pytest still passes. Confirms the fix survives a real pod cycle, not just a one-shot manual run.
+- §R7.7 Supervisor gating (failure path: stopped Postgres → run on-restart.sh → bootstrap rc=2 → log line `[on-restart] skipping supervisorctl start backend (bootstrap rc=2)` → backend remains STOPPED, hook exit code = 2). Recovery: started Postgres → re-run hook → bootstrap rc=0 → backend RUNNING. Acceptance criterion §2.4 ("backend does not start if bootstrap failed") confirmed.
+
+### Implementation note: staged alembic + seed sequence
+The orchestrator's "staged alembic + seeds" flow (alembic→0017, seed tenant, seed_rbac filtered to existing enum actions, alembic→head, seed_rbac full) deviates from Build Pack v2's simpler "upgrade-first-then-seed" specification. Both approaches handle the snapshot-restore and pristine-DB failure modes; the staged approach is more complex but handles a wider edge-case envelope. Verified end-to-end via §R7.4 (cold-start) and §R7.5 (snapshot-restore). Flagged for awareness: future migrations that add new `permission_action` enum values may require updating the staged sequence's hardcoded `alembic→0017` waypoint.
+
 ## 2.3 Checkpoint 3 — Appraisal governance frontend + E2E (2026-05-04)
 
 ### New components (under `/app/frontend/src/components/appraisal/`)
