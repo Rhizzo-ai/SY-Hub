@@ -125,4 +125,47 @@ Surfaced at 0017, recurred at 0018/0019 (2.2), and recurred TWICE during Prompt 
 
 ---
 
-## 3. (placeholder — future entries appended here)
+## 3. CI pipeline + bootstrap anchor smoke test — **P1**
+
+- **Surfaced in**: bootstrap-fix-p0 PR review (2026-05-05). Cold-start
+  bootstrap failures hit 5/5 times during 2.3 work; every catch was a
+  human noticing a broken pod. There is currently no CI to catch this
+  class of regression before it lands.
+- **Severity**: P1 — operational risk grows with every new migration
+  and seed step. Without CI gating, the bootstrap-fix-p0 contract
+  decays over time.
+- **Description**: Establish a CI pipeline for the SY Hub repo. The
+  anchor test is a single proof-of-life check:
+  `python -m app.bootstrap` against an ephemeral Postgres 16, asserting
+  `rc=0` and the 6 verify invariants on a freshly created DB. This
+  exact run would have caught all 5 cold-start failures during 2.3.
+- **Scope-as-a-fix (not a one-line addition)** — discrete decisions
+  required:
+  1. **Runner choice** — GitHub Actions (default, free for the org's
+     plan) vs. self-hosted on the Emergent sandbox vs. CircleCI/other.
+     Cost, secrets exposure, and concurrency limits all differ.
+  2. **Test-DB strategy** — service container (`services: postgres:`
+     in GHA), Docker Compose, or `pg_tmp`/`testing.postgresql`. Must
+     match prod Postgres 16 (PGDG, not Debian default 15) and ship
+     `pgcrypto` for `gen_random_uuid()` server-defaults.
+  3. **Secrets handling for `BOOTSTRAP_ADMIN_*`** — needs CI-only
+     dummy values committed to a CI env file or repo-secret-injected
+     at job start. Production `BOOTSTRAP_ADMIN_PASSWORD_HASH` must
+     never be readable in CI logs.
+  4. **Merge-gating policy** — required check on `main`? Required for
+     PR merge? Allowed-to-fail on draft PRs? Define before turning it
+     on so contributors aren't surprised by a red required check.
+  5. **Scope creep guard** — first iteration runs *only* the
+     bootstrap anchor + `pytest --ignore=tests/test_c3_governance_smoke.py`.
+     Expanding to lint / type-check / coverage is a separate ticket.
+- **Proposed resolution**: spike the four decisions above, land a
+  minimal `.github/workflows/ci.yml` (or equivalent) that brings up
+  Postgres 16, runs `python -m app.bootstrap` (assert rc=0), then runs
+  the pytest suite with the documented ignore. Iterate from there.
+- **Owner / Target prompt**: before or alongside Prompt 2.4 (Budgets).
+  Explicitly out of scope for the bootstrap-fix-p0 PR — keep that PR
+  product-surface-clean.
+
+---
+
+## 4. (placeholder — future entries appended here)
