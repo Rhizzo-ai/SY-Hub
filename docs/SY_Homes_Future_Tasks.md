@@ -77,7 +77,22 @@ Surfaced at 0017, recurred at 0018/0019 (2.2), and recurred TWICE during Prompt 
 
 ---
 
-## 2. `appraisal_scenarios` FK ON DELETE RESTRICT — **P1 (gates Prompt 2.4)**
+## 2. `appraisal_scenarios` FK ON DELETE RESTRICT — **PARTIALLY RESOLVED (Chat 15, 7 May 2026)**
+
+**Status: PARTIALLY RESOLVED.** Chat 15 landed the narrow FK fix (§2b) on `main` (work tracked under logical label `pre-2.4-cleanup`; landed via Emergent auto-commits, see chat-14-closing §11 for the convention). Migration `0023_appraisal_scenarios_cascade` flipped `appraisal_scenarios_scenario_appraisal_id_fkey` from `ON DELETE RESTRICT` to `CASCADE`; new regression test `tests/test_appraisal_scenarios_cascade.py` proves the cascade actually fires through a real ORM session. Test count moved 596 → 597.
+
+The **gate for Prompt 2.4 (Budgets) is now cleared.** Pre-paste audit during Chat 15 reclassified §2a from "ship-blocker bug" to an architectural classification question that does not share infrastructure with Budgets work — see new entry §4 below for the full reclassification prose. The remaining four RESTRICT FKs in 0022 are deferred to §5 below (no current use case, debt-with-no-pressure).
+
+**What did NOT land in Chat 15 (split out for clarity):**
+- Smoke test (`tests/test_c3_governance_smoke.py`) classification or rebuild — see §4.
+- The other four `ON DELETE RESTRICT` FKs in 0022 (`parent_scenario_appraisal_id`, both `appraisal_revisions` FKs, `appraisal_decision_log.appraisal_id`) — see §5.
+- The `--ignore=tests/test_c3_governance_smoke.py` flag in the pytest invocation — stays in place; removal is part of §4 work, not §2b.
+
+**Reference docs:** `chat-15-closing.md` (when written); `SY_Hub_Pre_2_4_Cleanup_Build_Pack.md` (the spec the fix was built against).
+
+(Original entry retained below for historical context.)
+
+## 2 (historical — pre-Chat 15). `appraisal_scenarios` FK ON DELETE RESTRICT — P1 (gates Prompt 2.4)
 
 - **Surfaced in**: Chat 14 baseline check (5 May 2026) — surfaced as a side-effect of the bootstrap fix's full-suite run; the smoke test pollution issue had been masked by the `--ignore=tests/test_c3_governance_smoke.py` workaround.
 - **Severity**: P1 — blocks Prompt 2.4 (Budgets). Budgets work will introduce more cascade scenarios (project deletion → budgets → budget_changes → actuals); a known broken cascade pattern in the codebase will compound risk.
@@ -122,4 +137,43 @@ Surfaced at 0017, recurred at 0018/0019 (2.2), and recurred TWICE during Prompt 
 
 ---
 
-## 4. (placeholder — future entries appended here)
+## 4. Smoke test (`test_c3_governance_smoke.py`) classification — **P2 (architectural)**
+
+- **Surfaced in**: split out of §2 during Chat 15 pre-paste audit (7 May 2026).
+- **Severity**: P2 — not a bug, an architectural classification question. Currently masked by `--ignore=tests/test_c3_governance_smoke.py` in the pytest invocation; doesn't gate any prompt.
+- **Description**: `tests/test_c3_governance_smoke.py` runs against the public preview URL via HTTP, uses module-scoped persistent data, and has no DB-side teardown path (no `DELETE /api/v1/projects/{id}` endpoint exists; the test never touches the DB directly). Currently masked by `--ignore=tests/test_c3_governance_smoke.py` in the pytest invocation.
+
+  **Reclassified during Chat 15 pre-paste audit.** The original §2 entry coupled this with the FK fix and stated "Hard gate: must be resolved before Prompt 2.4 (Budgets)." That gate language was based on the assumption that the smoke test had a teardown bug that would compound risk in Budgets work. The audit revealed:
+  - The smoke test runs HTTP-only against the preview URL by design (not the DB).
+  - It has `scope="module"` persistence as a deliberate choice, not a bug.
+  - It does not share infrastructure with Budgets work.
+  - There is no actionable "teardown bug" to fix — the question is architectural: keep it in `tests/` or move it to a deploy-time probe stage.
+
+  The original §2 gate logic for Prompt 2.4 therefore collapses to §2b alone (the FK fix, resolved in Chat 15). **This entry is no longer a gate for 2.4.**
+
+- **Decision still needed**: classify as a deploy-time probe (move out of `tests/`, run as a separate stage) OR rebuild with DB-side teardown (would require a new `DELETE /api/v1/projects/{id}` endpoint and admin-only RBAC). Likely paired with §3 (CI pipeline) since the test belongs in CI's deploy-probe stage anyway.
+- **Owner / Target prompt**: Bundle with §3 (CI), or take as a standalone half-session.
+
+---
+
+## 5. Remaining ON DELETE RESTRICT FKs in migration 0022 — **P2 (debt, no pressure)**
+
+- **Surfaced in**: split out of §2 during Chat 15 pre-paste audit (7 May 2026).
+- **Severity**: P2 — debt-with-no-pressure. No current use case requires `DELETE FROM appraisals` to cascade.
+- **Description**: Migration 0022 created **5** FKs against `appraisals` with `ON DELETE RESTRICT`. Chat 15 fixed only `appraisal_scenarios.scenario_appraisal_id`. Remaining four (deferred until a use case requires `DELETE FROM appraisals` to cascade):
+
+  - `appraisal_scenarios.parent_scenario_appraisal_id` → `appraisals`
+  - `appraisal_revisions.appraisal_id_from` → `appraisals`
+  - `appraisal_revisions.appraisal_id_to` → `appraisals`
+  - `appraisal_decision_log.appraisal_id` → `appraisals`
+
+  **Hard ceiling on cascade-based teardown of decision-log rows:** `appraisal_decision_log` has `BEFORE DELETE` trigger `trg_decision_log_no_delete` that `RAISE EXCEPTION`s on any DELETE (regulatory append-only). Even with FK cascade, any appraisal with logged decisions cannot be deleted. Cascade for that FK is therefore only useful in a "purge unsigned-off appraisals" workflow.
+
+  Currently no use case exists for `DELETE FROM appraisals` in product flows. Test infrastructure works around RESTRICT via explicit DELETE ordering in the `_wipe()` helper in `test_appraisal_governance.py`. This is debt-with-no-pressure; revisit when an actual workflow needs it.
+
+- **Proposed resolution**: When a use case surfaces (most likely "admin: purge unsigned-off appraisals" or a project-level cascade), bundle into a single migration `00NN_appraisal_chain_cascade.py` that flips all four. Each will need a regression test mirroring `test_appraisal_scenarios_cascade.py`. The decision-log FK is the trickiest — flipping it to CASCADE is mostly cosmetic given the `RAISE EXCEPTION` trigger; might be cleaner to leave that one as RESTRICT and document the asymmetry.
+- **Owner / Target prompt**: Open. No target prompt — pull when needed.
+
+---
+
+## 6. (placeholder — future entries appended here)

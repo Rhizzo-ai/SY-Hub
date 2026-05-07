@@ -10,6 +10,34 @@ Each entry: date, prompt reference (if applicable), change, rationale.
 
 ## Entries
 
+## pre-2.4-cleanup — appraisal_scenarios FK cascade, narrow fix (2026-05-07)
+
+### New: `/app/backend/alembic/versions/0023_appraisal_scenarios_cascade.py`
+- Migration `0023`: drops the auto-named FK `appraisal_scenarios_scenario_appraisal_id_fkey` (which referenced `appraisals(id) ON DELETE RESTRICT` per migration 0022 line 132) and recreates it with `ON DELETE CASCADE`. Constraint name preserved byte-for-byte. Proper `downgrade()` restores `RESTRICT`. Verified: forward upgrade flips `pg_constraint.confdeltype` from `'r'` to `'c'`; downgrade flips back to `'r'`; re-upgrade lands at `'c'`. The other FK on the same table (`parent_scenario_appraisal_id_fkey`) is **not** touched and remains `RESTRICT` (deferred — see Future_Tasks §5).
+
+### New: `/app/backend/tests/test_appraisal_scenarios_cascade.py`
+- Pure-DB regression test: insert minimal `projects` → `appraisals` → `appraisal_scenarios` chain via raw SQL, `DELETE FROM appraisals`, assert the linked scenario row was cascade-deleted. Proves the cascade actually fires through a real ORM session, not just that `pg_constraint` says it should. Cleans up after itself in `finally`.
+- Test count moved **596 → 597 passing** with the same `--ignore=tests/test_c3_governance_smoke.py` flag chat-14 left in place.
+
+### Updated: `/app/backend/tests/test_bootstrap.py`
+- `test_alembic_heads_helper_returns_single_head` and `test_detect_db_state_at_head` had hardcoded `head.startswith("0022_")` sentinels. Bumped to `"0023_"` to track the new head. This is mechanical bookkeeping any new migration needs; recorded as a deviation from Build Pack v5 §4 ("no other code changes") because the build pack didn't anticipate the sentinel.
+
+### Updated: `/app/docs/SY_Homes_Future_Tasks.md`
+- §2 (the original combined entry) annotated **PARTIALLY RESOLVED**. §2b (the FK fix) landed; §2a (smoke test classification) and the other 4 RESTRICT FKs split into new entries §4 and §5 respectively. Original §2 prose retained as "§2 (historical)" for traceability.
+- New §4: Smoke test classification — reclassified from "ship-blocker bug" to "architectural classification question" per Build Pack v5 §1 gate-language reconciliation. Records explicitly that the gate for Prompt 2.4 collapses to §2b alone (now resolved).
+- New §5: Remaining ON DELETE RESTRICT FKs in 0022 — debt-with-no-pressure, no current use case, deferred until needed. Notes the hard ceiling on `appraisal_decision_log` deletes (immutability trigger).
+
+### Deviations from Build Pack v5
+- **Revision string shortened**. Build Pack §R2 specified `0023_appraisal_scenarios_fk_cascade` (35 chars) but `alembic_version.version_num` is `varchar(32)` — `op.execute_migration` failed with `StringDataRightTruncation` on first attempt. Shortened to `0023_appraisal_scenarios_cascade` (32 chars exactly, drops `_fk_` segment only). File name follows revision string. Long-term fix (bumping the column to varchar(64)) is out of scope; logged as something to address only when another migration name hits the limit.
+- **`tests/test_bootstrap.py` head sentinels updated** — Build Pack §4 said "no other code changes" but didn't anticipate the `0022_`-prefix smoke check. The change is mechanical (s/0022_/0023_/g in two assert lines) and unavoidable for any migration bump.
+
+### Verification
+- `alembic upgrade head` → `0023_appraisal_scenarios_cascade` ✅
+- `pg_constraint.confdeltype` for `appraisal_scenarios_scenario_appraisal_id_fkey` after upgrade = `'c'`; for `parent_scenario_appraisal_id_fkey` = `'r'` (untouched) ✅
+- `alembic downgrade -1` reverts to `0022_appraisal_governance`, `confdeltype` returns to `'r'` ✅
+- `python -m app.bootstrap` from 0023: rc=0, perms=83, roles=10 ✅
+- `pytest --ignore=tests/test_c3_governance_smoke.py`: **597 passed** (was 596) ✅
+
 ## bootstrap-fix-p0 — Cold-start orchestrator (2026-05-04)
 
 ### New: `/app/backend/app/bootstrap.py`
