@@ -68,6 +68,11 @@ from app.models.appraisal_governance import (
     AppraisalRevision, AppraisalScenario, AppraisalDecisionLog,
     APPRAISAL_REVISION_REASONS, DECISION_TYPES,
 )
+from app.models.budgets import (
+    Budget, BudgetLine, BudgetLineItem,
+    BUDGET_STATUSES, FTC_METHODS, VARIANCE_STATUSES,
+    TERMINAL_BUDGET_STATUSES, LINE_FROZEN_BUDGET_STATUSES,
+)
 
 __all__ = [
     "Tenant",

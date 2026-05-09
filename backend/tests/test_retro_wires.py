@@ -317,6 +317,7 @@ class TestPermissionsCatalogue:
             # system_config.edit, notifications.{view,edit}. Post-Patch-#3
             # total was 81. Prompt 2.2 adds 2 new appraisal codes
             # (appraisals.submit + appraisals.view_financials) → 83.
-            assert total == 83
+            # Prompt 2.4A adds budgets.admin → 84.
+            assert total == 84
         finally:
             db.close()

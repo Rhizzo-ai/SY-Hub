@@ -196,7 +196,7 @@ def test_detect_db_state_at_head():
     current = B.detect_db_state(ctx)
     head = B._alembic_heads()
     assert current == head
-    assert current.startswith("0023_") or current == head
+    assert current.startswith("0024_") or current == head
 
 
 def test_detect_db_state_unstamped(ephemeral_db: str):
@@ -213,7 +213,7 @@ def test_detect_db_state_unstamped(ephemeral_db: str):
 def test_alembic_heads_helper_returns_single_head():
     head = B._alembic_heads()
     assert head and "," not in head, f"expected single head, got {head!r}"
-    assert head.startswith("0023_"), f"unexpected head id: {head}"
+    assert head.startswith("0024_"), f"unexpected head id: {head}"
 
 
 # ----------------------------------------------------------------------

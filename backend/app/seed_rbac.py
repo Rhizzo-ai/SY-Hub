@@ -94,7 +94,8 @@ PERMISSION_CATALOGUE += [
 ]
 PERMISSION_CATALOGUE += _perms_for(
     "budgets",
-    include=["view", "view_sensitive", "create", "edit", "approve"],
+    include=["view", "view_sensitive", "create", "edit", "approve", "admin"],
+    sensitive={"admin"},
 )
 PERMISSION_CATALOGUE += _perms_for(
     "actuals",
@@ -220,7 +221,7 @@ ROLE_PERMISSIONS["project_manager"] = {
     "appraisals.view", "appraisals.view_financials",
     "appraisals.create", "appraisals.edit", "appraisals.submit",
     "appraisals.approve",
-    "budgets.view", "budgets.view_sensitive", "budgets.edit",
+    "budgets.view", "budgets.view_sensitive", "budgets.create", "budgets.edit",
     "actuals.view", "actuals.create", "actuals.edit",
     "commitments.view", "commitments.create", "commitments.edit",
     "budget_changes.view", "budget_changes.create", "budget_changes.approve",

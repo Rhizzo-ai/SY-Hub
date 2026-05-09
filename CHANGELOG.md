@@ -10,6 +10,64 @@ Each entry: date, prompt reference (if applicable), change, rationale.
 
 ## Entries
 
+## 2.4A — Budgets Core (Backend) (2026-05-09)
+
+### New: `/app/backend/alembic/versions/0024_budgets.py`
+- Migration `0024`: creates `budgets`, `budget_lines`, `budget_line_items` tables; three enums (`budget_status`, `budget_line_ftc_method`, `budget_line_variance_status`); 7 indexes including 2 partial unique indexes (`uq_budgets_one_current_per_project` for B3 one-current invariant; `uq_budget_lines_no_subcat_unique` for B6 NULL-subcategory gap). Three `updated_at` triggers via the global `set_updated_at()` function. Verified: `alembic upgrade 0024_budgets` ✓; `alembic downgrade 0023_appraisal_scenarios_cascade` cleanly drops everything.
+
+### New: `/app/backend/app/models/budgets.py`
+- ORM models for `Budget`, `BudgetLine`, `BudgetLineItem`. State enum constants (`BUDGET_STATUSES`, `FTC_METHODS`, `VARIANCE_STATUSES`) plus service-side `TERMINAL_BUDGET_STATUSES = {"Closed","Superseded"}` and `LINE_FROZEN_BUDGET_STATUSES = {"Locked","Closed","Superseded"}` frozensets. Relationships use `cascade="all, delete-orphan"` and `passive_deletes=True` (matches the cascade FK in 0024). Column-level uniqueness via `UniqueConstraint("budget_id","cost_code_id","cost_code_subcategory_id")`.
+
+### New: `/app/backend/app/services/budget_errors.py`
+- Three exceptions: `BudgetNotFoundError` (→404), `BudgetStateError` (→409), `BudgetCreationError` (→400). Located in their own module to avoid circular imports between `budgets.py` and `budget_lines.py`.
+
+### New: `/app/backend/app/services/budgets.py`
+- Header-level service. **Pattern α** tenant scoping (no `tenant_id` columns on budget tables): `_load_budget_for_read/write` chains `db.get(Budget) → db.get(Project) → _scope_check_project()`, which mirrors `routers/appraisals.py::_load_appraisal` verbatim. Defensive `hasattr(project, "tenant_id")` guard preserved as future-proofing per locked decision α-2.
+- `create_from_appraisal`: B5 guards (raise on null `cost_code_id` AND null `amount`; warn on `amount==0`); merge map keyed on `(cost_code_id, subcat_id, entity_id)`; `entity_id` always sourced from `project.primary_entity_id` per locked decision D1; `AppraisalUnit` aggregation deferred per locked decision C1.
+- State transitions with `SELECT FOR UPDATE` row-locking: `activate / lock / unlock / close / new_version`. `new_version` carries `linked_programme_task_id` forward per locked decision 13.
+- `recompute_summary`: header-cache rollup driven by recompute of every loaded line. SQL-side aggregate kept simple (loop over `selectinload`-ed lines) to match ≤5-query budget for detail.
+- Variance thresholds in-code (5% amber / 15% red); `SystemConfig` columns deferred to Phase 2 backlog.
+
+### New: `/app/backend/app/services/budget_lines.py`
+- Line + item CRUD with audit hooks. `bulk_update_lines` accepts a constrained allowlist (`_LINE_EDITABLE_FIELDS`) including `original_budget`, refuses unknown keys with 409. `LINE_FROZEN_BUDGET_STATUSES` blocks all line/item edits while parent is `{Locked, Closed, Superseded}`. Decimal coercion on `original_budget`, `approved_changes`, `forecast_to_complete`, `percentage_complete`. `scan_requires_attention` clause-1 only (variance==Red); clauses 2 + 3 deferred (Phase 2 backlog).
+
+### New: `/app/backend/app/schemas/budgets.py`
+- Strict (`extra="forbid"`) Pydantic v2 schemas for every CUD endpoint. Locked request shapes per Build Pack §R4 table.
+
+### New: `/app/backend/app/routers/budgets.py`
+- 14 endpoints under `/api/v1`. Audit on every CUD via `services.audit.record_audit`. Sensitive monetary keys (`total_actuals`, `total_committed_not_invoiced`, `forecast_final_cost`, `variance_vs_budget`, `variance_pct`, plus per-line equivalents) are **omitted** (not nullified) when caller lacks `budgets.view_sensitive`. Endpoint-14 `refresh-attention` gated by `budgets.admin`.
+
+### Updated: `/app/backend/server.py`
+- Registers `budgets_router` under the `/api/v1` mount.
+
+### Updated: `/app/backend/app/models/__init__.py`
+- Exports `Budget`, `BudgetLine`, `BudgetLineItem` and constant tuples.
+
+### Updated: `/app/backend/app/seed_rbac.py`
+- Adds `budgets.admin` to `PERMISSION_CATALOGUE` (sensitive). Grants `budgets.create` to `project_manager` (was missing — Build Pack locked decision 6). Director gets `budgets.admin` automatically via the all-except-exclusion list. Total perms 83 → 84.
+
+### New: `/app/backend/tests/test_budgets.py`
+- 44 tests covering: permission catalogue sanity, create_from_appraisal (happy path + every B5 guard via service-level harness), variance classification (Green/Amber/Red bands), full state machine lifecycle, illegal transitions (lock from Draft, etc.), permission gating (PM creates, PM cannot unlock, readonly cannot create), line edits (extra-fields rejected, header recompute on line change), item CRUD (incl. blocked on Locked), tenant isolation via service-layer (`_scope_check_project` + `_visible_project_ids` empty for non-owning tenant — Phase 1 HTTP login is single-tenant by design), audit log coverage on every CUD, sensitive-field omission, partial-unique-index B3 invariant (raw SQL inject second is_current=true → IntegrityError), `refresh-attention` endpoint, detail-endpoint query budget (≤5).
+- Test count moved **597 → 641 passing** with the same `--ignore=tests/test_c3_governance_smoke.py` flag.
+
+### Updated: `/app/backend/tests/test_bootstrap.py`
+- Sentinel bumped `0023_` → `0024_`.
+
+### Updated: `/app/backend/tests/test_auth_rbac.py`, `test_patch_3.py`, `test_retro_wires.py`
+- Permission-count assertions bumped 83 → 84 to track the new `budgets.admin` perm. `director` permission_count 79 → 80.
+
+### Deviations from Build Pack v3 (locked-superseded by Chat 16 / Prompt 2.4A)
+- **B1 (Pattern α)**: No `tenant_id` columns on `budgets` / `budget_lines`. Tenant scope via project + `_visible_project_ids`, mirroring `routers/appraisals.py`. Reason: `Project` model has no `tenant_id` column today; adding one was out of scope and would have triggered a STOP-and-resplit. The `hasattr(project, "tenant_id")` no-op survives if the column is added later.
+- **C1**: `AppraisalUnit` aggregation in `create_from_appraisal` deferred — `AppraisalUnit` carries no `cost_code_id` field, so the spec-line-2861 aggregation cannot run today. Backlog: Phase 2 §AppraisalUnit-aggregation-defer.
+- **D1**: `AppraisalCostLine` mappings: `cl.amount` (was `effective_value`), `cl.label` (was `line_description`), `getattr(cl, "cost_code_subcategory_id", None)` (graceful — column doesn't exist), `budget_line.entity_id = project.primary_entity_id` (per-line entity_id sourcing deferred — Phase 2 backlog §per-line-entity-id-defer).
+- **B5 (expanded)**: Guards both `cl.cost_code_id is None` (raise) AND `cl.amount is None` (raise; though the schema NOT NULL makes this unreachable today — kept as belt-and-braces).
+- **route layout**: `app/routers/budgets.py` (existing repo convention) instead of `app/routes/budgets.py` (Build Pack); registered in `server.py` (existing repo convention) not `main.py` (Build Pack).
+- **Test #91** (`≤5 queries on detail endpoint`): asserted via service-layer `_load_budget_for_read` instrumented with `event.listen(engine, "before_cursor_execute")`. With `selectinload(lines).selectinload(items)` the path lands at 3-5 queries depending on user scope.
+- **Concurrency tests #11/#13**: simulation-only (raw SQL inject conflicting `is_current=true` row → caught as `IntegrityError`).
+- **No `budget_lines.entity_id` carry-forward in `new_version`**: clones the existing entity_id verbatim (locked decision 13 + multi-entity preservation hard constraint).
+
+
+
 ## pre-2.4-cleanup — appraisal_scenarios FK cascade, narrow fix (2026-05-07)
 
 ### New: `/app/backend/alembic/versions/0023_appraisal_scenarios_cascade.py`
