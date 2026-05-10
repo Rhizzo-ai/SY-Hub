@@ -403,8 +403,7 @@ during build — log here, address in one focused polish pass.
   genuinely care) and at project setup (set once, forgotten).
 
 ### Brand polish
-- Apply SY Homes brand palette: orange #E85A1B (primary accent),
-  navy #1F2D3D (primary dark).
+* Apply SY Homes brand palette: teal #0F6A7A (primary), orange #FC7827 (accent), light grey #CECECE (neutral). Logo at frontend/src/assets/sy_homes_logo.png (transparent background; teal house mark + orange divider stripe).
 - Select and apply production font stack.
 - Unified component styling pass across all 10 modules.
 
