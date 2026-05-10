@@ -191,13 +191,13 @@ Legend: ✅ direct map · 🟡 covered (parameterisation/grouping/implicit asser
 
 - **Direct ✅**: 27
 - **Implicit / parameterised / grouped 🟡**: 21
-- **Genuine ❌ skips**: 23
+- **Genuine ❌ skips**: 22
 - **Build Pack target**: 91 numbered tests (Build Pack itself notes "≥65 functions; spec lists 91; parameterisation expansion → ~110 cases")
 - **Shipped function count**: 44 (plus 4 build-pack-extra: TestBudgetPermissions::{budgets_admin_permission_exists, super_admin_has_budgets_admin}, TestRefreshAttention::test_pm_cannot_scan, TestSensitiveGating::test_readonly_misses_sensitive_keys)
 
 ### 1d. Genuine skips — backlog disposition
 
-The 23 ❌ items split into three buckets:
+The 22 ❌ items split into three buckets:
 
 **Bucket A — DEFERRED by locked decisions (no patch ever for 2.4A)**: #8, #51, #77 — already in `/app/docs/SY_Hub_Phase2_Backlog.md`.
 
