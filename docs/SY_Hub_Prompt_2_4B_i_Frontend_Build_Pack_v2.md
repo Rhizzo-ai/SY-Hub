@@ -104,6 +104,90 @@ These are points where the Build Pack makes an assumption that should be sanity-
 - **D14.** **`@/components/ui/sonner`** assumed to be the shadcn Toaster wrapper. If absent, R1 ships a 12-line wrapper.
 
 ---
+## ⚠️ ERRATA — Chat-18 §R0 decisions (locked in before implementation)
+
+The §R0 baseline (Chat 18, 2026-05-10) surfaced four deviations from the
+assumptions baked into §R1–§R8 below. The operator confirmed the resolution
+for each. **These supersede any contradicting text in later sections.**
+
+### E1 — Test runner: Jest via `craco test` (NOT vitest)
+The frontend is CRA + Craco (react-scripts 5.0.1), not Vite. D1 anticipated
+this. Concrete swaps throughout §R1, §R8:
+- Skip the `yarn add -D vitest@^2.0.0 ...` block in §R1.4.
+- No `vite.config.js` test block — does not exist.
+- `import { describe, it, expect, vi, ... } from 'vitest'` → drop the
+  vitest import; CRA's Jest provides `describe/it/expect` as globals.
+- `vi.fn()` → `jest.fn()`, `vi.mock(...)` → `jest.mock(...)`.
+- Setup file lives at `src/setupTests.js` (CRA picks it up automatically),
+  NOT `src/test/setup.js`. Body:
+  ```js
+  import '@testing-library/jest-dom';
+  import { mockMatchMedia } from './test/renderWithProviders';
+  afterEach(() => mockMatchMedia(true));
+  ```
+- `import.meta.env.DEV` (Vite syntax in §R1.7 `main.jsx`) →
+  `process.env.NODE_ENV !== 'production'` (CRA-compatible).
+- Test invocation: `yarn test --watchAll=false` (CRA) instead of
+  `yarn test --run` (vitest).
+- `jsdom` is CRA's default test env — no extra install.
+
+### E2 — Endpoint paths: flat backend convention
+The 2.4A backend uses **flat** line/item paths. The Build Pack §R3.1 nested
+form is incorrect. Use these in §R3.3 client functions and §R8.3 MSW handlers:
+
+| # | Build Pack (nested) | Actual (flat) |
+|---|---|---|
+| 9 | `PATCH /budgets/:b/lines/:l` | `PATCH /budget-lines/:l` |
+| 10 | `POST /budgets/:b/lines/:l/items` | `POST /budget-lines/:l/items` |
+| 11 | `PATCH /budgets/:b/lines/:l/items/:i` | `PATCH /budget-line-items/:i` |
+| 12 | `DELETE /budgets/:b/lines/:l/items/:i` | `DELETE /budget-line-items/:i` |
+| 13 | `GET /budgets/:b/lines/:l/items` | `GET /budget-lines/:l/items` |
+| 15 | `POST /budgets/:b/lines/reorder` | `POST /budget-lines/reorder` |
+
+Hook signatures keep `budgetId` for cache-key scoping even though URLs drop it.
+MSW handlers in §R8.3 also drop the budget segment.
+
+### E3 — `lib/api.js` baseURL adapter
+`lib/api.js` is axios + `withCredentials: true` with **baseURL = `/api`**
+(not `/api/v1`). All callers prepend `/v1/...` manually. New §R3 client
+functions must do the same: `api.get('/v1/projects/${projectId}/budgets')`,
+NOT `api.get('/projects/${projectId}/budgets')`. MSW handlers stay at
+`/api/v1/...` because axios produces the full URL.
+
+### E4 — STOP #32 resolved: backend `/budget-lines/reorder` shipped
+The bulk-reorder endpoint was added in commit `d20dfd5`
+(`feat(2.4A.1): bulk-reorder lines endpoint`) as a precursor patch.
+Shape:
+```
+POST /api/v1/budget-lines/reorder
+Body: { budget_id: UUID, ordered_line_ids: UUID[] }
+Auth: budgets.edit
+Returns: refreshed budget detail (mirrors lifecycle endpoints)
+Status map: 400 partial/duplicate/foreign · 403 perm · 404 unknown · 409 locked
+```
+The frontend `useReorderBudgetLines` hook in §R6 invalidates the
+`['budget', budgetId]` key on success and rolls back optimistic updates on
+failure. Body uses `ordered_line_ids` (snake_case) to match backend Pydantic.
+
+### E5 — D12 / D13 hook wrappers shipped in §R3
+`useApprovedAppraisals` and `useCostCodes` do not exist in the current
+tree. Thin TanStack Query wrappers are written as part of §R3, at:
+- `frontend/src/hooks/appraisals.js` — `useApprovedAppraisals(projectId, { enabled })`
+- `frontend/src/hooks/costCodes.js` — `useCostCodes(projectId)`
+Both use the existing API endpoints. See §R3 implementations for details.
+
+### E6 — Tailwind brand tokens have variant sub-keys (DEFAULT/hover/foreground)
+The tailwind.config.js `sy-teal` and `sy-orange` namespaces have nested
+`DEFAULT`, `hover`, `foreground` keys backed by CSS variables. The Build
+Pack's "use `bg-sy-teal text-white hover:brightness-110`" rule still holds
+(simpler + brightness-110 is more reliable than the hover token), but
+the assertion that variant classes "don't exist" in §R0 STOP gate is
+factually wrong. Do NOT introduce variant classes in new code; existing
+references in legacy components stay as-is.
+
+---
+
+
 
 ## §R0 — Preflight / baseline
 
