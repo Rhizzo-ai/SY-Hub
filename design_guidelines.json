@@ -153,6 +153,15 @@
       }
     }
   },
+  "brand_palette": {
+    "primary_teal": "#0F6A7A",
+    "primary_teal_hover": "#0C5764",
+    "accent_orange": "#FC7827",
+    "accent_orange_hover": "#E36318",
+    "neutral_grey": "#CECECE",
+    "logo_path": "/sy_homes_logo.png",
+    "usage_notes": "Teal for primary CTAs, focus rings, and links. Orange for selective accent (critical alerts, primary action callouts). Slate system in `colors` block remains the dominant neutral palette per Swiss/B2B ledger archetype. Final reconciliation in Track 8 designer engagement."
+  },
   "shadcn_customizations": {
     "button": "Remove extreme rounded corners (use rounded-md). Ensure primary button is slate-900.",
     "badge": "Customize variants for semantic status (active, dormant, struck_off) and insurance urgency.",
