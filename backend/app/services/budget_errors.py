@@ -34,3 +34,12 @@ class BudgetCreationError(BudgetError):
 
     400 at the route layer.
     """
+
+
+class BudgetValidationError(BudgetError):
+    """Caller-side payload validation failure (e.g. reorder list missing
+    or duplicate ids). Distinct from BudgetCreationError so the audit
+    trail stays clean: 'B5 source data' vs 'caller validation'.
+
+    400 at the route layer.
+    """

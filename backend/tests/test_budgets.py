@@ -22,7 +22,7 @@ from decimal import Decimal
 
 import pytest
 from dotenv import load_dotenv
-from sqlalchemy import create_engine, event, text
+from sqlalchemy import create_engine, event, select, text
 
 from tests.conftest import login_with_auto_enroll, plain_login
 
@@ -1340,6 +1340,275 @@ class TestLineEdits:
             f"summary_refreshed_at did not advance: t0={t0_str}, "
             f"t1={t1_str}"
         )
+
+
+# ============================================================================
+# Prompt 2.4A.1 — bulk reorder lines (precursor for 2.4B-i drag-reorder)
+# ============================================================================
+
+@pytest.fixture
+def budget_with_three_lines(admin, project):
+    """Active budget with 3 lines (display_order 0,1,2). Module isolation
+    via the same wipe pattern as fresh_active_budget."""
+    from app.db import SessionLocal
+    db = SessionLocal()
+    try:
+        db.execute(text("DELETE FROM budgets WHERE project_id=:p"),
+                   {"p": project["id"]})
+        db.commit()
+    finally:
+        db.close()
+    aid = _make_approved_appraisal(admin, project["id"])
+    r = admin.post(
+        f"{BASE_URL}/api/v1/projects/{project['id']}/budgets/from-appraisal",
+        json={"source_appraisal_id": aid},
+    )
+    assert r.status_code == 201, r.text
+    bid = r.json()["id"]
+    admin.post(f"{BASE_URL}/api/v1/budgets/{bid}/activate")
+
+    # Inject two extra lines via direct SQL so we have ≥3 lines to reorder.
+    db = SessionLocal()
+    try:
+        from app.models.budgets import Budget, BudgetLine
+        b = db.get(Budget, uuid.UUID(bid))
+        existing_max = max(
+            (ln.display_order for ln in b.lines), default=-1,
+        )
+        entity_id = db.scalar(text(
+            "SELECT id FROM entities WHERE name = 'SY Homes (Shrewsbury) Ltd'"
+        ))
+        # Each extra line needs a distinct (cost_code_id, subcategory) tuple
+        # to satisfy the uq_budget_lines_budget_cost_subcat unique index.
+        # Easiest: distinct cost_code_ids.
+        cc_ids = db.execute(
+            text("SELECT id FROM cost_codes ORDER BY code LIMIT 3")
+        ).scalars().all()
+        assert len(cc_ids) >= 3, "Need 3+ cost codes for reorder fixture"
+        for i, cc in enumerate(cc_ids[1:], start=existing_max + 1):
+            line = BudgetLine(
+                budget_id=b.id, cost_code_id=cc, entity_id=entity_id,
+                line_description=f"Reorder fixture line {i}",
+                original_budget=Decimal(f"{(i + 1) * 10000}.00"),
+                ftc_method="Budget_Remaining", display_order=i,
+            )
+            db.add(line)
+        db.commit()
+    finally:
+        db.close()
+
+    detail = admin.get(f"{BASE_URL}/api/v1/budgets/{bid}").json()
+    assert len(detail["lines"]) >= 3, (
+        f"Reorder fixture expected ≥3 lines, got {len(detail['lines'])}"
+    )
+    return detail
+
+
+class TestBulkReorderLines:
+    """POST /budget-lines/reorder (Prompt 2.4A.1)."""
+
+    def test_reorder_success_reverses_order_and_bumps_updated_at(
+        self, admin, budget_with_three_lines,
+    ):
+        """Happy path: reverse the line order. Verify (a) new display_order
+        matches the submitted order, (b) updated_at advances on every
+        affected line, (c) summary_refreshed_at bumped on the budget."""
+        import time
+        b = budget_with_three_lines
+        bid = b["id"]
+        # Lines come back sorted by display_order asc (see _serialise_budget_detail)
+        ordered_ids = [ln["id"] for ln in b["lines"]]
+        reversed_ids = list(reversed(ordered_ids))
+
+        # Capture pre-reorder updated_at per line for the bump assertion.
+        from app.db import SessionLocal
+        from app.models.budgets import BudgetLine
+        db = SessionLocal()
+        try:
+            pre = {
+                str(ln.id): ln.updated_at
+                for ln in db.scalars(
+                    select(BudgetLine).where(
+                        BudgetLine.budget_id == uuid.UUID(bid),
+                    )
+                )
+            }
+        finally:
+            db.close()
+        t0 = b["summary_refreshed_at"]
+        time.sleep(0.1)
+
+        r = admin.post(
+            f"{BASE_URL}/api/v1/budget-lines/reorder",
+            json={"budget_id": bid, "ordered_line_ids": reversed_ids},
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["id"] == bid
+        # Returned lines sorted asc by display_order — verify the order
+        # matches the submitted ordered_line_ids.
+        returned_ids = [ln["id"] for ln in body["lines"]]
+        assert returned_ids == reversed_ids, (
+            f"Returned order {returned_ids} ≠ submitted {reversed_ids}"
+        )
+        # display_order values are dense 0..N-1
+        for pos, ln in enumerate(body["lines"]):
+            assert ln["display_order"] == pos
+
+        # summary_refreshed_at advanced
+        t1 = body["summary_refreshed_at"]
+        from datetime import datetime
+        assert datetime.fromisoformat(t1.replace("Z", "+00:00")) > \
+               datetime.fromisoformat(t0.replace("Z", "+00:00"))
+
+        # updated_at bumped on every line whose position changed (all 3 here)
+        db = SessionLocal()
+        try:
+            post = {
+                str(ln.id): ln.updated_at
+                for ln in db.scalars(
+                    select(BudgetLine).where(
+                        BudgetLine.budget_id == uuid.UUID(bid),
+                    )
+                )
+            }
+        finally:
+            db.close()
+        for lid in ordered_ids:
+            assert post[lid] > pre[lid], (
+                f"updated_at did not advance on reordered line {lid}: "
+                f"pre={pre[lid]} post={post[lid]}"
+            )
+
+    def test_reorder_rejects_partial_ids_400(
+        self, admin, budget_with_three_lines,
+    ):
+        """Submitting fewer ids than lines on the budget → 400."""
+        b = budget_with_three_lines
+        bid = b["id"]
+        ordered_ids = [ln["id"] for ln in b["lines"]]
+        partial = ordered_ids[:-1]  # drop the last one
+        r = admin.post(
+            f"{BASE_URL}/api/v1/budget-lines/reorder",
+            json={"budget_id": bid, "ordered_line_ids": partial},
+        )
+        assert r.status_code == 400, r.text
+        assert "missing" in r.json()["detail"].lower() or \
+               "every line" in r.json()["detail"].lower()
+
+    def test_reorder_rejects_foreign_id_400(
+        self, admin, budget_with_three_lines,
+    ):
+        """Submitting an unknown UUID alongside the real ones → 400."""
+        b = budget_with_three_lines
+        bid = b["id"]
+        ordered_ids = [ln["id"] for ln in b["lines"]]
+        # Replace one real id with a random uuid → same length, foreign id present.
+        tainted = ordered_ids[:-1] + [str(uuid.uuid4())]
+        r = admin.post(
+            f"{BASE_URL}/api/v1/budget-lines/reorder",
+            json={"budget_id": bid, "ordered_line_ids": tainted},
+        )
+        assert r.status_code == 400, r.text
+        assert "foreign" in r.json()["detail"].lower() or \
+               "every line" in r.json()["detail"].lower()
+
+    def test_reorder_rejects_duplicate_ids_400(
+        self, admin, budget_with_three_lines,
+    ):
+        """Submitting an id twice (same length as line count) → 400."""
+        b = budget_with_three_lines
+        bid = b["id"]
+        ordered_ids = [ln["id"] for ln in b["lines"]]
+        # Duplicate the first id, drop the last to keep the length correct.
+        dup = [ordered_ids[0]] + ordered_ids[:-1]
+        r = admin.post(
+            f"{BASE_URL}/api/v1/budget-lines/reorder",
+            json={"budget_id": bid, "ordered_line_ids": dup},
+        )
+        assert r.status_code == 400, r.text
+        assert "duplicate" in r.json()["detail"].lower()
+
+    def test_reorder_requires_budgets_edit_perm_403(
+        self, readonly, budget_with_three_lines,
+    ):
+        """test-readonly@example.test has budgets.view but not budgets.edit."""
+        b = budget_with_three_lines
+        bid = b["id"]
+        ordered_ids = [ln["id"] for ln in b["lines"]]
+        r = readonly.post(
+            f"{BASE_URL}/api/v1/budget-lines/reorder",
+            json={"budget_id": bid, "ordered_line_ids": ordered_ids},
+        )
+        assert r.status_code == 403, r.text
+
+    def test_reorder_locked_budget_returns_409(
+        self, admin, budget_with_three_lines,
+    ):
+        """Lock the budget, then a reorder attempt → 409."""
+        b = budget_with_three_lines
+        bid = b["id"]
+        rl = admin.post(f"{BASE_URL}/api/v1/budgets/{bid}/lock")
+        assert rl.status_code == 200, rl.text
+
+        ordered_ids = [ln["id"] for ln in b["lines"]]
+        reversed_ids = list(reversed(ordered_ids))
+        r = admin.post(
+            f"{BASE_URL}/api/v1/budget-lines/reorder",
+            json={"budget_id": bid, "ordered_line_ids": reversed_ids},
+        )
+        assert r.status_code == 409, r.text
+        assert "locked" in r.json()["detail"].lower()
+
+    def test_reorder_unknown_budget_returns_404(self, admin):
+        """Non-existent budget id → 404."""
+        ghost = str(uuid.uuid4())
+        # Need ordered_line_ids non-empty to pass schema validation.
+        r = admin.post(
+            f"{BASE_URL}/api/v1/budget-lines/reorder",
+            json={"budget_id": ghost, "ordered_line_ids": [str(uuid.uuid4())]},
+        )
+        assert r.status_code == 404, r.text
+
+    def test_reorder_writes_audit_row(
+        self, admin, budget_with_three_lines,
+    ):
+        """Audit log row written for the reorder with field_changes per
+        affected line + metadata.kind == 'lines_reorder'."""
+        b = budget_with_three_lines
+        bid = b["id"]
+        ordered_ids = [ln["id"] for ln in b["lines"]]
+        reversed_ids = list(reversed(ordered_ids))
+        r = admin.post(
+            f"{BASE_URL}/api/v1/budget-lines/reorder",
+            json={"budget_id": bid, "ordered_line_ids": reversed_ids},
+        )
+        assert r.status_code == 200, r.text
+
+        from app.db import SessionLocal
+        db = SessionLocal()
+        try:
+            row = db.execute(text("""
+                SELECT field_changes, metadata_json FROM audit_log
+                WHERE resource_type='budget_lines'
+                  AND resource_id=:bid
+                  AND metadata_json->>'kind' = 'lines_reorder'
+                ORDER BY created_at DESC LIMIT 1
+            """), {"bid": bid}).first()
+        finally:
+            db.close()
+        assert row is not None, (
+            "No audit row found for reorder action on budget " + bid
+        )
+        field_changes, metadata = row[0], row[1]
+        assert metadata["kind"] == "lines_reorder"
+        assert metadata["total_lines"] == 3
+        assert metadata["lines_affected"] >= 2  # reversed-3-list moves 2+
+        assert isinstance(field_changes, list)
+        # Every audit field_change entry references display_order
+        for entry in field_changes:
+            assert entry["field"] == "display_order"
+
 
 
 class TestLineItems:

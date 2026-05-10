@@ -26,7 +26,7 @@ from app.models.entity import Entity
 from app.models.projects import Project
 from app.models.user import User
 from app.services.budget_errors import (
-    BudgetNotFoundError, BudgetStateError,
+    BudgetNotFoundError, BudgetStateError, BudgetValidationError,
 )
 from app.services.budgets import (
     _scope_check_project, _load_budget_for_write, recompute_summary,
@@ -247,6 +247,102 @@ def delete_line(
     recompute_summary(db, b)
     db.flush()
     return b
+
+
+# ----------------------------------------------------------------------
+# Bulk reorder (Prompt 2.4A.1 — precursor patch for 2.4B-i drag-reorder)
+# ----------------------------------------------------------------------
+def bulk_reorder_lines(
+    db: Session,
+    *,
+    budget_id: uuid.UUID,
+    user: User,
+    perms: UserPermissions,
+    ordered_line_ids: list[uuid.UUID],
+) -> tuple[Budget, list[dict]]:
+    """Atomically rewrite `display_order` on every line of a budget.
+
+    Contract:
+      - `ordered_line_ids` MUST contain every line on the budget exactly once
+        (no missing, no foreign, no duplicates). A partial / duplicated /
+        foreign list raises `BudgetValidationError` -> 400 at route layer.
+      - Budget must be in a non-frozen status (Draft or Active). Frozen
+        statuses raise `BudgetStateError` -> 409.
+      - Cross-tenant or unknown budget raises `BudgetNotFoundError` -> 404.
+      - All writes happen in a single transaction under a SELECT ... FOR
+        UPDATE on the parent budget (via `_load_budget_for_write`), so two
+        concurrent reorders serialise rather than racing.
+      - Every affected line's `updated_at` is bumped to `now()` (line-level
+        "version" proxy until 2.4B-i ships a true version column).
+
+    Returns `(budget, changes)` where `changes` is a per-line list of
+    `{id, before, after}` describing the position delta. Lines whose
+    position is unchanged are omitted from `changes` so the audit row
+    stays tight.
+    """
+    b = _load_budget_for_write(db, budget_id, user, perms, lock_for_update=True)
+    if b.status in LINE_FROZEN_BUDGET_STATUSES:
+        raise BudgetStateError(
+            f"Cannot reorder lines on a {b.status} budget"
+        )
+
+    if not ordered_line_ids:
+        raise BudgetValidationError("ordered_line_ids must be non-empty")
+    if len(ordered_line_ids) != len(set(ordered_line_ids)):
+        raise BudgetValidationError("ordered_line_ids contains duplicates")
+
+    current_lines = db.scalars(
+        select(BudgetLine).where(BudgetLine.budget_id == b.id)
+    ).all()
+    current_ids: set[uuid.UUID] = {ln.id for ln in current_lines}
+    submitted_ids: set[uuid.UUID] = set(ordered_line_ids)
+
+    if submitted_ids != current_ids:
+        foreign = sorted(str(i) for i in (submitted_ids - current_ids))
+        missing = sorted(str(i) for i in (current_ids - submitted_ids))
+        parts: list[str] = [
+            "ordered_line_ids must contain every line on this budget "
+            "exactly once",
+        ]
+        if foreign:
+            parts.append(f"foreign ids: {foreign}")
+        if missing:
+            parts.append(f"missing ids: {missing}")
+        raise BudgetValidationError("; ".join(parts))
+
+    lines_by_id: dict[uuid.UUID, BudgetLine] = {ln.id: ln for ln in current_lines}
+    changes: list[dict] = []
+    for new_pos, line_id in enumerate(ordered_line_ids):
+        line = lines_by_id[line_id]
+        before = line.display_order
+        if before != new_pos:
+            changes.append({
+                "id": str(line_id),
+                "before": before,
+                "after": new_pos,
+            })
+        # Always set: even unchanged lines may need updated_at bumped if the
+        # caller wants the line-level "version" proxy advanced. We only
+        # actually touch updated_at when the order changed; unchanged
+        # lines are no-ops at the SQL layer.
+        line.display_order = new_pos
+
+    # Stamp updated_at on every affected line. Done in a separate pass so
+    # the timestamp is uniform across the batch (mirrors recompute_summary).
+    if changes:
+        from sqlalchemy.sql import func as sa_func
+        for entry in changes:
+            ln = lines_by_id[uuid.UUID(entry["id"])]
+            ln.updated_at = sa_func.now()
+
+    db.flush()
+    db.refresh(b, attribute_names=["lines"])
+    # Reorder doesn't touch budget totals, but recompute_summary stamps
+    # `summary_refreshed_at` which the frontend uses as a cache-bust signal.
+    recompute_summary(db, b)
+    db.flush()
+    return b, changes
+
 
 
 # ----------------------------------------------------------------------

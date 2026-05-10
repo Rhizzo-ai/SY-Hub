@@ -1,6 +1,6 @@
-"""Budgets API — Prompt 2.4A.
+"""Budgets API — Prompt 2.4A (+ 2.4A.1 reorder precursor).
 
-Mounts under /api/v1. 14 endpoints:
+Mounts under /api/v1. 15 endpoints:
 
   Project-scoped:
     GET    /projects/{project_id}/budgets                       list
@@ -16,6 +16,7 @@ Mounts under /api/v1. 14 endpoints:
 
   Lines:
     PATCH  /budget-lines/{line_id}                              edit a single line
+    POST   /budget-lines/reorder                                bulk reorder (2.4A.1)
 
   Items (line-scoped + standalone):
     GET    /budget-lines/{line_id}/items
@@ -53,13 +54,14 @@ from app.models.user import User
 from app.schemas.budgets import (
     CreateBudgetFromAppraisalRequest, CreateNewVersionRequest,
     UpdateBudgetLineRequest, CreateBudgetLineItemRequest,
-    UpdateBudgetLineItemRequest,
+    UpdateBudgetLineItemRequest, ReorderBudgetLinesRequest,
 )
 from app.services import budgets as budget_svc
 from app.services import budget_lines as line_svc
 from app.services.audit import record_audit
 from app.services.budget_errors import (
     BudgetCreationError, BudgetNotFoundError, BudgetStateError,
+    BudgetValidationError,
 )
 
 
@@ -73,6 +75,8 @@ router = APIRouter(tags=["budgets"])
 def _map(exc: Exception):
     if isinstance(exc, BudgetNotFoundError):
         return HTTPException(404, str(exc) or "Budget not found")
+    if isinstance(exc, BudgetValidationError):
+        return HTTPException(400, str(exc))
     if isinstance(exc, BudgetCreationError):
         return HTTPException(400, str(exc))
     if isinstance(exc, BudgetStateError):
@@ -458,6 +462,62 @@ def update_line(
     include_sensitive = perms.has("budgets.view_sensitive") or perms.is_super_admin
     return _serialise_line(line, include_sensitive=include_sensitive,
                            include_items=True)
+
+
+# ---------------------------------------------------------------------
+# Endpoint 9b: bulk reorder lines (Prompt 2.4A.1 — precursor for 2.4B-i)
+# ---------------------------------------------------------------------
+
+@router.post("/budget-lines/reorder")
+def reorder_lines(
+    body: ReorderBudgetLinesRequest,
+    request: Request,
+    current: User = Depends(get_current_user),
+    perms: UserPermissions = Depends(require_permission("budgets.edit")),
+    db: Session = Depends(get_db),
+):
+    """Atomically reorder every line on a budget.
+
+    Body: `{ budget_id, ordered_line_ids: UUID[] }`. The list MUST include
+    every line on the budget exactly once. Returns the refreshed budget
+    detail (mirrors lifecycle endpoint shape).
+
+    Error map:
+      - 400  ordered_line_ids partial / duplicates / foreign
+      - 403  caller lacks `budgets.edit`
+      - 404  budget unknown or cross-tenant
+      - 409  budget is Locked / Closed / Superseded
+    """
+    try:
+        b, changes = line_svc.bulk_reorder_lines(
+            db, budget_id=body.budget_id, user=current, perms=perms,
+            ordered_line_ids=list(body.ordered_line_ids),
+        )
+    except (BudgetValidationError, BudgetStateError, BudgetNotFoundError) as exc:
+        raise _map(exc)
+
+    record_audit(
+        db, action="Update", resource_type="budget_lines",
+        resource_id=b.id, actor_user_id=current.id,
+        project_id=b.project_id,
+        field_changes=[
+            {"field": "display_order", "old": str(c["before"]),
+             "new": str(c["after"])}
+            for c in changes
+        ],
+        metadata={
+            "budget_id": str(b.id),
+            "kind": "lines_reorder",
+            "lines_affected": len(changes),
+            "total_lines": len(body.ordered_line_ids),
+        },
+        request=request,
+    )
+    db.commit()
+    db.refresh(b)
+    include_sensitive = perms.has("budgets.view_sensitive") or perms.is_super_admin
+    return _serialise_budget_detail(b, include_sensitive=include_sensitive)
+
 
 
 # ---------------------------------------------------------------------

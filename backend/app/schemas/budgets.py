@@ -64,3 +64,17 @@ class UpdateBudgetLineItemRequest(BaseModel):
     amount: Optional[Decimal] = None
     notes: Optional[str] = None
     display_order: Optional[int] = None
+
+
+# ---------- Bulk reorder (Prompt 2.4A.1) --------------------------------
+
+class ReorderBudgetLinesRequest(BaseModel):
+    """Body for POST /budget-lines/reorder.
+
+    Must contain every line on the budget exactly once, in the new desired
+    order. The service performs a single-transaction atomic rewrite of
+    display_order on each line. See services.budget_lines.bulk_reorder_lines.
+    """
+    model_config = ConfigDict(extra="forbid")
+    budget_id: uuid.UUID
+    ordered_line_ids: list[uuid.UUID] = Field(min_length=1, max_length=500)
