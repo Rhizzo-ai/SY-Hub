@@ -17,6 +17,30 @@ Frontend / actuals / commitments / Xero are out of scope until later prompts.
 
 ## What's been implemented
 
+### 2026-05-10 — Prompt 2.4B-i Budgets Frontend §R0–§R5 ✓
+- §R0–R3: stack installed (TanStack Query v5 + Table v8 + dnd-kit + MSW),
+  routes wired, Zod schemas + API clients + 14 React-Query hooks against
+  the flat backend paths. Erratas E1–E9 (Jest/CRA, flat paths, baseURL,
+  hooks D12/D13, perm rename, schema rename, sensitive optional, refetch-
+  on-save conflict UX) baked in.
+- §R4: BudgetsList (TanStack Table v8) with status + variance badges,
+  CreateFromAppraisal dialog (lazy fetch, exclude existing source
+  appraisals), refresh-attention button. `budgets.view` perm gate.
+- §R5: BudgetHeader (5 tiles + variance row), LifecycleActions
+  (Activate / Lock / Unlock / Close / New Version) gated by status +
+  backend-verified perms (`budgets.edit`, `budgets.admin`) and
+  `useIsDesktop()`, SensitiveBanner for users without
+  `budgets.view_sensitive`, ConfirmDialog with reason capture +
+  brand-fixed sy-teal/sy-orange.
+- New: `lib/budgetCapability.js`, `components/budgets/{StatusBadge,
+  VarianceBadge, BudgetsTable, CreateFromAppraisalDialog, ConfirmDialog,
+  SensitiveBanner, BudgetHeader, LifecycleActions}.jsx`.
+- Build smoke OK: `main.js` 362.82 kB. Lint clean. Verified end-to-end:
+  Draft → Active transition via `POST /api/v1/budgets/:id/activate`.
+- **NEXT (next session):** §R6 BudgetLinesGrid (dnd-kit + inline edit),
+  §R7 LineDrawer + LineItemsPanel + CostCodePicker (refetch-on-save +
+  `updated_at` banner per E9), §R8 component tests (Jest/CRA), §R9/R10.
+
 ### 2026-05-09 — Prompt 2.4A Budgets Core (Backend) ✓
 - Migration 0024_budgets (3 tables, 3 enums, 7 indexes incl. 2 partial unique).
 - ORM models, services (`budgets`, `budget_lines`, `budget_errors`).
@@ -35,8 +59,17 @@ Frontend / actuals / commitments / Xero are out of scope until later prompts.
 
 ## P0 / P1 / P2 backlog (next prompts)
 
-### P0 — next prompt (Chat 17, Prompt 2.4B)
-- Budgets Frontend + E2E (React + Playwright).
+### P0 — current prompt (Chat 17, Prompt 2.4B-i Frontend)
+- R0–R5 ✓ shipped (this session).
+- R6 BudgetLinesGrid (dnd-kit DnD + optimistic inline edit on
+  description/notes/% complete).
+- R7 LineDrawer + LineItemsPanel + CostCodePicker (refetch-on-save +
+  `updated_at` mismatch banner, sensitive-field renders, items CRUD).
+- R8 Component tests — 29 functions across 10 files via Jest/CRA (E1).
+- R9 Self-report template / R10 chat-end ritual + bundle delta.
+
+### P0 — successor prompt (Chat 18, Prompt 2.4B-ii)
+- Budgets E2E (Playwright).
 
 ### P1 — Phase 2 backlog (12 items, see SY_Hub_Phase2_Backlog.md)
 1. AppraisalUnit aggregation in `create_from_appraisal` (post-Prompt 3.x)
