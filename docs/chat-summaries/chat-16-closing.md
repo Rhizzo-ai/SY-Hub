@@ -3,7 +3,7 @@
 **Prompt**: 2.4A Budgets Core (Backend)
 **Build Pack**: `/app/docs/SY_Hub_Prompt_2_4A_Backend_Build_Pack.md` (v3 + locked tweaks)
 **Date closed**: 2026-05-09
-**Final test status**: **641/641 passing** (597 baseline + 44 new in `tests/test_budgets.py`)
+**Final test status**: **664/664 passing** (after Chat 16.5; was 641 at 2.4A close)
 
 ---
 
@@ -100,15 +100,15 @@ Legend: ✅ direct map · 🟡 covered (parameterisation/grouping/implicit asser
 | 3 | test_create_blocked_when_no_approved_appraisal_exists | ✅ | TestCreateFromAppraisal::test_create_404_for_unknown_appraisal |
 | 4 | test_create_blocked_when_existing_current_budget | ✅ | TestCreateFromAppraisal::test_create_blocks_when_existing_current_non_terminal |
 | 5 | test_clone_preserves_cost_code_id_and_entity_id_per_line | 🟡 | covered implicitly by test_merge_same_cost_code_to_one_line + test_create_via_api (lines list inspected) |
-| 6 | test_original_budget_total_matches_appraisal_total_cost | ❌ | not shipped — no explicit cross-check assertion |
+| 6 | test_original_budget_total_matches_appraisal_total_cost | ✅ | TestCreateFromAppraisal::test_original_budget_total_matches_appraisal_total_cost |
 | 7 | test_create_writes_audit_log_with_metadata | ✅ | TestAuditLogCoverage::test_create_lock_unlock_close_all_audited (asserts Create kind=create_from_appraisal) |
 | 8 | test_create_handles_appraisal_units_aggregation | ❌ | DEFERRED per locked decision C1 (AppraisalUnit has no cost_code_id) |
 | 9 | test_create_blocked_when_cost_line_effective_value_null (B5) | ✅ | TestServiceGuards::test_b5_guard_null_cost_code_id + ::test_b5_guard_null_amount |
-| 10 | test_create_handles_zero_cost_lines_appraisal | ❌ | not shipped |
+| 10 | test_create_handles_zero_cost_lines_appraisal | ✅ | TestCreateFromAppraisal::test_create_handles_zero_cost_lines_appraisal (service-layer; HTTP submit/approve pipeline rejects empty cost-line appraisals on /submit) |
 | 11 | test_create_from_appraisal_merges_cost_line_and_unit_aggregation | 🟡 | TestServiceGuards::test_merge_same_cost_code_to_one_line (cost_line+cost_line merge proven; unit aggregation half deferred via C1) |
 | 12 | test_concurrent_create_from_appraisal_one_succeeds_one_409s (B3 sim) | 🟡 | TestConcurrencyInvariant::test_partial_index_blocks_duplicate_current (raw-SQL injection sim) |
 | 13 | test_one_current_budget_per_project_invariant (B3 sim) | ✅ | TestConcurrencyInvariant::test_one_current_per_project_partial_index_exists + ::test_partial_index_blocks_duplicate_current |
-| 14 | test_concurrent_lock_serialised_via_select_for_update | ❌ | not shipped — needs threading harness |
+| 14 | test_concurrent_lock_serialised_via_select_for_update | ✅ | TestConcurrencyInvariant::test_concurrent_lock_serialised_via_select_for_update (deterministic via two raw psycopg-3 connections + FOR UPDATE NOWAIT / SQLSTATE 55P03) |
 | 15 | test_tenant_isolation_get_budget_detail_404_cross_tenant | 🟡 | TestTenantIsolation::test_cross_tenant_load_returns_404 — **service-layer only** (Phase 1 HTTP login is single-tenant by design) |
 | 16 | test_tenant_isolation_list_budgets_excludes_other_tenants | 🟡 | TestTenantIsolation::test_cross_tenant_list_excludes — service-layer only (same caveat) |
 | 17 | test_tenant_isolation_create_from_appraisal_rejects_cross_tenant_appraisal | ❌ | not shipped at HTTP layer (single-tenant login limitation) |
@@ -124,30 +124,30 @@ Legend: ✅ direct map · 🟡 covered (parameterisation/grouping/implicit asser
 | 27 | test_close_blocked_from_terminal (param) | ✅ | TestStateMachine::test_full_lifecycle (Closed→close → 409) |
 | 28 | test_create_new_version_supersedes_old | ✅ | TestNewVersion::test_new_version_supersedes_old |
 | 29 | test_create_new_version_clones_lines_with_current_as_original | 🟡 | TestNewVersion::test_new_version_supersedes_old asserts line count carries; doesn't assert "current → original" mapping explicitly |
-| 30 | test_create_new_version_carries_programme_task_link | ❌ | not shipped (locked decision 13 implementation present in service) |
+| 30 | test_create_new_version_carries_programme_task_link | ✅ | TestNewVersion::test_create_new_version_carries_programme_task_link (uses raw-SQL UPDATE to seed `linked_programme_task_id` since the column has no FK and the PATCH schema omits it) |
 | 31 | test_create_new_version_clones_items_with_lines | ✅ | TestNewVersion::test_create_new_version_clones_items_with_lines — B11 wins; items ARE cloned per service. Closing's original spec corrected via Chat 16.5 follow-up. |
 | 32 | test_create_new_version_blocked_from_terminal | 🟡 | TestNewVersion::test_new_version_blocked_from_draft covers Draft (close-enough rejection); terminal not exercised |
-| 33 | test_lock_in_memory_line_state_consistent_with_db (B8) | ❌ | not shipped — `synchronize_session='fetch'` invariant verified by hand only |
-| 34 | test_unlock_in_memory_line_state_consistent_with_db (B8) | ❌ | not shipped (same) |
+| 33 | test_lock_in_memory_line_state_consistent_with_db | ✅ | TestStateMachine::test_lock_in_memory_line_state_consistent_with_db (lock() mutates header only in 2.4A; assertion narrowed to in-memory header coherence + line-count parity vs DB) |
+| 34 | test_unlock_in_memory_line_state_consistent_with_db | ✅ | TestStateMachine::test_unlock_in_memory_line_state_consistent_with_db (mirror of #33 for unlock()) |
 | 35 | test_lock_writes_audit_log_with_previous_status_metadata | ✅ | TestAuditLogCoverage::test_create_lock_unlock_close_all_audited (asserts new_status, kind) |
 | 36 | test_unlock_writes_audit_log_with_director_metadata | 🟡 | covered by combined test (uses admin session, not director-specific) |
 | 37 | test_close_writes_audit_log | ✅ | TestAuditLogCoverage::test_create_lock_unlock_close_all_audited |
 | 38 | test_activate_writes_audit_log | ✅ | TestAuditLogCoverage::test_create_lock_unlock_close_all_audited |
-| 39 | test_create_version_writes_audit_log_with_superseded_id | ❌ | service writes the metadata; not asserted in tests |
+| 39 | test_create_version_writes_audit_log_with_superseded_id | ✅ | TestAuditLogCoverage::test_create_version_writes_audit_log_with_superseded_id (asserts metadata_json->>'kind'='new_version' AND superseded_id == old.id) |
 | 40 | test_item_crud_writes_audit_log (param) | ✅ | TestAuditLogCoverage::test_item_crud_audited |
-| 41 | test_ftc_manual_uses_provided_value | ❌ | not shipped |
+| 41 | test_ftc_manual_uses_provided_value | ✅ | TestRecomputeMath::test_ftc_manual_uses_provided_value |
 | 42 | test_ftc_budget_remaining | ✅ | TestRecomputeMath::test_recompute_line_budget_remaining |
 | 43 | test_ftc_budget_remaining_zero_floor | 🟡 | implicit in test_recompute_line_red_variance (max(0,…) verified via FTC=0 assertion) |
 | 44 | test_ftc_committed_only_returns_zero | ✅ | TestRecomputeMath::test_recompute_line_committed_only |
-| 45 | test_ftc_percentage_complete | ❌ | not shipped |
-| 46 | test_ftc_percentage_complete_falls_back_to_budget_remaining_when_zero | ❌ | not shipped |
+| 45 | test_ftc_percentage_complete | ✅ | TestRecomputeMath::test_ftc_percentage_complete (pct=25 → ftc = max(0, current_budget * 0.75 - actuals - cni)) |
+| 46 | test_ftc_percentage_complete_falls_back_to_budget_remaining_when_zero | ✅ | TestRecomputeMath::test_ftc_percentage_complete_falls_back_to_budget_remaining_when_zero (pct=0 collapses to Budget_Remaining semantics naturally) |
 | 47 | test_ffc_equals_actuals_plus_cni_plus_ftc | ✅ | TestRecomputeMath::test_recompute_line_budget_remaining (asserts FFC=1100) |
 | 48 | test_variance_value_equals_ffc_minus_current_budget | ✅ | TestRecomputeMath::test_recompute_line_red_variance (variance_value=500) |
-| 49 | test_variance_pct_zero_when_current_budget_zero | ❌ | not shipped |
+| 49 | test_variance_pct_zero_when_current_budget_zero | ✅ | TestVarianceClassification::test_variance_pct_zero_when_current_budget_zero (pure recompute primitive; no DB) |
 | 50 | test_variance_status_green_amber_red_thresholds (param) | 🟡 | TestVarianceClassification::test_{under_budget,below_amber,amber_band,red_band} — 4 tests cover the 3 bands + boundary |
 | 51 | test_variance_status_uses_system_config_thresholds | ❌ | DEFERRED per locked decision 11 (SystemConfig columns not added) |
 | 52 | test_current_budget_equals_original_plus_approved_changes | ✅ | TestRecomputeMath::test_recompute_line_budget_remaining (asserts current=1100=1000+100) |
-| 53 | test_variance_pct_overflow_handled_gracefully | ❌ | not shipped |
+| 53 | test_variance_pct_overflow_handled_gracefully | ✅ | TestRecomputeMath::test_variance_pct_overflow_handled_gracefully (Python-layer only; flush of NUMERIC(6,3) overflow is caller's contract per service note) |
 | 54 | test_update_line_unlocked_allows_description_edit | ✅ | TestLineEdits::test_patch_line_description |
 | 55 | test_update_line_locked_rejects_description_edit | 🟡 | the existing service blocks ALL line edits when Locked; covered conceptually by `test_item_crud_blocked_on_locked_budget` (item path); line path 409 assumed by service code |
 | 56 | test_update_line_locked_allows_ftc_method_change | ❌ | NOT applicable to shipped semantics — existing service blocks ALL line edits when parent Locked (Build Pack v3 §R3 included a partial-locked-edit allowlist; shipped service is stricter and matches `LINE_FROZEN_BUDGET_STATUSES = {Locked, Closed, Superseded}`) |
@@ -158,54 +158,56 @@ Legend: ✅ direct map · 🟡 covered (parameterisation/grouping/implicit asser
 | 61 | test_patch_line_blocked_when_parent_budget_superseded_409 (B2) | 🟡 | same as #60 |
 | 62 | test_header_caches_refresh_after_line_edit (B1) | ✅ | TestLineEdits::test_line_changes_recompute_header |
 | 63 | test_create_item_attaches_to_line | ✅ | TestLineItems::test_create_list_update_delete_item |
-| 64 | test_create_item_via_relationship_collection_populated (B13) | ❌ | not shipped — `line.items.append` invariant verified by hand |
-| 65 | test_item_amount_validation_warns_but_does_not_block | ❌ | not shipped |
-| 66 | test_delete_line_cascades_items | ❌ | not shipped — cascade is enforced at DB FK level (verified by migration test) |
+| 64 | test_create_item_via_relationship_collection_populated | ✅ | TestLineItems::test_create_item_via_relationship_collection_populated (back_populates round-trip via db.expire + db.get) |
+| 65 | test_item_amount_validation_warns_but_does_not_block | ✅ | TestLineItems::test_item_amount_validation_warns_but_does_not_block |
+| 66 | test_delete_line_cascades_items | ✅ | TestLineItems::test_delete_line_cascades_items (raw-SQL DELETE → DB-level FK cascade fires) |
 | 67 | test_item_crud_blocked_when_parent_budget_terminal | 🟡 | TestLineItems::test_item_crud_blocked_on_locked_budget covers Locked; Closed/Superseded not exercised |
 | 68 | test_update_item_cross_tenant_404 | ❌ | not shipped at HTTP layer (single-tenant login) |
 | 69 | test_header_caches_sum_lines_correctly (S1) | 🟡 | TestLineEdits::test_line_changes_recompute_header asserts header total_budget changes after line edit |
-| 70 | test_header_summary_refreshed_at_advances_on_recompute | ❌ | not shipped |
+| 70 | test_header_summary_refreshed_at_advances_on_recompute | ✅ | TestLineEdits::test_header_summary_refreshed_at_advances_on_recompute |
 | 71 | test_unique_constraint_enforced_when_subcategory_null (B6) | 🟡 | partial-unique index existence verified at migration level via TestConcurrencyInvariant |
-| 72 | test_existing_budgets_approve_perm_still_present (B23) | ❌ | not shipped — regression guard skipped |
+| 72 | test_existing_budgets_approve_perm_still_present (B23) | ✅ | TestBudgetPermissions::test_existing_budgets_approve_perm_still_present (asserts persisted permissions row exists) |
 | 73 | test_pm_role_has_budgets_create_after_seed | ✅ | TestBudgetPermissions::test_pm_role_has_budgets_create |
-| 74 | test_pm_role_does_not_have_budgets_admin | ❌ | not shipped |
+| 74 | test_pm_role_does_not_have_budgets_admin | ✅ | TestBudgetPermissions::test_pm_role_does_not_have_budgets_admin (negative perm guard at both seed-source and role_permissions) |
 | 75 | test_director_role_has_budgets_admin_via_set_difference | ✅ | TestBudgetPermissions::test_director_has_budgets_admin |
 | 76 | test_requires_attention_flags_red_variance | 🟡 | TestRefreshAttention::test_admin_scan_runs invokes the endpoint; doesn't construct a Red line and assert flagging |
 | 77 | test_requires_attention_flags_stale_actuals | ❌ | DEFERRED — clause 2 (stale actuals) gated on Prompt 2.5 |
-| 78 | test_requires_attention_clears_when_no_longer_matching | ❌ | not shipped — service logic exists |
+| 78 | test_requires_attention_clears_when_no_longer_matching | ✅ | TestRefreshAttention::test_requires_attention_clears_when_no_longer_matching (Red→Green flip across two scans; cleared count >= 1) |
 | 79 | test_post_from_appraisal_201_with_pm_session | ✅ | TestPermissionGating::test_pm_can_create_from_appraisal |
 | 80 | test_post_from_appraisal_403_with_readonly_session | ✅ | TestPermissionGating::test_readonly_cannot_create |
-| 81 | test_post_from_appraisal_403_with_site_manager_session | ❌ | not shipped — site_manager session not used |
+| 81 | test_post_from_appraisal_403_with_site_manager_session | ✅ | TestPermissionGating::test_post_from_appraisal_403_with_site_manager_session (new `site_manager` fixture backed by test-site@example.test) |
 | 82 | test_get_budget_detail_includes_lines_eager | ✅ | implicit in TestStateMachine::test_full_lifecycle, TestNewVersion::test_new_version_supersedes_old (lines list inspected) |
 | 83 | test_get_budget_detail_omits_sensitive_for_pm_without_view_sensitive | 🟡 | TestSensitiveGating::test_readonly_misses_sensitive_keys covers via readonly (PM in this seed has view_sensitive) |
 | 84 | test_get_budget_detail_includes_sensitive_for_finance_session | 🟡 | TestSensitiveGating::test_admin_sees_sensitive (admin has view_sensitive); finance session not exercised |
-| 85 | test_post_lock_endpoint_with_pm_session | ❌ | not shipped — PM lock path not exercised |
+| 85 | test_post_lock_endpoint_with_pm_session | ✅ | TestPermissionGating::test_post_lock_endpoint_with_pm_session (PM has budgets.edit → lock 200; unlock requires budgets.admin → covered by #86 asymmetry) |
 | 86 | test_post_unlock_endpoint_403_with_pm_session | ✅ | TestPermissionGating::test_unlock_requires_admin |
 | 87 | test_post_unlock_endpoint_with_director_session | 🟡 | TestStateMachine::test_full_lifecycle uses admin (super_admin); director session not exercised separately |
 | 88 | test_post_new_version_returns_201_supersedes_old | ✅ | TestNewVersion::test_new_version_supersedes_old |
-| 89 | test_get_list_budgets_for_project_filters_by_is_current | ❌ | not shipped — list endpoint smoke not asserted |
+| 89 | test_get_list_budgets_for_project_filters_by_is_current | ✅ | TestStateMachine::test_get_list_budgets_for_project_filters_by_is_current (default → all; ?is_current=true → v2 only; ?is_current=false → v1 only) |
 | 90 | test_post_create_rejects_unknown_fields_via_pydantic_strict (B10) | ✅ | TestLineEdits::test_patch_line_unknown_field_rejected + TestLineItems::test_create_item_rejects_extra_fields |
 | 91 | test_query_count_on_detail_endpoint (S4) | ✅ | TestDetailQueryBudget::test_detail_endpoint_query_count |
 
 ### 1c. Tally
 
-- **Direct ✅**: 27
-- **Implicit / parameterised / grouped 🟡**: 21
-- **Genuine ❌ skips**: 22
+- **Direct ✅**: 27 + 23 = 50
+- **Implicit / parameterised / grouped 🟡**: 21 (unchanged)
+- **Genuine ❌ skips (Bucket C)**: 0 (was 23)
 - **Build Pack target**: 91 numbered tests (Build Pack itself notes "≥65 functions; spec lists 91; parameterisation expansion → ~110 cases")
-- **Shipped function count**: 44 (plus 4 build-pack-extra: TestBudgetPermissions::{budgets_admin_permission_exists, super_admin_has_budgets_admin}, TestRefreshAttention::test_pm_cannot_scan, TestSensitiveGating::test_readonly_misses_sensitive_keys)
+- **Shipped function count**: 67 (44 from 2.4A + 23 from Chat 16.5)
 
 ### 1d. Genuine skips — backlog disposition
 
-The 22 ❌ items split into three buckets:
+After Chat 16.5, the remaining ❌ rows split into three buckets:
 
 **Bucket A — DEFERRED by locked decisions (no patch ever for 2.4A)**: #8, #51, #77 — already in `/app/docs/SY_Hub_Phase2_Backlog.md`.
 
 **Bucket B — Single-tenant login limitation**: #17, #18, #19, #68 — covered by **new** backlog entry #13 (added below).
 
-**Bucket C — Coverage debt (could ship in a small follow-up)**: #6, #10, #14, #25, #26 (Locked→Closed + Draft→Closed), #29, #30, #31, #33, #34, #39, #41, #45, #46, #49, #53, #55, #60, #61, #64, #65, #66, #67, #70, #72, #74, #76, #78, #81, #84, #85, #87, #89.
+**Bucket C — Coverage debt**: ✅ **Discharged in Chat 16.5.** All 23 numbered tests now land in `/app/backend/tests/test_budgets.py` on branch `chore/chat-16.5-coverage-and-brand`. See backlog entry #14 below.
 
-Per Build Pack v3 risk register item "Test count ≥65; spec lists 91 functions" — Bucket C is acknowledged debt, not a blocker. Backlog entry #14 added below.
+**Semantic-NA**: #56, #57, #58 — Build Pack v3 §R3 envisaged a partial-locked-edit allowlist; the shipped service is stricter (`LINE_FROZEN_BUDGET_STATUSES = {Locked, Closed, Superseded}` blocks all line edits). These rows do not match shipped semantics and are intentionally left as ❌.
+
+Per Build Pack v3 risk register item "Test count ≥65; spec lists 91 functions" — Bucket C is now closed; only Buckets A/B and Semantic-NA remain, all with documented justifications.
 
 ---
 
@@ -219,7 +221,7 @@ Per Build Pack v3 risk register item "Test count ≥65; spec lists 91 functions"
   Defer until multi-tenant HTTP login lands. Tests #15–#19 currently service-layer only; HTTP-layer tests for #17, #18, #19, #68 are blocked by Phase 1 single-tenant `get_current_tenant_id`.
 
 - **#14. Coverage debt — 23 numbered tests skipped from Build Pack §R5**
-  Bucket C above. Lists each test by Build Pack number, links to their target service-layer behaviour. No code change required; only test additions. Acceptance: bring counted-skip tally to 0 in a small follow-up prompt before Phase 2 closes.
+  **Discharged in Chat 16.5.** All 23 numbered tests landed in `/app/backend/tests/test_budgets.py` on branch `chore/chat-16.5-coverage-and-brand` (commits 5661560 + the working-tree edits). #31 flipped from spec-as-skip to service-as-canonical (B11 wins) per resolution turn. Backlog entry #14 closed.
 
 The single-tenant caveat is documented in:
 - code: `tests/test_budgets.py` `class TestTenantIsolation` docstring (already in repo)
@@ -238,7 +240,7 @@ The single-tenant caveat is documented in:
 
 - Migration head: `0024_budgets`
 - Permission count: **84** (was 83; +1 `budgets.admin`)
-- Test suite: `pytest tests/ --ignore=tests/test_c3_governance_smoke.py` → **641 passed**
+- Test suite: `pytest tests/ --ignore=tests/test_c3_governance_smoke.py` → **664 passed** (after Chat 16.5; was 641 at 2.4A close)
 - All 14 endpoints registered under `/api/v1`, audit-logged, tenant-scoped via Pattern α
 - Build Pack §R8 verification: ✓
 - Bookkeeping: `/app/CHANGELOG.md` §2.4A entry, `/app/docs/SY_Hub_Phase2_Backlog.md` populated, `/app/memory/PRD.md` refreshed
