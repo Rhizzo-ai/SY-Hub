@@ -1660,20 +1660,23 @@ class TestNewVersion:
             ), {"l": new_line_id}).scalar()
         assert str(carried) == str(fake_task_id)
 
-    def test_create_new_version_does_not_carry_items(
+    def test_create_new_version_clones_items_with_lines(
         self, admin, project,
     ):
-        """Build Pack #31 — items on the OLD version's lines are NOT
-        cloned onto the NEW version's lines. Per spec, items are
-        version-specific work breakdown.
+        """Build Pack #31 — items on the OLD version's lines ARE cloned
+        onto the corresponding NEW version's lines per service B11
+        ('copies lines (and items per B11)').
 
-        STOP-and-report risk: `services/budgets.new_version` (lines
-        572-583) DOES copy items via an explicit
-        `for oi in ol.items: BudgetLineItem(...)` loop, citing B11.
-        If this test fails because items ARE present on the new
-        version, escalate as a spec-vs-service mismatch (chat-16
-        closing's #31 spec vs B11 implementation note) — do NOT
-        modify production code, do NOT modify the assertion."""
+        Resolution of Chat 16.5 STOP #31: B11 is canonical. The
+        chat-16-closing #31 spec ('items are version-specific work
+        breakdown; not cloned') was wrong and has been corrected.
+        Items survive the new_version cloning path; lines are matched
+        across versions by `cost_code_id` (subcategory ignored — every
+        cloned line preserves its parent's items 1:1).
+
+        Asserts: for each new-version line, the count of items equals
+        the count of items on the v1 line with the matching
+        cost_code_id."""
         from app.db import SessionLocal
         db = SessionLocal()
         try:
@@ -1687,29 +1690,55 @@ class TestNewVersion:
             f"{BASE_URL}/api/v1/projects/{project['id']}/budgets/from-appraisal",
             json={"source_appraisal_id": aid},
         )
+        assert r.status_code == 201, r.text
         v1_id = r.json()["id"]
-        v1_line = r.json()["lines"][0]
+        v1_lines = r.json()["lines"]
+        v1_line = v1_lines[0]
         admin.post(f"{BASE_URL}/api/v1/budgets/{v1_id}/activate")
-        # Add at least one item to v1's first line.
-        rc = admin.post(
-            f"{BASE_URL}/api/v1/budget-lines/{v1_line['id']}/items",
-            json={"description": "carry-test-item", "amount": "111.00"},
+
+        # Add 2 items to v1's first line so the count is unambiguous
+        # (1 item per cloned line could be a coincidence; 2 proves it).
+        for desc in ("clone-test-item-a", "clone-test-item-b"):
+            rc = admin.post(
+                f"{BASE_URL}/api/v1/budget-lines/{v1_line['id']}/items",
+                json={"description": desc, "amount": "111.00"},
+            )
+            assert rc.status_code == 201, rc.text
+
+        # Build a {cost_code_id: item_count} map for v1.
+        rv1 = admin.get(f"{BASE_URL}/api/v1/budgets/{v1_id}").json()
+        v1_counts = {
+            l["cost_code_id"]: len(l.get("items", []))
+            for l in rv1["lines"]
+        }
+        assert v1_counts[v1_line["cost_code_id"]] == 2, (
+            f"setup invariant violated: expected 2 items on v1 line, "
+            f"got {v1_counts[v1_line['cost_code_id']]}"
         )
-        assert rc.status_code == 201, rc.text
 
         rv = admin.post(
             f"{BASE_URL}/api/v1/budgets/{v1_id}/new-version",
-            json={"version_label": "v2-no-items"},
+            json={"version_label": "v2-clone-items"},
         )
         assert rv.status_code == 201, rv.text
         new_lines = rv.json()["lines"]
+
+        # Every new-version line's item count matches its v1 counterpart
+        # (matched by cost_code_id).
+        assert len(new_lines) == len(v1_lines), (
+            f"new-version line count {len(new_lines)} ≠ v1 line count "
+            f"{len(v1_lines)}"
+        )
         for nl in new_lines:
-            items = nl.get("items", [])
-            assert items == [], (
-                f"new-version line {nl['id']} carried {len(items)} "
-                f"item(s) from v1; spec #31 mandates items NOT be "
-                f"cloned across versions. If this fires, escalate as "
-                f"spec-vs-service mismatch (B11 vs chat-16 closing)."
+            cc = nl["cost_code_id"]
+            assert cc in v1_counts, (
+                f"new-version line cost_code_id={cc} has no v1 "
+                f"counterpart"
+            )
+            assert len(nl.get("items", [])) == v1_counts[cc], (
+                f"new-version line cc={cc} carried "
+                f"{len(nl.get('items', []))} item(s); expected "
+                f"{v1_counts[cc]} per B11 cloning."
             )
 
 

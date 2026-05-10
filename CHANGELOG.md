@@ -27,6 +27,8 @@ Each entry: date, prompt reference (if applicable), change, rationale.
 
 **No production code changes.** No new migrations. No new dependencies. Permission count unchanged at 84. Alembic head unchanged at `0024_budgets`.
 
+**Resolved STOP #31:** chat-16-closing spec corrected to align with B11 service behaviour. Items DO clone on new-version. Test renamed `test_create_new_version_does_not_carry_items` → `test_create_new_version_clones_items_with_lines`; assertion flipped to verify item-count parity (matched by `cost_code_id`) between old and new version lines. `chat-16-closing.md` row #31 updated ❌→✅. Final test count: 641 → 664 passing.
+
 ## 2.4A — Budgets Core (Backend) (2026-05-09)
 
 ### New: `/app/backend/alembic/versions/0024_budgets.py`

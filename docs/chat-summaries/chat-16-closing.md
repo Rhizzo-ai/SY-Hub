@@ -125,7 +125,7 @@ Legend: ✅ direct map · 🟡 covered (parameterisation/grouping/implicit asser
 | 28 | test_create_new_version_supersedes_old | ✅ | TestNewVersion::test_new_version_supersedes_old |
 | 29 | test_create_new_version_clones_lines_with_current_as_original | 🟡 | TestNewVersion::test_new_version_supersedes_old asserts line count carries; doesn't assert "current → original" mapping explicitly |
 | 30 | test_create_new_version_carries_programme_task_link | ❌ | not shipped (locked decision 13 implementation present in service) |
-| 31 | test_create_new_version_does_not_carry_items | ❌ | not shipped |
+| 31 | test_create_new_version_clones_items_with_lines | ✅ | TestNewVersion::test_create_new_version_clones_items_with_lines — B11 wins; items ARE cloned per service. Closing's original spec corrected via Chat 16.5 follow-up. |
 | 32 | test_create_new_version_blocked_from_terminal | 🟡 | TestNewVersion::test_new_version_blocked_from_draft covers Draft (close-enough rejection); terminal not exercised |
 | 33 | test_lock_in_memory_line_state_consistent_with_db (B8) | ❌ | not shipped — `synchronize_session='fetch'` invariant verified by hand only |
 | 34 | test_unlock_in_memory_line_state_consistent_with_db (B8) | ❌ | not shipped (same) |
