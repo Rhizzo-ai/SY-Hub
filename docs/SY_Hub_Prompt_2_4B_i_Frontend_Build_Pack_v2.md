@@ -185,6 +185,54 @@ the assertion that variant classes "don't exist" in §R0 STOP gate is
 factually wrong. Do NOT introduce variant classes in new code; existing
 references in legacy components stay as-is.
 
+### E7 — Backend response shape differs significantly from §R3.2 schemas
+The Zod schemas in §R3.2 use invented field names that do not exist in
+the backend serialiser (verified against `backend/app/routers/budgets.py`
+`_serialise_*` at 2026-05-10). Per the operator's hard rule "the backend
+is the source of truth", §R3.2 is **superseded** by the schemas in
+`frontend/src/lib/schemas/budgets.js`. Concrete renames the components
+in §R4–§R7 must respect (use the right-hand name throughout):
+
+| §R3.2 (incorrect) | Actual backend |
+|---|---|
+| `BudgetLineItem.unit_cost` | `rate` |
+| `BudgetLineItem.position` | `display_order` |
+| `BudgetLine.description` | `line_description` |
+| `BudgetLine.position` | `display_order` |
+| `BudgetLine.actuals_total` | `actuals_to_date` *(sensitive)* |
+| `BudgetLine.ffc` | `forecast_final_cost` *(sensitive)* |
+| `BudgetLine.variance_value` *(always)* | `variance_value` *(sensitive)* |
+| `BudgetLine.variance_pct` *(always)* | `variance_pct` *(sensitive)* |
+| `BudgetLine.ftc_value` | _does not exist_ |
+| `BudgetLine.version` | _does not exist_ |
+| `BudgetLine.cost_code_label` | _join client-side via `useCostCodes`_ |
+| `Budget.appraisal_id` | `source_appraisal_id` |
+| `Budget.total_original_budget` | `total_budget` |
+| `Budget.total_actuals` *(always)* | `total_actuals` *(sensitive)* |
+| `Budget.total_cni` *(always)* | `total_committed_not_invoiced` *(sensitive)* |
+| `Budget.total_ftc` | `total_forecast_to_complete` *(sensitive)* |
+| `Budget.total_ffc` *(always)* | `forecast_final_cost` *(sensitive)* |
+| `Budget.total_variance` *(always)* | `variance_vs_budget` *(sensitive)* |
+| `Budget.total_variance_pct` *(always)* | `variance_pct` *(sensitive)* |
+| `Budget.total_variance_status` | _not on header (line-level only)_ |
+| `Budget.activated_at` | _does not exist_ (use `created_at`) |
+| `Budget.requires_attention` *(header)* | _line-level only_ |
+| `Budget.superseded_by_id` | _not in serialiser_ |
+| Permission `budgets.read` | `budgets.view` |
+| List response — bare array | `{ project_id, items, count }` |
+| `VarianceStatus = On_Track/Warning/Critical` | `Green/Amber/Red` |
+| `FTCMethod = Budget_Remaining/Manual/Pct_Complete/Locked` | `Manual/Budget_Remaining/Committed_Only/Percentage_Complete` |
+
+### E7.1 / D12.1 — Appraisals endpoint has no query params
+The §R4.5 design assumed `GET /v1/projects/:id/appraisals` accepts
+`governance_status=Approved` + `not_linked_to_current_budget=true`. The
+actual endpoint accepts **no query params** (verified
+`backend/app/routers/appraisals.py:510-527`). `useApprovedAppraisals`
+falls back to client-side filtering in its `select` transformer. Callers
+that need to exclude already-linked appraisals pass an
+`existingSourceAppraisalIds: Set<UUID>` derived from the project's
+budgets list.
+
 ---
 
 

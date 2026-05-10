@@ -11,6 +11,36 @@ Each entry: date, prompt reference (if applicable), change, rationale.
 
 ## Entries
 
+
+## Chat 18 / Prompt 2.4B-i — Budgets Frontend Build Pack v2 — in progress 2026-05-10
+
+**Cycles 1–2 (R0–R3) complete. Pending: R4–R10.**
+
+### Backend precursor (commit `d20dfd5`)
+- **2.4A.1**: Added `POST /api/v1/budget-lines/reorder` to resolve STOP #32. Atomic single-transaction rewrite of `display_order` on every line of a budget, with `updated_at` bumped on every affected line as a line-level "version" proxy. New `BudgetValidationError(BudgetError)` distinguished from `BudgetCreationError` (B5 source data) so audit messages stay clean.
+- 8 tests in `TestBulkReorderLines` (success-reverses + updated_at bump, partial-ids 400, foreign-id 400, duplicate-ids 400, readonly 403, locked 409, unknown 404, audit row written with `kind='lines_reorder'`).
+- Test count: 664 → 672 passing.
+
+### Deviations from Build Pack v2 (committed in errata block, commits `0d9bf98` + `fe8544b`)
+- **D-2.4B-i.1** (errata E1): Test runner is **CRA Jest via `craco test`**, not Vitest. The frontend is CRA + Craco (react-scripts 5.0.1), not Vite. D1 anticipated this — all `vi.fn()`/`vi.mock()` → `jest.fn()`/`jest.mock()`, setup lives at `src/setupTests.js` (CRA auto-loads), `import.meta.env.DEV` → `process.env.NODE_ENV !== 'production'`.
+- **D-2.4B-i.2** (errata E2): Backend uses **flat paths** for line and item operations (`/budget-lines/:l`, `/budget-line-items/:i`), not nested under `/budgets/:b/...`. Frontend API client + MSW handlers in §R8 adapted; hook signatures retain `budgetId` for cache-key scoping.
+- **D-2.4B-i.3** (errata E3): `lib/api.js` baseURL is **`/api`** with callers prepending `/v1/...` manually. All new client functions in §R3.3 follow that convention.
+- **D-2.4B-i.4** (errata E4): STOP #32 resolved by 2.4A.1 backend-add. Body uses snake_case `ordered_line_ids` to match backend Pydantic.
+- **D-2.4B-i.5** (errata E5): `useApprovedAppraisals` and `useCostCodes` hook wrappers shipped in §R3 (`frontend/src/hooks/{appraisals,costCodes}.js`).
+- **D-2.4B-i.6** (errata E6): Tailwind `sy-teal` / `sy-orange` variant sub-keys (DEFAULT/hover/foreground) exist in the config (build pack §R0 STOP gate said they don't). Build Pack's "use `bg-sy-teal text-white hover:brightness-110`" rule still applies — no variant classes in new code.
+- **D-2.4B-i.7** (errata E7): Backend response shape diverges materially from §R3.2 speculative Zod schemas. **Backend is source of truth.** Renames: `unit_cost→rate`, `position→display_order`, `description→line_description`, `actuals_total→actuals_to_date`, `ffc→forecast_final_cost`, `appraisal_id→source_appraisal_id`, `total_original_budget→total_budget`, `total_cni→total_committed_not_invoiced`, `total_ffc→forecast_final_cost`, `total_variance→variance_vs_budget`, etc. `BudgetLine.version`, `BudgetLine.ftc_value`, `BudgetLine.cost_code_label`, `Budget.total_variance_status`, `Budget.activated_at`, `Budget.superseded_by_id` **do not exist** on the backend. Permission `budgets.read` does not exist → use `budgets.view`. Variance status enum is `Green/Amber/Red` (not `On_Track/Warning/Critical`). FTC method enum is `Manual/Budget_Remaining/Committed_Only/Percentage_Complete`. List response is `{project_id, items, count}` not a bare array. All these are encoded in `frontend/src/lib/schemas/budgets.js`.
+- **D-2.4B-i.7.1** / **D12.1** (errata E7.1): `GET /v1/projects/:id/appraisals` accepts no query params (no `governance_status`, no `not_linked_to_current_budget`). `useApprovedAppraisals` fetches all and filters client-side via `select`. The exclude-set (`existingSourceAppraisalIds: Set<UUID>`) is computed by the caller from the project's budgets list.
+
+### Environment provisioning (one-time, this chat)
+- The Kubernetes container started as a fresh-fork with no PostgreSQL. Executed the documented one-time runbook from `backend/app/bootstrap.py` to install postgres-16 + create the `syhomes` role/database + register a `[program:postgres]` supervisor block. Idempotent; matches what previous SY Hub sessions assumed already provisioned.
+
+### R0 baseline auto-commit
+- Emergent's auto-commit `2e3d660` swept 19 inherited dirty files (test_reports/, docs/SY_Hub_2.3_Checkpoint3_Handoff.md, backend test fixtures) **plus** the new Build Pack v2 spec into one commit before R0 could stash them separately. **Action item for operator:** inspect `git show --stat 2e3d660` to ensure none of the 19 inherited files were unwanted regressions. None affected R0 baseline (664 pytest passing held).
+
+### R1 install (commit `fe8544b`)
+- Bundle baseline before R1: not captured (yarn build not run on fresh fork). After R1: **335.92 kB gzip** (main) + **12.33 kB gzip** (css). After R3: **336.95 kB gzip** main (+1.03 kB). Reorder/dnd-kit footprint is in vendored chunks; bulk delta will be re-measured at R10.
+- `<ReactQueryDevtools/>` crashed in this preview env (headless `navigator.language=''` → `new Intl.Locale("")` throws). Wrapped in `DevtoolsSafe`: lazy import + Intl.Locale guard, renders null when locale is invalid. Production builds skip it via `NODE_ENV` check.
+
 ## Chat 16.5 — Coverage debt + brand patch — closed 2026-05-10
 
 **Tests:**
