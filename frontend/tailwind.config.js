@@ -57,6 +57,28 @@ module.exports = {
                                 '3': 'hsl(var(--chart-3))',
                                 '4': 'hsl(var(--chart-4))',
                                 '5': 'hsl(var(--chart-5))'
+                        },
+                        // SY Homes brand tokens — Chat 16.5 patch.
+                        // Provisional palette layered ALONGSIDE the slate
+                        // baseline (Track 8 designer engagement reconciles
+                        // final application). Stored as plain hex via CSS
+                        // custom properties on :root in `src/index.css`,
+                        // referenced here with `var(--…)` (not the
+                        // shadcn `hsl(var(--…))` triplet form, since
+                        // these values are full sRGB hex). Usage rules:
+                        // see `design_guidelines.json#brand_palette`.
+                        'sy-teal': {
+                                DEFAULT: 'var(--sy-teal)',
+                                hover: 'var(--sy-teal-hover)',
+                                foreground: 'var(--sy-teal-foreground)'
+                        },
+                        'sy-orange': {
+                                DEFAULT: 'var(--sy-orange)',
+                                hover: 'var(--sy-orange-hover)',
+                                foreground: 'var(--sy-orange-foreground)'
+                        },
+                        'sy-grey': {
+                                DEFAULT: 'var(--sy-grey)'
                         }
                 },
                 keyframes: {

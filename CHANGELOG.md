@@ -11,6 +11,24 @@ Each entry: date, prompt reference (if applicable), change, rationale.
 
 ## Entries
 
+## Chat 16.5 — Coverage debt + brand patch — closed 2026-05-10
+
+**Tests:**
+- +23 tests in `tests/test_budgets.py` covering: appraisal-total cross-check (#6), zero-line edge case (#10), FOR UPDATE serialisation (#14), version line-link carry (#30), version no-item carry (#31), in-memory state consistency on lock/unlock (#33, #34), version audit superseded_id (#39), FTC method branches (#41, #45, #46), variance edge cases (#49, #53), item collection wiring (#64), item amount validation (#65), DB FK cascade on line delete (#66), summary_refreshed_at advance (#70), legacy `budgets.approve` regression guard (#72), PM negative-perm (#74), requires_attention clear (#78), site-manager 403 (#81), PM lock 200 (#85), is_current list filter (#89).
+- Test count: 641 → 663 passing + 1 STOP-and-report (#31 — `services/budgets.new_version` clones items per the B11 implementation note, while the chat-16-closing #31 spec mandates items be version-specific. Test asserts the spec'd behaviour; assertion left in place as documented mismatch awaiting product-side reconciliation. No production code change in this patch per R6.)
+- New module-scoped fixture `site_manager` (mirrors `pm`), backed by `test-site@example.test`.
+
+**Brand:**
+- `design_guidelines.json` `brand.description` clarified: slate-900 is the shadcn baseline, teal is the SY-branded primary CTA override.
+- `design_guidelines.json` `brand_palette` extended with `primary_teal_foreground`, `accent_orange_foreground`, and a prescriptive `usage_rules` array distinguishing slate (canonical baseline) vs teal (primary CTAs) vs orange (selective accents); legacy `usage_notes` superseded.
+- `tailwind.config.js`: registered `sy-teal` (DEFAULT/hover/foreground), `sy-orange` (DEFAULT/hover/foreground), `sy-grey` (DEFAULT) colour tokens via the shadcn-compatible CSS-variable pattern (`var(--sy-…)`, NOT the `hsl(var(--…))` triplet form, since these values are full sRGB hex).
+- `frontend/src/index.css`: registered `--sy-teal`, `--sy-teal-hover`, `--sy-teal-foreground`, `--sy-orange`, `--sy-orange-hover`, `--sy-orange-foreground`, `--sy-grey` on `:root`. `yarn build` confirmed clean — no Tailwind warnings about unknown classes; CSS bundle emits all 7 tokens at `:root`.
+- No visual regression — tokens registered, not yet applied to any component. Application deferred to Chat 17 (2.4B-i frontend).
+
+**No production code changes.** No new migrations. No new dependencies. Permission count unchanged at 84. Alembic head unchanged at `0024_budgets`.
+
+**Resolved STOP #31:** chat-16-closing spec corrected to align with B11 service behaviour. Items DO clone on new-version. Test renamed `test_create_new_version_does_not_carry_items` → `test_create_new_version_clones_items_with_lines`; assertion flipped to verify item-count parity (matched by `cost_code_id`) between old and new version lines. `chat-16-closing.md` row #31 updated ❌→✅. Final test count: 641 → 664 passing.
+
 ## 2.4A — Budgets Core (Backend) (2026-05-09)
 
 ### New: `/app/backend/alembic/versions/0024_budgets.py`
