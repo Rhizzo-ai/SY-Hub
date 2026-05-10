@@ -102,6 +102,9 @@ export const BudgetLineSchema = z.object({
   display_order: z.number().int(),
   notes: z.string().nullable(),
   variance_status: VarianceStatus,
+  // Timestamps (added in backend 2.4A.2 for §R7 refetch-on-save banner)
+  created_at: z.string().nullable().optional(),
+  updated_at: z.string().nullable().optional(),
 
   // SENSITIVE — backend strips for users without budgets.view_sensitive
   actuals_to_date: moneyNumber.optional(),

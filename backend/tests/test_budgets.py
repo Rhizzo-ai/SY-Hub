@@ -1289,6 +1289,35 @@ class TestLineEdits:
         )
         assert r.status_code == 404
 
+    def test_line_payload_emits_created_at_and_updated_at(
+        self, admin, fresh_active_budget,
+    ):
+        """2.4A.2 precursor for §R7 LineDrawer conflict detection: line
+        payload must carry timestamp fields so the frontend can detect
+        out-of-band edits via updated_at delta."""
+        line = fresh_active_budget["lines"][0]
+        for key in ("created_at", "updated_at"):
+            assert key in line, (
+                f"Line payload missing {key} (needed for 2.4B-i §R7 "
+                f"refetch-on-save banner). Keys present: {sorted(line.keys())}"
+            )
+            # ISO-8601 string
+            assert isinstance(line[key], str) and "T" in line[key]
+        # PATCH bumps updated_at
+        before = line["updated_at"]
+        import time as _time
+        _time.sleep(0.01)
+        r = admin.patch(
+            f"{BASE_URL}/api/v1/budget-lines/{line['id']}",
+            json={"notes": "tick"},
+        )
+        assert r.status_code == 200
+        after = r.json()["updated_at"]
+        assert after > before, (
+            f"PATCH should advance updated_at: before={before} after={after}"
+        )
+
+
     def test_line_changes_recompute_header(self, admin, fresh_active_budget):
         bid = fresh_active_budget["id"]
         line = fresh_active_budget["lines"][0]

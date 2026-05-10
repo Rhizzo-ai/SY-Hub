@@ -129,6 +129,8 @@ def _serialise_line(l: BudgetLine, *, include_sensitive: bool,
         "display_order": l.display_order,
         "notes": l.notes,
         "variance_status": l.variance_status,
+        "created_at": l.created_at.isoformat() if l.created_at else None,
+        "updated_at": l.updated_at.isoformat() if l.updated_at else None,
     }
     if include_sensitive:
         d.update({
