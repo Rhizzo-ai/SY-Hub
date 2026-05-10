@@ -7,6 +7,7 @@ specification says, or when a specification error is found and corrected.
 ## Format
 
 Each entry: date, prompt reference (if applicable), change, rationale.
+<img width="653" height="541" alt="image" src="https://github.com/user-attachments/assets/23bd8b76-7ed5-4683-b801-cde644930636" />
 
 ## Entries
 
@@ -403,7 +404,8 @@ during build — log here, address in one focused polish pass.
   genuinely care) and at project setup (set once, forgotten).
 
 ### Brand polish
-* Apply SY Homes brand palette: teal #0F6A7A (primary), orange #FC7827 (accent), light grey #CECECE (neutral). Logo at frontend/src/assets/sy_homes_logo.png (transparent background; teal house mark + orange divider stripe).
+- SY Homes brand palette confirmed: teal #0F6A7A (logo primary, CTA buttons, focus rings, links), orange #FC7827 (accent — selective use for critical alerts and primary action callouts), light grey #CECECE (neutral). Logo committed at frontend/public/sy_homes_logo.png (transparent background; teal house mark + orange divider + teal SYHOMES wordmark). Slate-based neutrals from design_guidelines.json ("Swiss & High-Contrast B2B Ledger" archetype) remain canonical for backgrounds, borders, body text, tables, forms. Brand colours apply alongside, not as wholesale replacement. Final reconciliation in Track 8 designer engagement.
+- Select and apply production font stack (Chivo for headings, IBM Plex Sans for body, IBM Plex Mono for financial figures — already specified in design_guidelines.json).
 - Select and apply production font stack.
 - Unified component styling pass across all 10 modules.
 
