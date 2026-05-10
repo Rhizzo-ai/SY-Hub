@@ -25,7 +25,7 @@
       "primary": "#0F172A",
       "primary_hover": "#1E293B",
       "primary_foreground": "#FFFFFF",
-      "description": "Using deep slate as the primary 'brand' color. It is authoritative and solid."
+      "description": "Slate-900 is the shadcn/ui default 'primary' for the Swiss/B2B ledger archetype baseline (used by the default <Button>, focus rings on neutral surfaces, etc). SY-branded primary CTAs (Save, Create, Lock, Submit) override to teal (#0F6A7A) via the `bg-sy-teal` utility — see `brand_palette.usage_rules`."
     },
     "semantic": {
       "status_active": {
@@ -156,11 +156,20 @@
   "brand_palette": {
     "primary_teal": "#0F6A7A",
     "primary_teal_hover": "#0C5764",
+    "primary_teal_foreground": "#FFFFFF",
     "accent_orange": "#FC7827",
     "accent_orange_hover": "#E36318",
+    "accent_orange_foreground": "#FFFFFF",
     "neutral_grey": "#CECECE",
     "logo_path": "/sy_homes_logo.png",
-    "usage_notes": "Teal for primary CTAs, focus rings, and links. Orange for selective accent (critical alerts, primary action callouts). Slate system in `colors` block remains the dominant neutral palette per Swiss/B2B ledger archetype. Final reconciliation in Track 8 designer engagement."
+    "usage_rules": [
+      "Use TEAL (#0F6A7A) for: primary action buttons (Save, Create, Submit, Lock), text links, focus rings, active nav item underline, brand mark/logo.",
+      "Use ORANGE (#FC7827) for: destructive-confirm CTAs (Unlock, Force-close, Delete confirmations), critical-alert badges, single primary callout per page max.",
+      "Use SLATE (existing `colors` block) for: backgrounds, surfaces, borders, dividers, body text, table cells, form inputs, secondary buttons, disabled states, neutral status badges.",
+      "Never use teal and orange in the same interactive control — they compete. Slate-900 + teal accents OR slate-900 + orange accents per surface, not both.",
+      "Brand colours are ALONGSIDE the slate baseline, not a replacement. The Swiss/B2B ledger archetype (slate-900 dominant) remains canonical until Track 8 designer engagement."
+    ],
+    "reconciliation_status": "Provisional — final brand application deferred to Track 8."
   },
   "shadcn_customizations": {
     "button": "Remove extreme rounded corners (use rounded-md). Ensure primary button is slate-900.",

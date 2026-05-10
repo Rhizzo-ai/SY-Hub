@@ -40,6 +40,7 @@ DIRECTOR_EMAIL = "test-director@example.test"
 PM_EMAIL = "test-pm@example.test"
 FINANCE_EMAIL = "test-finance@example.test"
 READONLY_EMAIL = "test-readonly@example.test"
+SITE_MANAGER_EMAIL = "test-site@example.test"  # Chat 16.5 #81 — site_manager fixture
 
 PRIMARY_ENTITY_NAME = "SY Homes (Shrewsbury) Ltd"
 
@@ -117,6 +118,16 @@ def pm(db_engine):
 @pytest.fixture(scope="module")
 def readonly(db_engine):
     return plain_login(BASE_URL, READONLY_EMAIL, PWD)
+
+
+@pytest.fixture(scope="module")
+def site_manager(db_engine):
+    """Chat 16.5 #81 — site_manager session for negative-perm coverage on
+    POST /budgets/from-appraisal. test-site@example.test is seeded by
+    scripts/seed_test_users.py with role_code='site_manager' (entity_scope=
+    All, project_scope=All), which has documents/programmes view+edit but
+    NO budgets.create — yielding the 403 the test asserts."""
+    return plain_login(BASE_URL, SITE_MANAGER_EMAIL, PWD)
 
 
 @pytest.fixture(scope="module")
@@ -237,6 +248,55 @@ class TestBudgetPermissions:
         from app.seed_rbac import ROLE_PERMISSIONS
         assert "budgets.admin" in ROLE_PERMISSIONS["super_admin"]
 
+    # ----------------------------------------------------------------
+    # Chat 16.5 — Build Pack coverage debt (R2)
+    # ----------------------------------------------------------------
+
+    def test_existing_budgets_approve_perm_still_present(self):
+        """Build Pack #72 — B23 risk register regression guard. The legacy
+        `budgets.approve` permission MUST survive the 2.4A migration.
+        Asserted directly against the live permissions table (the seed runs
+        on bootstrap, so any migration that drops the row would surface as
+        a missing seed regression here)."""
+        from app.db import SessionLocal
+        db = SessionLocal()
+        try:
+            rows = db.execute(text(
+                "SELECT code FROM permissions WHERE code='budgets.approve'"
+            )).all()
+        finally:
+            db.close()
+        assert len(rows) == 1, (
+            f"Expected exactly one 'budgets.approve' permission row, "
+            f"found {len(rows)}. B23 regression — the 2.4A scope's perm "
+            f"catalogue must continue to expose the legacy approve perm."
+        )
+
+    def test_pm_role_does_not_have_budgets_admin(self):
+        """Build Pack #74 — negative permission guard. project_manager
+        must not have budgets.admin (only super_admin and director do).
+        Asserted at both the seed-source layer and the persisted role
+        table to catch drift in either direction."""
+        from app.seed_rbac import ROLE_PERMISSIONS
+        assert "budgets.admin" not in ROLE_PERMISSIONS["project_manager"]
+        from app.db import SessionLocal
+        db = SessionLocal()
+        try:
+            row = db.execute(text("""
+                SELECT 1
+                FROM role_permissions rp
+                JOIN roles r ON r.id = rp.role_id
+                JOIN permissions p ON p.id = rp.permission_id
+                WHERE r.code = 'project_manager'
+                  AND p.code = 'budgets.admin'
+            """)).first()
+        finally:
+            db.close()
+        assert row is None, (
+            "project_manager has been granted budgets.admin in "
+            "role_permissions — negative permission guard violated."
+        )
+
 
 # --------------------------------------------------------------------------
 # Service-layer: create_from_appraisal (B5 guards + happy path)
@@ -304,6 +364,112 @@ class TestCreateFromAppraisal:
         )
         # Existing Draft is_current must block re-seed.
         assert r2.status_code == 409, r2.text
+
+    # ----------------------------------------------------------------
+    # Chat 16.5 — Build Pack coverage debt (R2)
+    # ----------------------------------------------------------------
+
+    def test_original_budget_total_matches_appraisal_total_cost(
+        self, admin, project,
+    ):
+        """Build Pack #6 — sum of seeded `original_budget` values across
+        all budget lines must equal the appraisal's cost-line total
+        (`SUM(amount) FROM appraisal_cost_lines`). This is the post-merge
+        invariant: even when two appraisal_cost_lines collapse onto the
+        same cost_code (and merge into one budget_line), the total is
+        preserved."""
+        from app.db import SessionLocal
+        db = SessionLocal()
+        try:
+            db.execute(text("DELETE FROM budgets WHERE project_id=:p"),
+                       {"p": project["id"]})
+            db.commit()
+        finally:
+            db.close()
+        aid = _make_approved_appraisal(admin, project["id"])
+        # Sum the appraisal cost-line amounts (the seed source).
+        db = SessionLocal()
+        try:
+            appraisal_total = db.execute(text(
+                "SELECT COALESCE(SUM(amount), 0) "
+                "FROM appraisal_cost_lines WHERE appraisal_id=:a"
+            ), {"a": aid}).scalar()
+        finally:
+            db.close()
+        r = admin.post(
+            f"{BASE_URL}/api/v1/projects/{project['id']}/budgets/from-appraisal",
+            json={"source_appraisal_id": aid},
+        )
+        assert r.status_code == 201, r.text
+        body = r.json()
+        line_total = sum(
+            (Decimal(line["original_budget"]) for line in body["lines"]),
+            Decimal("0"),
+        )
+        assert line_total.quantize(Decimal("0.01")) == \
+            Decimal(appraisal_total).quantize(Decimal("0.01")), (
+                f"sum(original_budget)={line_total} ≠ "
+                f"appraisal_cost_lines.SUM(amount)={appraisal_total}"
+            )
+
+    def test_create_handles_zero_cost_lines_appraisal(self, project):
+        """Build Pack #10 — `create_from_appraisal` against an Approved
+        appraisal with ZERO cost lines must raise BudgetCreationError
+        ('no cost lines; nothing to seed'). Verified at the service
+        layer because the HTTP submit/approve pipeline itself rejects
+        cost-line-less appraisals on /submit, which would mask the case
+        under test. Mirrors the direct-Appraisal-insert pattern used by
+        TestServiceGuards in this module."""
+        from app.db import SessionLocal
+        from app.services.budgets import create_from_appraisal
+        from app.services.budget_errors import BudgetCreationError
+        from app.models.appraisals import Appraisal
+        from app.models.user import User
+        from app.auth.permissions import compute_effective_permissions
+        db = SessionLocal()
+        try:
+            db.execute(text("DELETE FROM budgets WHERE project_id=:p"),
+                       {"p": project["id"]})
+            db.commit()
+            uid = db.scalar(text(
+                "SELECT id FROM users WHERE email='test-admin@example.test'"
+            ))
+            u = db.get(User, uid)
+            perms = compute_effective_permissions(db, u.id, u.tenant_id)
+            ap = Appraisal(
+                project_id=uuid.UUID(project["id"]),
+                version_number=88, name=f"empty-{uuid.uuid4().hex[:6]}",
+                reference_date=date(2025, 1, 1),
+                land_purchase_price=Decimal("100000"),
+                sdlt_category="Residential_Standard",
+                developer_relief=False,
+                project_duration_months=12,
+                status="Approved", is_current=False,
+                created_by_user_id=u.id,
+            )
+            db.add(ap)
+            db.flush()
+            # Direct insert via SQLAlchemy ORM does NOT seed skeleton
+            # cost lines (those come from the API layer). But belt-and-
+            # braces: explicitly delete in case any trigger/observer
+            # later seeds them.
+            db.execute(text(
+                "DELETE FROM appraisal_cost_lines WHERE appraisal_id=:a"
+            ), {"a": ap.id})
+            db.flush()
+            with pytest.raises(BudgetCreationError) as ei:
+                create_from_appraisal(
+                    db, project_id=uuid.UUID(project["id"]),
+                    source_appraisal_id=ap.id, user=u, perms=perms,
+                )
+            msg = str(ei.value).lower()
+            assert "no cost lines" in msg or "nothing to seed" in msg, (
+                f"unexpected error message for zero-cost-lines case: "
+                f"{ei.value!r}"
+            )
+        finally:
+            db.rollback()
+            db.close()
 
 
 # --------------------------------------------------------------------------
@@ -479,6 +645,31 @@ class TestVarianceClassification:
         assert _classify_variance(Decimal("15.001")) == "Red"
         assert _classify_variance(Decimal("100")) == "Red"
 
+    def test_variance_pct_zero_when_current_budget_zero(self):
+        """Build Pack #49 — `_recompute_line` must store
+        `variance_pct = Decimal('0.000')` (NOT None, NOT raise
+        ZeroDivisionError) when `current_budget == 0`. Pure unit test
+        against the recompute primitive — no DB session required."""
+        from app.services.budgets import _recompute_line
+        from app.models.budgets import BudgetLine
+        l = BudgetLine(
+            budget_id=uuid.uuid4(), cost_code_id=uuid.uuid4(),
+            entity_id=uuid.uuid4(), line_description="zero-cb",
+            original_budget=Decimal("0"),
+            approved_changes=Decimal("0"),
+            actuals_to_date=Decimal("0"),
+            committed_value=Decimal("0"),
+            committed_not_invoiced=Decimal("0"),
+            ftc_method="Budget_Remaining",
+            display_order=0,
+        )
+        _recompute_line(l)
+        assert l.current_budget == Decimal("0")
+        assert l.variance_pct == Decimal("0.000")
+        # No variance with zero baseline → Green band per
+        # _classify_variance (variance_pct == 0 → Green).
+        assert l.variance_status == "Green"
+
 
 class TestRecomputeMath:
     def test_recompute_line_budget_remaining(self, project):
@@ -541,6 +732,132 @@ class TestRecomputeMath:
         # ffc=0+1500+0=1500, variance=500, pct=50% → Red.
         assert l.variance_status == "Red"
         assert l.variance_value == Decimal("500.00")
+
+    # ----------------------------------------------------------------
+    # Chat 16.5 — Build Pack coverage debt (R2)
+    # ----------------------------------------------------------------
+
+    def test_ftc_manual_uses_provided_value(
+        self, admin, fresh_active_budget,
+    ):
+        """Build Pack #41 — when `ftc_method='Manual'`, the supplied
+        `forecast_to_complete` is used verbatim by the recompute engine
+        (no override). FFC = actuals + committed_not_invoiced + ftc."""
+        line = fresh_active_budget["lines"][0]
+        r = admin.patch(
+            f"{BASE_URL}/api/v1/budget-lines/{line['id']}",
+            json={"ftc_method": "Manual",
+                  "forecast_to_complete": "1234.56"},
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["ftc_method"] == "Manual"
+        assert Decimal(body["forecast_to_complete"]) == Decimal("1234.56")
+        expected_ffc = (
+            Decimal(body["actuals_to_date"])
+            + Decimal(body["committed_not_invoiced"])
+            + Decimal("1234.56")
+        )
+        assert Decimal(body["forecast_final_cost"]) == \
+            expected_ffc.quantize(Decimal("0.01")), (
+                f"FFC mismatch: got {body['forecast_final_cost']}, "
+                f"expected {expected_ffc}"
+            )
+
+    def test_ftc_percentage_complete(self, admin, fresh_active_budget):
+        """Build Pack #45 — when `ftc_method='Percentage_Complete'` and
+        `percentage_complete=25`, the recompute engine sets
+        `forecast_to_complete = max(0, current_budget * 0.75 - actuals
+        - committed_not_invoiced)`. On a fresh budget where actuals=0
+        and committed_not_invoiced=0, this collapses to
+        `current_budget * 0.75`."""
+        line = fresh_active_budget["lines"][0]
+        r = admin.patch(
+            f"{BASE_URL}/api/v1/budget-lines/{line['id']}",
+            json={"ftc_method": "Percentage_Complete",
+                  "percentage_complete": "25"},
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        cb = Decimal(body["current_budget"])
+        actuals = Decimal(body["actuals_to_date"])
+        cni = Decimal(body["committed_not_invoiced"])
+        # _recompute_line: remaining = current_budget * (100 - pct) / 100
+        #                  ftc = max(0, remaining - actuals - cni)
+        expected_ftc = max(
+            Decimal("0"),
+            (cb * Decimal("75") / Decimal("100") - actuals - cni),
+        ).quantize(Decimal("0.01"))
+        assert Decimal(body["forecast_to_complete"]) == expected_ftc, (
+            f"ftc mismatch: got {body['forecast_to_complete']}, "
+            f"expected {expected_ftc} from cb={cb}, actuals={actuals}, "
+            f"cni={cni}"
+        )
+
+    def test_ftc_percentage_complete_falls_back_to_budget_remaining_when_zero(
+        self, admin, fresh_active_budget,
+    ):
+        """Build Pack #46 — `ftc_method='Percentage_Complete'` with
+        `percentage_complete=0` MUST yield the same value as
+        Budget_Remaining, i.e. `max(0, current_budget - actuals -
+        committed_not_invoiced)`. The recompute formula
+        `cb * (100 - 0) / 100 - actuals - cni == cb - actuals - cni`
+        gives this naturally; assertion is independent of the fresh-
+        budget shortcut."""
+        line = fresh_active_budget["lines"][0]
+        r = admin.patch(
+            f"{BASE_URL}/api/v1/budget-lines/{line['id']}",
+            json={"ftc_method": "Percentage_Complete",
+                  "percentage_complete": "0"},
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        cb = Decimal(body["current_budget"])
+        actuals = Decimal(body["actuals_to_date"])
+        cni = Decimal(body["committed_not_invoiced"])
+        budget_remaining = max(
+            Decimal("0"), cb - actuals - cni,
+        ).quantize(Decimal("0.01"))
+        assert Decimal(body["forecast_to_complete"]) == budget_remaining, (
+            f"pct=0 fallback failed: ftc={body['forecast_to_complete']} "
+            f"≠ budget_remaining={budget_remaining}"
+        )
+
+    def test_variance_pct_overflow_handled_gracefully(self):
+        """Build Pack #53 — `_recompute_line` must not raise on extreme
+        values (e.g. ffc≫current_budget). Verified at the Python layer:
+        the recompute primitive is pure-Decimal and never raises. The
+        underlying `budget_lines.variance_pct` column is `NUMERIC(6,3)`
+        — a flush of an extreme value would fail with NumericValueOut-
+        OfRange, but the service contract is that the recompute itself
+        is tolerant; clamp/flush-handling is the caller's contract.
+
+        Inputs: original=1, cni=999_999_999, ftc=Manual(0).
+        Expected: cb=1, ffc=999_999_999, variance_value=999_999_998,
+        variance_pct=99_999_999_800.000, status=Red.
+        """
+        from app.services.budgets import _recompute_line
+        from app.models.budgets import BudgetLine
+        l = BudgetLine(
+            budget_id=uuid.uuid4(), cost_code_id=uuid.uuid4(),
+            entity_id=uuid.uuid4(), line_description="overflow",
+            original_budget=Decimal("1"),
+            approved_changes=Decimal("0"),
+            actuals_to_date=Decimal("0"),
+            committed_value=Decimal("0"),
+            committed_not_invoiced=Decimal("999999999"),
+            ftc_method="Manual",
+            forecast_to_complete=Decimal("0"),
+            display_order=0,
+        )
+        # No exception expected from the recompute call itself.
+        _recompute_line(l)
+        assert l.current_budget == Decimal("1")
+        assert l.forecast_final_cost == Decimal("999999999.00")
+        assert l.variance_value == Decimal("999999998.00")
+        assert l.variance_pct is not None
+        assert l.variance_pct == Decimal("99999999800.000")
+        assert l.variance_status == "Red"
 
 
 # --------------------------------------------------------------------------
@@ -613,6 +930,204 @@ class TestStateMachine:
         rl = admin.post(f"{BASE_URL}/api/v1/budgets/{bid}/lock")
         assert rl.status_code == 409
 
+    # ----------------------------------------------------------------
+    # Chat 16.5 — Build Pack coverage debt (R2)
+    # ----------------------------------------------------------------
+
+    def test_lock_in_memory_line_state_consistent_with_db(
+        self, db_session, project,
+    ):
+        """Build Pack #33 — service-layer `lock()` only mutates the
+        budget header (status, locked_at, locked_by_user_id). It does
+        NOT touch any per-line columns in 2.4A scope. Therefore the
+        invariant under test is: after lock() returns, the in-memory
+        Budget reflects post-lock header state without an explicit
+        refresh, AND its `lines` collection remains consistent with
+        the DB row count for that budget (no spurious add/remove)."""
+        from app.services.budgets import (
+            create_from_appraisal, activate, lock,
+        )
+        from app.models.appraisals import Appraisal, AppraisalCostLine
+        from app.models.user import User
+        from app.auth.permissions import compute_effective_permissions
+
+        db = db_session
+        db.execute(text("DELETE FROM budgets WHERE project_id=:p"),
+                   {"p": project["id"]})
+        db.commit()
+        uid = db.scalar(text(
+            "SELECT id FROM users WHERE email='test-admin@example.test'"
+        ))
+        u = db.get(User, uid)
+        perms = compute_effective_permissions(db, u.id, u.tenant_id)
+        cc_id = db.scalar(text("SELECT id FROM cost_codes LIMIT 1"))
+
+        ap = Appraisal(
+            project_id=uuid.UUID(project["id"]),
+            version_number=86, name="lock-mem",
+            reference_date=date(2025, 1, 1),
+            land_purchase_price=Decimal("100000"),
+            sdlt_category="Residential_Standard",
+            developer_relief=False,
+            project_duration_months=12,
+            status="Approved", is_current=False,
+            created_by_user_id=u.id,
+        )
+        db.add(ap)
+        db.flush()
+        db.add(AppraisalCostLine(
+            appraisal_id=ap.id, display_order=1, cost_code_id=cc_id,
+            label="x", category="Other", auto_source="Manual",
+            amount=Decimal("1000"),
+        ))
+        db.flush()
+
+        b = create_from_appraisal(
+            db, project_id=uuid.UUID(project["id"]),
+            source_appraisal_id=ap.id, user=u, perms=perms,
+        )
+        activate(db, budget_id=b.id, user=u, perms=perms)
+        line_count_before = len(b.lines)
+        locked = lock(db, budget_id=b.id, user=u, perms=perms)
+
+        # Header state visible in-memory without explicit refresh.
+        assert locked.status == "Locked"
+        assert locked.locked_at is not None
+        assert locked.locked_by_user_id == u.id
+
+        # In-memory lines collection matches DB row count for the budget.
+        db_count = db.execute(text(
+            "SELECT COUNT(*) FROM budget_lines WHERE budget_id=:b"
+        ), {"b": b.id}).scalar()
+        assert len(locked.lines) == line_count_before == db_count
+
+    def test_unlock_in_memory_line_state_consistent_with_db(
+        self, db_session, project,
+    ):
+        """Build Pack #34 — mirror of #33 for `unlock()`. After unlock()
+        returns, in-memory header reflects post-unlock state without an
+        explicit refresh, and the lines collection still matches the
+        DB row count."""
+        from app.services.budgets import (
+            create_from_appraisal, activate, lock, unlock,
+        )
+        from app.models.appraisals import Appraisal, AppraisalCostLine
+        from app.models.user import User
+        from app.auth.permissions import compute_effective_permissions
+
+        db = db_session
+        db.execute(text("DELETE FROM budgets WHERE project_id=:p"),
+                   {"p": project["id"]})
+        db.commit()
+        uid = db.scalar(text(
+            "SELECT id FROM users WHERE email='test-admin@example.test'"
+        ))
+        u = db.get(User, uid)
+        perms = compute_effective_permissions(db, u.id, u.tenant_id)
+        cc_id = db.scalar(text("SELECT id FROM cost_codes LIMIT 1"))
+
+        ap = Appraisal(
+            project_id=uuid.UUID(project["id"]),
+            version_number=85, name="unlock-mem",
+            reference_date=date(2025, 1, 1),
+            land_purchase_price=Decimal("100000"),
+            sdlt_category="Residential_Standard",
+            developer_relief=False,
+            project_duration_months=12,
+            status="Approved", is_current=False,
+            created_by_user_id=u.id,
+        )
+        db.add(ap)
+        db.flush()
+        db.add(AppraisalCostLine(
+            appraisal_id=ap.id, display_order=1, cost_code_id=cc_id,
+            label="y", category="Other", auto_source="Manual",
+            amount=Decimal("2000"),
+        ))
+        db.flush()
+
+        b = create_from_appraisal(
+            db, project_id=uuid.UUID(project["id"]),
+            source_appraisal_id=ap.id, user=u, perms=perms,
+        )
+        activate(db, budget_id=b.id, user=u, perms=perms)
+        lock(db, budget_id=b.id, user=u, perms=perms)
+        unlocked = unlock(db, budget_id=b.id, user=u, perms=perms)
+
+        assert unlocked.status == "Active"
+        assert unlocked.locked_at is None
+        assert unlocked.locked_by_user_id is None
+
+        db_count = db.execute(text(
+            "SELECT COUNT(*) FROM budget_lines WHERE budget_id=:b"
+        ), {"b": b.id}).scalar()
+        assert len(unlocked.lines) == db_count
+
+    def test_get_list_budgets_for_project_filters_by_is_current(
+        self, admin, project,
+    ):
+        """Build Pack #89 — `GET /api/v1/projects/:id/budgets`:
+        - default (no filter) returns ALL versions for the project,
+        - `?is_current=true` returns only the current (non-superseded)
+          version,
+        - `?is_current=false` returns only non-current versions.
+
+        Set up: v1 created, activated, then new-version → v2.
+        v1 becomes Superseded/is_current=False; v2 is Draft/
+        is_current=True."""
+        from app.db import SessionLocal
+        db = SessionLocal()
+        try:
+            db.execute(text("DELETE FROM budgets WHERE project_id=:p"),
+                       {"p": project["id"]})
+            db.commit()
+        finally:
+            db.close()
+        aid = _make_approved_appraisal(admin, project["id"])
+        r = admin.post(
+            f"{BASE_URL}/api/v1/projects/{project['id']}/budgets/from-appraisal",
+            json={"source_appraisal_id": aid},
+        )
+        v1_id = r.json()["id"]
+        admin.post(f"{BASE_URL}/api/v1/budgets/{v1_id}/activate")
+        rv = admin.post(
+            f"{BASE_URL}/api/v1/budgets/{v1_id}/new-version",
+            json={"version_label": "v2-list-filter"},
+        )
+        assert rv.status_code == 201, rv.text
+        v2_id = rv.json()["id"]
+
+        # No filter → both versions.
+        rl = admin.get(
+            f"{BASE_URL}/api/v1/projects/{project['id']}/budgets"
+        )
+        assert rl.status_code == 200, rl.text
+        all_ids = {b["id"] for b in rl.json()["items"]}
+        assert {v1_id, v2_id}.issubset(all_ids)
+        assert rl.json()["count"] >= 2
+
+        # ?is_current=true → only v2.
+        rt = admin.get(
+            f"{BASE_URL}/api/v1/projects/{project['id']}/budgets"
+            f"?is_current=true"
+        )
+        assert rt.status_code == 200, rt.text
+        cur_items = rt.json()["items"]
+        assert len(cur_items) == 1
+        assert cur_items[0]["id"] == v2_id
+        assert cur_items[0]["is_current"] is True
+
+        # ?is_current=false → only v1 (now superseded).
+        rf = admin.get(
+            f"{BASE_URL}/api/v1/projects/{project['id']}/budgets"
+            f"?is_current=false"
+        )
+        assert rf.status_code == 200, rf.text
+        old_items = rf.json()["items"]
+        assert v1_id in {b["id"] for b in old_items}
+        for b in old_items:
+            assert b["is_current"] is False
+
 
 class TestPermissionGating:
     def test_unlock_requires_admin(self, admin, pm, project):
@@ -667,6 +1182,58 @@ class TestPermissionGating:
             json={"source_appraisal_id": aid},
         )
         assert r.status_code == 403
+
+    # ----------------------------------------------------------------
+    # Chat 16.5 — Build Pack coverage debt (R2)
+    # ----------------------------------------------------------------
+
+    def test_post_from_appraisal_403_with_site_manager_session(
+        self, admin, site_manager, project,
+    ):
+        """Build Pack #81 — `site_manager` role does NOT have
+        `budgets.create`, so POST /budgets/from-appraisal must return
+        403 (require_permission gate fires before any service code)."""
+        from app.db import SessionLocal
+        db = SessionLocal()
+        try:
+            db.execute(text("DELETE FROM budgets WHERE project_id=:p"),
+                       {"p": project["id"]})
+            db.commit()
+        finally:
+            db.close()
+        aid = _make_approved_appraisal(admin, project["id"])
+        r = site_manager.post(
+            f"{BASE_URL}/api/v1/projects/{project['id']}/budgets/from-appraisal",
+            json={"source_appraisal_id": aid},
+        )
+        assert r.status_code == 403, r.text
+
+    def test_post_lock_endpoint_with_pm_session(
+        self, admin, pm, project,
+    ):
+        """Build Pack #85 — `project_manager` CAN lock an active budget
+        (PM has `budgets.edit`, which the lock endpoint requires).
+        Unlock requires `budgets.admin` and is covered separately by
+        `test_unlock_requires_admin` — this test proves the asymmetry."""
+        from app.db import SessionLocal
+        db = SessionLocal()
+        try:
+            db.execute(text("DELETE FROM budgets WHERE project_id=:p"),
+                       {"p": project["id"]})
+            db.commit()
+        finally:
+            db.close()
+        aid = _make_approved_appraisal(admin, project["id"])
+        r = admin.post(
+            f"{BASE_URL}/api/v1/projects/{project['id']}/budgets/from-appraisal",
+            json={"source_appraisal_id": aid},
+        )
+        assert r.status_code == 201, r.text
+        bid = r.json()["id"]
+        admin.post(f"{BASE_URL}/api/v1/budgets/{bid}/activate")
+        rl = pm.post(f"{BASE_URL}/api/v1/budgets/{bid}/lock")
+        assert rl.status_code == 200, rl.text
+        assert rl.json()["status"] == "Locked"
 
 
 # --------------------------------------------------------------------------
@@ -734,6 +1301,46 @@ class TestLineEdits:
         after = admin.get(f"{BASE_URL}/api/v1/budgets/{bid}").json()["total_budget"]
         assert Decimal(after) != Decimal(before)
 
+    # ----------------------------------------------------------------
+    # Chat 16.5 — Build Pack coverage debt (R2)
+    # ----------------------------------------------------------------
+
+    def test_header_summary_refreshed_at_advances_on_recompute(
+        self, admin, fresh_active_budget,
+    ):
+        """Build Pack #70 — every successful line edit triggers
+        `recompute_summary`, which stamps `budget.summary_refreshed_at`
+        to `now()`. Verified via two GETs straddling a PATCH; sleep
+        100ms to guarantee a wall-clock advance even on coarse-
+        precision timestamp columns."""
+        import time
+        from datetime import datetime
+        bid = fresh_active_budget["id"]
+        line = fresh_active_budget["lines"][0]
+        t0_str = admin.get(
+            f"{BASE_URL}/api/v1/budgets/{bid}"
+        ).json()["summary_refreshed_at"]
+        assert t0_str is not None, (
+            "summary_refreshed_at must be present in the detail "
+            "response — column missing or never stamped (Build Pack "
+            "B16 invariant violated)."
+        )
+        time.sleep(0.1)
+        r = admin.patch(
+            f"{BASE_URL}/api/v1/budget-lines/{line['id']}",
+            json={"notes": "summary-refreshed-at-tick"},
+        )
+        assert r.status_code == 200, r.text
+        t1_str = admin.get(
+            f"{BASE_URL}/api/v1/budgets/{bid}"
+        ).json()["summary_refreshed_at"]
+        t0 = datetime.fromisoformat(t0_str.replace("Z", "+00:00"))
+        t1 = datetime.fromisoformat(t1_str.replace("Z", "+00:00"))
+        assert t1 > t0, (
+            f"summary_refreshed_at did not advance: t0={t0_str}, "
+            f"t1={t1_str}"
+        )
+
 
 class TestLineItems:
     def test_create_list_update_delete_item(self, admin, fresh_active_budget):
@@ -796,6 +1403,137 @@ class TestLineItems:
         assert rc.status_code == 409
 
 
+    # ----------------------------------------------------------------
+    # Chat 16.5 — Build Pack coverage debt (R2)
+    # ----------------------------------------------------------------
+
+    def test_create_item_via_relationship_collection_populated(
+        self, db_session, project,
+    ):
+        """Build Pack #64 — after `create_item`, the parent
+        `BudgetLine.items` relationship populates when reloaded in the
+        same session. Validates SQLAlchemy `back_populates` wiring at
+        the ORM layer (independent of the API serialiser)."""
+        from app.services.budgets import create_from_appraisal, activate
+        from app.services.budget_lines import create_item
+        from app.models.budgets import BudgetLine
+        from app.models.appraisals import Appraisal, AppraisalCostLine
+        from app.models.user import User
+        from app.auth.permissions import compute_effective_permissions
+
+        db = db_session
+        db.execute(text("DELETE FROM budgets WHERE project_id=:p"),
+                   {"p": project["id"]})
+        db.commit()
+        uid = db.scalar(text(
+            "SELECT id FROM users WHERE email='test-admin@example.test'"
+        ))
+        u = db.get(User, uid)
+        perms = compute_effective_permissions(db, u.id, u.tenant_id)
+        cc_id = db.scalar(text("SELECT id FROM cost_codes LIMIT 1"))
+
+        ap = Appraisal(
+            project_id=uuid.UUID(project["id"]),
+            version_number=84, name="rel-coll",
+            reference_date=date(2025, 1, 1),
+            land_purchase_price=Decimal("100000"),
+            sdlt_category="Residential_Standard",
+            developer_relief=False,
+            project_duration_months=12,
+            status="Approved", is_current=False,
+            created_by_user_id=u.id,
+        )
+        db.add(ap)
+        db.flush()
+        db.add(AppraisalCostLine(
+            appraisal_id=ap.id, display_order=1, cost_code_id=cc_id,
+            label="z", category="Other", auto_source="Manual",
+            amount=Decimal("500"),
+        ))
+        db.flush()
+
+        b = create_from_appraisal(
+            db, project_id=uuid.UUID(project["id"]),
+            source_appraisal_id=ap.id, user=u, perms=perms,
+        )
+        activate(db, budget_id=b.id, user=u, perms=perms)
+        line_id = b.lines[0].id
+        item = create_item(
+            db, line_id=line_id, user=u, perms=perms,
+            description="rel-test", amount=Decimal("100.00"),
+        )
+        # Force a reload of the line so the relationship collection
+        # repopulates from the DB (back_populates round-trip).
+        db.expire(b.lines[0])
+        reloaded = db.get(BudgetLine, line_id)
+        assert reloaded is not None
+        assert len(reloaded.items) == 1
+        assert reloaded.items[0].id == item.id
+        assert reloaded.items[0].description == "rel-test"
+
+    def test_item_amount_validation_warns_but_does_not_block(
+        self, admin, fresh_active_budget,
+    ):
+        """Build Pack #65 — per spec, when an item's `amount` differs
+        from `quantity * rate`, the service warns but does NOT reject
+        the create. The user-supplied `amount` is canonical and
+        round-trips verbatim."""
+        line = fresh_active_budget["lines"][0]
+        r = admin.post(
+            f"{BASE_URL}/api/v1/budget-lines/{line['id']}/items",
+            json={
+                "description": "mismatch-on-purpose",
+                "quantity": "10",
+                "rate": "5.00",
+                "amount": "999.99",  # Deliberate ≠ 10 * 5 = 50.00
+            },
+        )
+        assert r.status_code == 201, r.text
+        body = r.json()
+        assert Decimal(body["amount"]) == Decimal("999.99")
+        assert Decimal(body["quantity"]) == Decimal("10")
+        assert Decimal(body["rate"]) == Decimal("5.00")
+        assert body["description"] == "mismatch-on-purpose"
+
+    def test_delete_line_cascades_items(
+        self, admin, fresh_active_budget, db_engine,
+    ):
+        """Build Pack #66 — DB-level `ON DELETE CASCADE` on
+        `budget_line_items.budget_line_id` fires on a raw-SQL DELETE of
+        the parent line. Validates the FK definition independently of
+        the ORM-level cascade configured on the relationship."""
+        line = fresh_active_budget["lines"][0]
+        line_id = line["id"]
+        # Create 2 items.
+        for desc in ("c1", "c2"):
+            rc = admin.post(
+                f"{BASE_URL}/api/v1/budget-lines/{line_id}/items",
+                json={"description": desc, "amount": "10.00"},
+            )
+            assert rc.status_code == 201, rc.text
+        # Sanity check: 2 items present.
+        with db_engine.connect() as c:
+            before = c.execute(text(
+                "SELECT COUNT(*) FROM budget_line_items "
+                "WHERE budget_line_id=:l"
+            ), {"l": line_id}).scalar()
+        assert before == 2
+
+        # Raw-SQL DELETE the parent line. FK cascade should fire.
+        with db_engine.begin() as c:
+            c.execute(text("DELETE FROM budget_lines WHERE id=:l"),
+                      {"l": line_id})
+        with db_engine.connect() as c:
+            after = c.execute(text(
+                "SELECT COUNT(*) FROM budget_line_items "
+                "WHERE budget_line_id=:l"
+            ), {"l": line_id}).scalar()
+        assert after == 0, (
+            f"FK cascade did not fire — {after} orphan items remain "
+            f"after parent line delete."
+        )
+
+
 # --------------------------------------------------------------------------
 # New version (clones lines, supersedes old)
 # --------------------------------------------------------------------------
@@ -855,6 +1593,124 @@ class TestNewVersion:
             json={"version_label": "v2"},
         )
         assert rv.status_code == 409
+
+    # ----------------------------------------------------------------
+    # Chat 16.5 — Build Pack coverage debt (R2)
+    # ----------------------------------------------------------------
+
+    def test_create_new_version_carries_programme_task_link(
+        self, admin, project, db_engine,
+    ):
+        """Build Pack #30 — `linked_programme_task_id` (B9 / locked
+        decision 13) is carried from old-version lines onto new-version
+        cloned lines. The column has no FK constraint until Track 4 /
+        Prompt 3.2, so the test seeds a synthetic uuid via raw SQL
+        (the `UpdateBudgetLineRequest` schema deliberately omits this
+        field — only the new_version cloning path propagates it)."""
+        from app.db import SessionLocal
+        db = SessionLocal()
+        try:
+            db.execute(text("DELETE FROM budgets WHERE project_id=:p"),
+                       {"p": project["id"]})
+            db.commit()
+        finally:
+            db.close()
+        aid = _make_approved_appraisal(admin, project["id"])
+        r = admin.post(
+            f"{BASE_URL}/api/v1/projects/{project['id']}/budgets/from-appraisal",
+            json={"source_appraisal_id": aid},
+        )
+        assert r.status_code == 201, r.text
+        old_bid = r.json()["id"]
+        line = r.json()["lines"][0]
+        line_id = line["id"]
+        cost_code_id = line["cost_code_id"]
+
+        fake_task_id = uuid.uuid4()
+        with db_engine.begin() as c:
+            c.execute(text(
+                "UPDATE budget_lines SET linked_programme_task_id=:t "
+                "WHERE id=:l"
+            ), {"t": str(fake_task_id), "l": line_id})
+
+        admin.post(f"{BASE_URL}/api/v1/budgets/{old_bid}/activate")
+        rv = admin.post(
+            f"{BASE_URL}/api/v1/budgets/{old_bid}/new-version",
+            json={"version_label": "v2-link-carry"},
+        )
+        assert rv.status_code == 201, rv.text
+
+        new_lines = rv.json()["lines"]
+        matching = [
+            l for l in new_lines if l["cost_code_id"] == cost_code_id
+        ]
+        assert len(matching) == 1, (
+            f"expected exactly one cloned line with cost_code_id="
+            f"{cost_code_id}, found {len(matching)}"
+        )
+        new_line_id = matching[0]["id"]
+        # The serialised payload exposes linked_programme_task_id; cross-
+        # check against raw SQL too (paranoia).
+        assert matching[0]["linked_programme_task_id"] == \
+            str(fake_task_id)
+        with db_engine.connect() as c:
+            carried = c.execute(text(
+                "SELECT linked_programme_task_id FROM budget_lines "
+                "WHERE id=:l"
+            ), {"l": new_line_id}).scalar()
+        assert str(carried) == str(fake_task_id)
+
+    def test_create_new_version_does_not_carry_items(
+        self, admin, project,
+    ):
+        """Build Pack #31 — items on the OLD version's lines are NOT
+        cloned onto the NEW version's lines. Per spec, items are
+        version-specific work breakdown.
+
+        STOP-and-report risk: `services/budgets.new_version` (lines
+        572-583) DOES copy items via an explicit
+        `for oi in ol.items: BudgetLineItem(...)` loop, citing B11.
+        If this test fails because items ARE present on the new
+        version, escalate as a spec-vs-service mismatch (chat-16
+        closing's #31 spec vs B11 implementation note) — do NOT
+        modify production code, do NOT modify the assertion."""
+        from app.db import SessionLocal
+        db = SessionLocal()
+        try:
+            db.execute(text("DELETE FROM budgets WHERE project_id=:p"),
+                       {"p": project["id"]})
+            db.commit()
+        finally:
+            db.close()
+        aid = _make_approved_appraisal(admin, project["id"])
+        r = admin.post(
+            f"{BASE_URL}/api/v1/projects/{project['id']}/budgets/from-appraisal",
+            json={"source_appraisal_id": aid},
+        )
+        v1_id = r.json()["id"]
+        v1_line = r.json()["lines"][0]
+        admin.post(f"{BASE_URL}/api/v1/budgets/{v1_id}/activate")
+        # Add at least one item to v1's first line.
+        rc = admin.post(
+            f"{BASE_URL}/api/v1/budget-lines/{v1_line['id']}/items",
+            json={"description": "carry-test-item", "amount": "111.00"},
+        )
+        assert rc.status_code == 201, rc.text
+
+        rv = admin.post(
+            f"{BASE_URL}/api/v1/budgets/{v1_id}/new-version",
+            json={"version_label": "v2-no-items"},
+        )
+        assert rv.status_code == 201, rv.text
+        new_lines = rv.json()["lines"]
+        for nl in new_lines:
+            items = nl.get("items", [])
+            assert items == [], (
+                f"new-version line {nl['id']} carried {len(items)} "
+                f"item(s) from v1; spec #31 mandates items NOT be "
+                f"cloned across versions. If this fires, escalate as "
+                f"spec-vs-service mismatch (B11 vs chat-16 closing)."
+            )
 
 
 # --------------------------------------------------------------------------
@@ -1083,6 +1939,58 @@ class TestAuditLogCoverage:
         finally:
             db.close()
 
+    # ----------------------------------------------------------------
+    # Chat 16.5 — Build Pack coverage debt (R2)
+    # ----------------------------------------------------------------
+
+    def test_create_version_writes_audit_log_with_superseded_id(
+        self, admin, project,
+    ):
+        """Build Pack #39 — `new_version` creation writes a `Create`
+        audit_log row whose `metadata_json` includes
+        `kind='new_version'` and `superseded_id` pointing at the old
+        version's id."""
+        from app.db import SessionLocal
+        db = SessionLocal()
+        try:
+            db.execute(text("DELETE FROM budgets WHERE project_id=:p"),
+                       {"p": project["id"]})
+            db.commit()
+        finally:
+            db.close()
+        aid = _make_approved_appraisal(admin, project["id"])
+        r = admin.post(
+            f"{BASE_URL}/api/v1/projects/{project['id']}/budgets/from-appraisal",
+            json={"source_appraisal_id": aid},
+        )
+        v1_id = r.json()["id"]
+        admin.post(f"{BASE_URL}/api/v1/budgets/{v1_id}/activate")
+        rv = admin.post(
+            f"{BASE_URL}/api/v1/budgets/{v1_id}/new-version",
+            json={"version_label": "v2-audit"},
+        )
+        assert rv.status_code == 201, rv.text
+        v2_id = rv.json()["id"]
+
+        db = SessionLocal()
+        try:
+            row = db.execute(text(
+                "SELECT metadata_json FROM audit_log "
+                "WHERE resource_type='budgets' AND resource_id=:r "
+                "  AND action='Create' "
+                "  AND metadata_json->>'kind' = 'new_version' "
+                "ORDER BY created_at DESC LIMIT 1"
+            ), {"r": v2_id}).first()
+            assert row is not None, (
+                "expected an audit_log row for the new-version create "
+                f"with kind='new_version', resource_id={v2_id}"
+            )
+            meta = row[0]
+            assert meta["kind"] == "new_version"
+            assert meta["superseded_id"] == v1_id
+        finally:
+            db.close()
+
 
 # --------------------------------------------------------------------------
 # Sensitive-field gating: readonly sees non-sensitive only
@@ -1180,6 +2088,89 @@ class TestConcurrencyInvariant:
                             true, 'Draft', :u)
                 """), {"p": project["id"], "a": aid, "u": admin_uid})
 
+    # ----------------------------------------------------------------
+    # Chat 16.5 — Build Pack coverage debt (R2)
+    # ----------------------------------------------------------------
+
+    def test_concurrent_lock_serialised_via_select_for_update(
+        self, admin, project,
+    ):
+        """Build Pack #14 — concurrent writers on a single budget are
+        serialised via `SELECT … FOR UPDATE` on the `budgets` row.
+        Asserted deterministically with two raw psycopg-3 connections
+        and `FOR UPDATE NOWAIT` (raises SQLSTATE 55P03 /
+        psycopg.errors.LockNotAvailable when the row is already
+        locked). Avoids `time.sleep` entirely.
+
+        Sequence:
+          1. Connection A: BEGIN; SELECT ... FOR UPDATE  (holds lock)
+          2. Connection B: SELECT ... FOR UPDATE NOWAIT  → 55P03
+          3. Connection A: COMMIT                        (releases)
+          4. Connection B (after rollback): retry NOWAIT → succeeds
+        """
+        import psycopg
+        from app.db import SessionLocal, DATABASE_URL
+
+        db = SessionLocal()
+        try:
+            db.execute(text("DELETE FROM budgets WHERE project_id=:p"),
+                       {"p": project["id"]})
+            db.commit()
+        finally:
+            db.close()
+        aid = _make_approved_appraisal(admin, project["id"])
+        r = admin.post(
+            f"{BASE_URL}/api/v1/projects/{project['id']}/budgets/from-appraisal",
+            json={"source_appraisal_id": aid},
+        )
+        assert r.status_code == 201, r.text
+        bid = r.json()["id"]
+
+        # Strip the SQLAlchemy driver prefix for direct psycopg-3 use.
+        raw_dsn = DATABASE_URL.replace("postgresql+psycopg://",
+                                       "postgresql://")
+        conn_a = psycopg.connect(raw_dsn, autocommit=False)
+        conn_b = psycopg.connect(raw_dsn, autocommit=False)
+        try:
+            # 1. Connection A acquires the row lock (implicit BEGIN
+            #    when autocommit=False).
+            cur_a = conn_a.cursor()
+            cur_a.execute(
+                "SELECT id FROM budgets WHERE id = %s FOR UPDATE",
+                (bid,),
+            )
+            assert cur_a.fetchone() is not None
+
+            # 2. Connection B's NOWAIT must immediately fail.
+            cur_b = conn_b.cursor()
+            with pytest.raises(psycopg.errors.LockNotAvailable):
+                cur_b.execute(
+                    "SELECT id FROM budgets WHERE id = %s "
+                    "FOR UPDATE NOWAIT",
+                    (bid,),
+                )
+            # Roll back B's failed transaction before reuse.
+            conn_b.rollback()
+
+            # 3. A releases by committing.
+            conn_a.commit()
+
+            # 4. B can now acquire the lock without waiting.
+            cur_b2 = conn_b.cursor()
+            cur_b2.execute(
+                "SELECT id FROM budgets WHERE id = %s FOR UPDATE NOWAIT",
+                (bid,),
+            )
+            assert cur_b2.fetchone() is not None
+            conn_b.commit()
+        finally:
+            for c in (conn_a, conn_b):
+                try:
+                    c.rollback()
+                except Exception:
+                    pass
+                c.close()
+
 
 # --------------------------------------------------------------------------
 # refresh-attention scan endpoint
@@ -1202,6 +2193,105 @@ class TestRefreshAttention:
             json={},
         )
         assert r.status_code == 403
+
+    # ----------------------------------------------------------------
+    # Chat 16.5 — Build Pack coverage debt (R2)
+    # ----------------------------------------------------------------
+
+    def test_requires_attention_clears_when_no_longer_matching(
+        self, admin, project,
+    ):
+        """Build Pack #78 — `requires_attention=True` rows are cleared
+        on the next refresh-attention scan once they no longer match
+        the criteria (variance_status flips Red→Amber/Green, OR an
+        approval action moves status off Pending_Approval).
+
+        Setup: drive a line into Red via Manual ftc inflation, run
+        scan to flag it, then patch the line back to Green and re-run
+        scan. The line's `requires_attention` must be False after
+        the second scan (and the `cleared` count includes it)."""
+        from app.db import SessionLocal
+        db = SessionLocal()
+        try:
+            db.execute(text("DELETE FROM budgets WHERE project_id=:p"),
+                       {"p": project["id"]})
+            db.commit()
+        finally:
+            db.close()
+        aid = _make_approved_appraisal(admin, project["id"])
+        r = admin.post(
+            f"{BASE_URL}/api/v1/projects/{project['id']}/budgets/from-appraisal",
+            json={"source_appraisal_id": aid},
+        )
+        assert r.status_code == 201, r.text
+        bid = r.json()["id"]
+        admin.post(f"{BASE_URL}/api/v1/budgets/{bid}/activate")
+        line = r.json()["lines"][0]
+        line_id = line["id"]
+        cb = Decimal(line["current_budget"])
+
+        # Drive the line into Red: ftc 10× current_budget guarantees
+        # variance_pct ≫ 15%.
+        r1 = admin.patch(
+            f"{BASE_URL}/api/v1/budget-lines/{line_id}",
+            json={"ftc_method": "Manual",
+                  "forecast_to_complete": str(cb * 10)},
+        )
+        assert r1.status_code == 200, r1.text
+        assert r1.json()["variance_status"] == "Red"
+
+        # First scan: flags the Red line.
+        r2 = admin.post(
+            f"{BASE_URL}/api/v1/internal/budgets/refresh-attention",
+            json={},
+        )
+        assert r2.status_code == 200, r2.text
+        # Verify the line is now flagged.
+        with admin.get(f"{BASE_URL}/api/v1/budgets/{bid}") as _:
+            pass
+        db = SessionLocal()
+        try:
+            flagged = db.execute(text(
+                "SELECT requires_attention FROM budget_lines WHERE id=:l"
+            ), {"l": line_id}).scalar()
+        finally:
+            db.close()
+        assert flagged is True, (
+            "expected requires_attention=True after Red scan"
+        )
+
+        # Restore Green: ftc=0 → ffc = actuals + cni = 0 → variance=
+        # -current_budget (under-budget) → Green.
+        r3 = admin.patch(
+            f"{BASE_URL}/api/v1/budget-lines/{line_id}",
+            json={"ftc_method": "Manual",
+                  "forecast_to_complete": "0"},
+        )
+        assert r3.status_code == 200, r3.text
+        assert r3.json()["variance_status"] == "Green"
+
+        # Second scan: cleared count must include this line.
+        r4 = admin.post(
+            f"{BASE_URL}/api/v1/internal/budgets/refresh-attention",
+            json={},
+        )
+        assert r4.status_code == 200, r4.text
+        assert r4.json()["cleared"] >= 1, (
+            f"expected cleared>=1 after Green re-scan, got {r4.json()}"
+        )
+
+        # Final state: line is no longer flagged.
+        db = SessionLocal()
+        try:
+            cleared = db.execute(text(
+                "SELECT requires_attention FROM budget_lines WHERE id=:l"
+            ), {"l": line_id}).scalar()
+        finally:
+            db.close()
+        assert cleared is False, (
+            "expected requires_attention=False after the line returned "
+            "to Green and was rescanned"
+        )
 
 
 # --------------------------------------------------------------------------
