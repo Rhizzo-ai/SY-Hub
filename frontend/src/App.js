@@ -2,6 +2,36 @@ import React from "react";
 import "@/App.css";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { Toaster } from "sonner";
+import { QueryClientProvider } from "@tanstack/react-query";
+import { queryClient } from "@/lib/queryClient";
+
+// React Query Devtools — lazy + ErrorBoundary-safe.
+// Loaded only in development, and only when navigator.language is a valid
+// BCP-47 tag (the devtools internally call `new Intl.Locale(navigator.language)`
+// which throws in some headless preview environments where navigator.language
+// is the empty string).
+const ReactQueryDevtoolsLazy = React.lazy(() =>
+    import("@tanstack/react-query-devtools").then((m) => ({
+        default: m.ReactQueryDevtools,
+    }))
+);
+
+function DevtoolsSafe() {
+    const lang = (typeof navigator !== "undefined" && navigator.language) || "";
+    if (process.env.NODE_ENV === "production") return null;
+    if (!lang) return null;
+    try {
+        // eslint-disable-next-line no-new
+        new Intl.Locale(lang);
+    } catch {
+        return null;
+    }
+    return (
+        <React.Suspense fallback={null}>
+            <ReactQueryDevtoolsLazy initialIsOpen={false} buttonPosition="bottom-right" />
+        </React.Suspense>
+    );
+}
 
 import { AuthProvider, ProtectedRoute, useAuth } from "@/context/AuthContext";
 import AppShell from "@/components/AppShell";
@@ -96,12 +126,15 @@ function AppRoutes() {
 function App() {
     return (
         <div className="App">
-            <BrowserRouter>
-                <AuthProvider>
-                    <AppRoutes />
-                </AuthProvider>
-                <Toaster position="top-right" toastOptions={{ className: "!font-sans" }} />
-            </BrowserRouter>
+            <QueryClientProvider client={queryClient}>
+                <BrowserRouter>
+                    <AuthProvider>
+                        <AppRoutes />
+                    </AuthProvider>
+                    <Toaster position="top-right" toastOptions={{ className: "!font-sans" }} />
+                </BrowserRouter>
+                <DevtoolsSafe />
+            </QueryClientProvider>
         </div>
     );
 }
