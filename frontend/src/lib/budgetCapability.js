@@ -66,3 +66,20 @@ export function canEditLines(me, status) {
   // Line edits allowed on Draft + Active. Locked/Closed/Superseded are read-only.
   return (status === 'Draft' || status === 'Active') && has(me, 'budgets.edit');
 }
+
+// ──────────────────────────────────────────────────────────────────────
+// §R6.1 editability matrix helpers — status-only (no perm/device).
+// Combine with canEditLines() at the call-site for the full gate.
+// ──────────────────────────────────────────────────────────────────────
+
+export function isBudgetEditable(status) {
+  return status === 'Draft' || status === 'Active';
+}
+
+export function isLineCreatable(status) {
+  return status === 'Draft';
+}
+
+export function isCostCodeMutable(status) {
+  return status === 'Draft';
+}

@@ -13,6 +13,7 @@ import { useAuth } from '@/context/AuthContext';
 import { useBudget } from '@/hooks/budgets';
 import { BudgetHeader } from '@/components/budgets/BudgetHeader';
 import { SensitiveBanner } from '@/components/budgets/SensitiveBanner';
+import { BudgetLinesGrid } from '@/components/budgets/BudgetLinesGrid';
 
 export default function BudgetDetail() {
   const { projectId, budgetId } = useParams();
@@ -76,20 +77,7 @@ export default function BudgetDetail() {
         <>
           <BudgetHeader budget={budget} projectId={projectId} />
           <SensitiveBanner />
-
-          {/* §R6 BudgetLinesGrid lands in the next implementation pause. */}
-          <div
-            data-testid="budget-lines-grid-placeholder"
-            className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-12 text-center text-sm text-slate-500"
-          >
-            <p className="font-medium text-slate-700">
-              Budget lines grid (§R6) — coming next
-            </p>
-            <p className="mt-1 text-xs">
-              {budget.lines?.length ?? 0} lines loaded · drag-orderable grid
-              and inline edit land in the next implementation cycle.
-            </p>
-          </div>
+          <BudgetLinesGrid budget={budget} projectId={projectId} />
         </>
       ) : null}
     </div>

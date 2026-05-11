@@ -129,7 +129,28 @@ export function usePatchBudgetLine(budgetId) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ lineId, body }) => budgetsApi.patchBudgetLine(lineId, body),
-    onSuccess: () => {
+    // §R6 optimistic update for description / notes / percentage_complete
+    // edits. The body keys are applied directly to the cached line so the
+    // grid updates instantly. On error we roll back; on settled we
+    // invalidate so the server-confirmed line (with refreshed totals +
+    // variance + updated_at) replaces the optimistic copy.
+    onMutate: async ({ lineId, body }) => {
+      await qc.cancelQueries({ queryKey: budgetsKeys.detail(budgetId) });
+      const prev = qc.getQueryData(budgetsKeys.detail(budgetId));
+      if (prev?.lines) {
+        qc.setQueryData(budgetsKeys.detail(budgetId), {
+          ...prev,
+          lines: prev.lines.map((ln) =>
+            ln.id === lineId ? { ...ln, ...body } : ln,
+          ),
+        });
+      }
+      return { prev };
+    },
+    onError: (_err, _vars, ctx) => {
+      if (ctx?.prev) qc.setQueryData(budgetsKeys.detail(budgetId), ctx.prev);
+    },
+    onSettled: () => {
       qc.invalidateQueries({ queryKey: budgetsKeys.detail(budgetId) });
     },
   });

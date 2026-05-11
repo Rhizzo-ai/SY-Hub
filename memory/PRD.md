@@ -17,6 +17,27 @@ Frontend / actuals / commitments / Xero are out of scope until later prompts.
 
 ## What's been implemented
 
+### 2026-05-11 — Prompt 2.4B-i §R6 Budget Lines Grid ✓
+- `components/budgets/SortableLineRow.jsx` — dnd-kit sortable row with
+  setActivatorNodeRef-wired drag handle (C8/C9 a11y), inline edit on
+  `line_description` and `percentage_complete` (E7 names), optimistic
+  update + rollback via `usePatchBudgetLine` (extended in `hooks/budgets.js`),
+  client-side cost-code label join (D13/E7), sensitive-field renders via
+  `formatMoney(undefined) → "—"`.
+- `components/budgets/BudgetLinesGrid.jsx` — DndContext + KeyboardSensor
+  for keyboard a11y, `useReorderBudgetLines` with cache-rollback,
+  memoised lines/itemIds, mobile read-only banner, reorder-error toast,
+  exports pure `buildReorderedIds()` for §R8 unit test.
+- `components/budgets/LineDrawer.jsx` — shadcn Sheet placeholder for §R7
+  (line JSON dump + "coming next" checklist).
+- `lib/budgetCapability.js` — added `isBudgetEditable`, `isLineCreatable`,
+  `isCostCodeMutable` status-only helpers.
+- Wired into `BudgetDetail.jsx` (replaced §R6 placeholder).
+- Build: `main.js` 382.72 kB (+20 kB).
+- Smoke (test-pm on v3 Draft): 3 rows render with drag handles, inline
+  edit description + %-complete saved and re-rendered, drawer placeholder
+  opens via row overflow menu.
+
 ### 2026-05-11 — Sandbox provisioning + lineage breadcrumb follow-up
 - Recovery: pod-rebuild wiped Postgres install + `postgres` system user
   mid-session. Reinstalled PG16, restored role/DB, re-seeded demo project
@@ -71,12 +92,13 @@ Frontend / actuals / commitments / Xero are out of scope until later prompts.
 ## P0 / P1 / P2 backlog (next prompts)
 
 ### P0 — current prompt (Chat 17, Prompt 2.4B-i Frontend)
-- R0–R5 ✓ shipped (this session).
-- R6 BudgetLinesGrid (dnd-kit DnD + optimistic inline edit on
-  description/notes/% complete).
-- R7 LineDrawer + LineItemsPanel + CostCodePicker (refetch-on-save +
-  `updated_at` mismatch banner, sensitive-field renders, items CRUD).
-- R8 Component tests — 29 functions across 10 files via Jest/CRA (E1).
+- R0–R6 ✓ shipped.
+- R7 LineDrawer + LineItemsPanel + CostCodePicker (rhf+Zod form,
+  dirtyFields-only PATCH body, refetch-on-save + `updated_at` mismatch
+  banner per E9, sensitive-field renders, items CRUD).
+- R8 Component tests — 29+ functions across 10 files via Jest/CRA (E1),
+  plus `buildReorderedIds` pure-fn unit test (§R6.3) and
+  `test_lineage_breadcrumb_renders_when_sibling_present`.
 - R9 Self-report template / R10 chat-end ritual + bundle delta.
 
 ### P0 — successor prompt (Chat 18, Prompt 2.4B-ii)
