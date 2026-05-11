@@ -16,6 +16,7 @@
 import { StatusBadge } from './StatusBadge';
 import { VarianceBadge, deriveVarianceStatus } from './VarianceBadge';
 import { LifecycleActions } from './LifecycleActions';
+import { BudgetLineage } from './BudgetLineage';
 import { formatMoney, formatPercent, formatDateTime } from '@/lib/format';
 
 export function BudgetHeader({ budget, projectId }) {
@@ -60,6 +61,7 @@ export function BudgetHeader({ budget, projectId }) {
               ? `Totals refreshed ${formatDateTime(budget.summary_refreshed_at)}`
               : 'Totals not yet refreshed.'}
           </p>
+          <BudgetLineage budget={budget} projectId={projectId} />
         </div>
         <LifecycleActions budget={budget} projectId={projectId} />
       </div>

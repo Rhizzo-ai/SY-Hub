@@ -233,6 +233,35 @@ that need to exclude already-linked appraisals pass an
 `existingSourceAppraisalIds: Set<UUID>` derived from the project's
 budgets list.
 
+### E10 — Budget lineage is computed client-side (no backend pointer)
+The §R5.2 BudgetHeader design assumed a `superseded_by_id` field on the
+budget detail payload to render a "Superseded by → newer version" link.
+Backend serialiser (`_serialise_budget_detail`, verified 2026-05-11) does
+NOT expose any lineage pointer — there is no `superseded_by_id`, no
+`previous_version_id`, no `supersedes_id`. The only lineage signal in
+the payload is the (`project_id`, `version_number`, `status`,
+`is_current`) tuple, plus the audit-log entry written at
+`new-version` time (not in the budget payload).
+
+Per operator instruction (chat 17, 2026-05-11):
+> "If the backend doesn't surface the back-link... only the forward link
+> superseded_by_id — note as E10 in errata and ship forward-only. Don't
+> extend backend for this."
+
+Resolution: lineage is computed entirely on the client from the
+project's full budget list (already fetched + cached by
+`useProjectBudgets`). The header reuses the cached query; no extra
+network round-trip. Forward pointer = the next budget by version_number
+in the same project (typically the `is_current=true` row when viewing a
+superseded version). Back pointer = the previous budget by
+version_number. When there's exactly one budget in the project, no
+lineage row renders. Renders inline under the title, slate-500,
+data-testids `budget-lineage-prev` / `budget-lineage-next`.
+
+If backend later adds the pointer (preferred per audit), the component
+falls back to the inline computation; the field can be added without
+component changes.
+
 ---
 
 

@@ -149,3 +149,65 @@ decisions or the §R0 STOP-and-resplit triggers. Owner: Chat 17+.
   add the column and delete the `hasattr` no-op.
 - `appraisal_scenarios.parent_scenario_appraisal_id_fkey` ON DELETE
   RESTRICT (see CHANGELOG §pre-2.4-cleanup §5).
+
+---
+
+## Sandbox / pod-runtime stability (Track 8 — pre-launch hardening)
+
+### Postgres + supervisor wiring does not survive Emergent fork restarts
+Observed across multiple sessions (Chat 16.5 fresh-fork; Chat 17
+2.4B-i frontend session — twice in a single chat: once at session
+boot, once after a mid-session container rebuild that wiped
+`/var/lib/postgresql/`, `/usr/lib/postgresql/`, `/tmp/*`, and the
+`postgres` system user but left everything under `/app` intact).
+
+**Symptom signature on a wiped pod:**
+- `supervisorctl status` → `unix:///var/run/supervisor.sock no such file`
+- `sudo service supervisor start` →
+  `Error: Invalid user name postgres in section 'program:postgres'`
+- `id postgres` → no such user
+- `ls /usr/lib/postgresql/` → not found
+- Preview URL → HTTP 502 (nginx ingress can't reach frontend)
+
+**Expected per bootstrap-fix-p0 contract:**
+- `/root/.emergent/on-restart.sh` should fire on container start,
+  call `python -m app.bootstrap`, which is supposed to recover the
+  DB to a known-good state. Self-heal supervisor config exists for
+  the `[program:backend]` block but NOT for `[program:postgres]`.
+- The runbook (PostgreSQL install + role/DB provisioning + supervisor
+  wiring) lives only in `backend/app/bootstrap.py`'s docstring
+  (lines 72–124), not in a runnable script. The bootstrap orchestrator
+  itself assumes Postgres is already installed and running — it does
+  not provision it.
+
+**Manual recovery (used twice in chat 17):**
+1. Reinstall Postgres 16 via PGDG apt repo (see bootstrap.py:77-85).
+2. Recreate the `syhomes` role + DB + pgcrypto extension (bootstrap.py:88-93).
+3. Write `/etc/supervisor/conf.d/supervisord_postgres.conf` from the
+   template in bootstrap.py:96-110.
+4. `sudo service supervisor start` → supervisord spawns all programs.
+5. `bash /root/.emergent/on-restart.sh` → bootstrap rc=0, backend up.
+
+**Track 8 / pre-launch hardening tasks:**
+- Audit which container-state survives an Emergent pod restart vs.
+  which doesn't. Confirm whether `/var/lib/postgresql/16/main` is
+  expected to be ephemeral or if it should be in a persistent volume.
+- Lift the docstring runbook into a runnable provisioning script
+  (e.g. `/app/scripts/provision_postgres.sh`) that the bootstrap
+  orchestrator can invoke when it detects the install is missing,
+  rather than exiting rc=2 (pg_unreachable) and waiting for an
+  operator to read the docstring.
+- Extend `on-restart.sh` to detect the "postgres not installed"
+  pre-condition and bail with a distinct exit code + actionable
+  log line ("provision via `bash /app/scripts/provision_postgres.sh`")
+  rather than letting supervisor refuse to start.
+- Consider whether the `[program:postgres]` block should be in the
+  same self-healing template pattern as `[program:backend]` (see
+  `/app/scripts/README.md` ⇒ Self-healing template section).
+- Document the recovery flow in a top-level `/app/RUNBOOK.md` so
+  any operator (human or fork agent) can find it without grepping
+  backend source docstrings.
+- Cost: recurring 5–10 min interruption every time a fork is reset
+  or container rebuilt. Not a launch blocker — but the next chat
+  that pre-launch hardens (Track 8) should retire this manual
+  workaround.

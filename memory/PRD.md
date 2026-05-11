@@ -17,6 +17,17 @@ Frontend / actuals / commitments / Xero are out of scope until later prompts.
 
 ## What's been implemented
 
+### 2026-05-11 — Sandbox provisioning + lineage breadcrumb follow-up
+- Recovery: pod-rebuild wiped Postgres install + `postgres` system user
+  mid-session. Reinstalled PG16, restored role/DB, re-seeded demo project
+  + v1+v2 budgets. Documented as Track 8 / pre-launch hardening item in
+  `/app/docs/SY_Hub_Phase2_Backlog.md` (Sandbox / pod-runtime stability).
+- New: `components/budgets/BudgetLineage.jsx` — slate-500 inline prev/next
+  links computed client-side from cached `useProjectBudgets`. Errata E10
+  added to Build Pack (backend has no lineage pointer).
+- Verified: v1 (Superseded) → "Next version (v2) →", v2 (Draft, current)
+  → "← Previous version (v1)". Cross-navigation confirmed.
+
 ### 2026-05-10 — Prompt 2.4B-i Budgets Frontend §R0–§R5 ✓
 - §R0–R3: stack installed (TanStack Query v5 + Table v8 + dnd-kit + MSW),
   routes wired, Zod schemas + API clients + 14 React-Query hooks against
