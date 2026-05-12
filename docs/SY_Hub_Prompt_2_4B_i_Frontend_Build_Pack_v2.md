@@ -233,6 +233,29 @@ that need to exclude already-linked appraisals pass an
 `existingSourceAppraisalIds: Set<UUID>` derived from the project's
 budgets list.
 
+### E13 — Demo seed must use `ftc_method = 'Budget_Remaining'`, not `'Manual'`
+The chat-17 demo SQL (re-run after every pod recycle) seeded
+budget_lines with `ftc_method='Manual'` and `forecast_to_complete=0`.
+Backend recompute (correctly) accepts the Manual stored value as
+authoritative — so FFC=0 for every line, variance=-100% per line,
+Red pills everywhere on a Draft budget with no spend. Operator
+surfaced as a possible 2.4A backend bug after R8 close; root cause
+was the seed data, not the business logic.
+
+**Resolution:** lines must seed with `ftc_method='Budget_Remaining'`
+and `forecast_to_complete = current_budget`. Backend recompute then
+yields the realistic Draft-budget shape (FFC = current_budget,
+variance=0, Green pills). Codified in
+`/app/scripts/seed_demo_budget.sh` (committed to repo, idempotent,
+survives pod recycles).
+
+The backend `_classify_variance` arithmetic + `recompute_line` for
+Budget_Remaining mode (`max(0, current − actuals − committed)`)
+verified correct against `backend/app/services/budgets.py:189-204`.
+No 2.4A backend change required.
+
+---
+
 ### E12 — Backend `variance_status` is asymmetric (under-budget always Green)
 Backend `_classify_variance` (`backend/app/services/budgets.py:155-166`)
 returns Green for ANY `variance_pct <= 0` by explicit design — the
