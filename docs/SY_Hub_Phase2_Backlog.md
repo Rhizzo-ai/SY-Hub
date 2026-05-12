@@ -6,6 +6,34 @@ decisions or the §R0 STOP-and-resplit triggers. Owner: Chat 17+.
 
 ---
 
+## P1 — Backend variance attention-flag asymmetry (Chat 17 E12 follow-up)
+
+`backend/app/services/budgets.py:155-166` (`_classify_variance`)
+returns Green for any `variance_pct ≤ 0` by design. The frontend now
+re-derives the band symmetrically (E12) so display is consistent, BUT
+the backend still uses `line.variance_status == 'Red'` to drive the
+`requires_attention` flag (see
+`backend/app/services/budget_lines.py:467`). This means under-budget
+anomalies (e.g. a line £399k under current_budget — likely a stale
+FTC or missing commitment) currently never trigger attention scans.
+
+**Tasks:**
+- Decide product intent: should under-budget swings flag attention?
+  Operator's intent surfaced in Chat 17: yes — a line ≤-10% likely
+  indicates data quality issue (wrong FTC method, stale commitment),
+  not "we saved money".
+- If yes: change `_classify_variance` to `abs(variance_pct)`, write
+  an Alembic data-migration to re-classify existing rows, regenerate
+  attention flags via `refresh_attention` endpoint.
+- Estimated effort: 2-3 h backend + 1h re-test (existing frontend
+  tests cover the symmetric semantic already).
+
+Tracked under Chat 19 hardening pass or as a stand-alone P1 commit
+before launch.
+
+---
+
+
 ## HIGH-PRIORITY — Chat 18 dedicated build
 
 ### BudgetLinesGrid v2 (BT-style) — replace flat R6 grid

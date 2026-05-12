@@ -233,6 +233,38 @@ that need to exclude already-linked appraisals pass an
 `existingSourceAppraisalIds: Set<UUID>` derived from the project's
 budgets list.
 
+### E12 — Backend `variance_status` is asymmetric (under-budget always Green)
+Backend `_classify_variance` (`backend/app/services/budgets.py:155-166`)
+returns Green for ANY `variance_pct <= 0` by explicit design — the
+docstring states *"Negative or zero variance (under or on budget)
+=> Green."*
+
+This conflicts with operator-stated semantic: **|pct| > 10 = Red
+regardless of sign**, because a line dramatically under budget is
+typically a data-quality signal (wrong FTC method, stale line, missing
+commitment), not "we saved 99% of the budget".
+
+Surface symptom (Chat 17 R8 click-test): the header variance pill
+showed Red (uses client-side `deriveVarianceStatus(abs(pct))`) while
+line pills showed Green (used backend `line.variance_status`) for
+the SAME budget.
+
+**Resolution:** Frontend re-derives line band client-side via
+`deriveVarianceStatus(Number(line.variance_pct))` in
+`components/budgets/SortableLineRow.jsx`. No backend migration. The
+backend's `variance_status` column stays asymmetric but the frontend
+ignores it for display. Backend uses it internally to flag
+`requires_attention`; the asymmetry there is a separate concern
+captured in `SY_Hub_Phase2_Backlog.md` (under-budget anomalies
+currently don't trigger attention flagging).
+
+Unit test coverage added in
+`components/budgets/__tests__/VarianceBadge.test.jsx`:
+0%, ±1%, ±2 (boundary), ±5%, ±10 (boundary), ±11%, ±50%, ±100%,
+±150%, null, NaN, string-coercion-safety.
+
+---
+
 ### E11 — Line items field is `rate`, not `unit_cost`
 The §R7.4 LineItemsPanel spec used `unit_cost` for the per-unit price.
 Backend (verified `backend/app/schemas/budgets.py:48-66`) uses **`rate`**.

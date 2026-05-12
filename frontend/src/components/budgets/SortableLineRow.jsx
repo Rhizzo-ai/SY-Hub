@@ -35,7 +35,7 @@ import { Input } from '@/components/ui/input';
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { VarianceBadge } from './VarianceBadge';
+import { VarianceBadge, deriveVarianceStatus } from './VarianceBadge';
 import { formatMoney, formatPercent } from '@/lib/format';
 import { usePatchBudgetLine } from '@/hooks/budgets';
 import { isBudgetEditable } from '@/lib/budgetCapability';
@@ -201,8 +201,17 @@ export function SortableLineRow({
       </td>
 
       <td className="px-3 py-2">
+        {/*
+          E12 (Chat 17 R8 click-test bug): backend `variance_status` is
+          asymmetric — it returns "Green" for any variance_pct ≤ 0,
+          treating under-budget as never-amber-never-red. Operator
+          semantic (matches header) is symmetric: |pct| > 10 → Red.
+          Re-derive client-side so lines + header agree.
+        */}
         <VarianceBadge
-          status={line.variance_status}
+          status={deriveVarianceStatus(
+            line.variance_pct == null ? null : Number(line.variance_pct),
+          )}
           value={line.variance_value}
           pct={line.variance_pct}
         />
