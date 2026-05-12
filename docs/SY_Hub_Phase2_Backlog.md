@@ -6,6 +6,50 @@ decisions or the §R0 STOP-and-resplit triggers. Owner: Chat 17+.
 
 ---
 
+## HIGH-PRIORITY — Chat 18 dedicated build
+
+### BudgetLinesGrid v2 (BT-style) — replace flat R6 grid
+
+Operator surfaced Buildertrend Job Costing Budget view at the end of
+Chat 17 as the state-of-the-art target for this surface. The 2.4B-i
+flat 6-column grid is sufficient for ship but represents a fraction
+of what finance / contracts will use day-to-day. **One of the most-used
+surfaces in the entire platform — must be state-of-the-art.**
+
+Required features (BT-aligned):
+
+- **Cost-code grouping** with expand/collapse + per-group subtotals
+- **11+ money columns** with column visibility toggle: Original /
+  Revised / Pending / Committed / Actual / Builder variance / Projected /
+  Projection reference / Cost to complete / Revised vs projected /
+  Projected profit / Projected margin %
+- **Per-line status pills** — Completed / Budgeted / Current costs
+- **Heat-mapped variance cells** — pink for overrun, green for underrun
+- **Indented hierarchy** — group → cost code → line item
+- **Sticky cost-code column** on horizontal scroll
+- **Top-level view tabs** — e.g. Job Costing / others
+
+**Operator-implied features (not in BT screenshot but worth speccing):**
+
+1. **Bulk select + bulk actions** — apply % complete to a cost-code
+   root; bulk reassign cost codes; bulk delete
+2. **Filtering** — by cost-code root, variance band, status,
+   % complete range
+
+**Data model:** 2.4A backend already supports most of this. The
+`budget_lines` table has `original_budget`, `current_budget`,
+`actuals_to_date`, `committed_not_invoiced`, `forecast_to_complete`,
+`forecast_final_cost`, `variance_status` per line, plus `cost_code_id`
+for grouping. **UI rework only — no backend changes expected.**
+Confirm during specification.
+
+**Chat 18 plan:** dedicated Build Pack with full audit cycle.
+Reference screenshot in operator's Chat 17 attachments.
+Push Playwright E2E plan to Chat 19 to make room.
+
+---
+
+
 ## 1. AppraisalUnit aggregation in `create_from_appraisal`
 - **Status**: deferred (locked decision C1).
 - **Why**: `AppraisalUnit` model carries no `cost_code_id` linkage today.

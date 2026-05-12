@@ -53,10 +53,10 @@ import { CostCodePicker } from './CostCodePicker';
 import { isBudgetEditable, isCostCodeMutable } from '@/lib/budgetCapability';
 
 const FTC_METHODS = [
-  { value: 'BudgetRemaining',    label: 'Budget remaining' },
-  { value: 'CommittedOnly',      label: 'Committed only' },
-  { value: 'PercentageComplete', label: 'Percentage complete' },
-  { value: 'Manual',             label: 'Manual entry' },
+  { value: 'Budget_Remaining',    label: 'Budget remaining' },
+  { value: 'Committed_Only',      label: 'Committed only' },
+  { value: 'Percentage_Complete', label: 'Percentage complete' },
+  { value: 'Manual',              label: 'Manual entry' },
 ];
 
 // Client-side validation. Backend validates again — this catches typos
@@ -65,7 +65,7 @@ const FTC_METHODS = [
 const FormSchema = z.object({
   line_description: z.string().max(2000).nullable().optional(),
   notes: z.string().max(5000).nullable().optional(),
-  ftc_method: z.enum(['BudgetRemaining','CommittedOnly','PercentageComplete','Manual']).nullable().optional(),
+  ftc_method: z.enum(['Budget_Remaining','Committed_Only','Percentage_Complete','Manual']).nullable().optional(),
   forecast_to_complete: z.union([z.coerce.number().min(0), z.null()]).optional(),
   cost_code_id: z.string().uuid().optional(),
   percentage_complete: z.union([
@@ -100,7 +100,7 @@ export function LineDrawer({ budget, projectId, lineId, focus, onClose }) {
     defaultValues: {
       line_description: line?.line_description ?? '',
       notes: line?.notes ?? '',
-      ftc_method: line?.ftc_method ?? 'BudgetRemaining',
+      ftc_method: line?.ftc_method ?? 'Budget_Remaining',
       forecast_to_complete: line?.forecast_to_complete ?? null,
       cost_code_id: line?.cost_code_id ?? '',
       percentage_complete: line?.percentage_complete ?? null,
@@ -114,7 +114,7 @@ export function LineDrawer({ budget, projectId, lineId, focus, onClose }) {
     form.reset({
       line_description: line.line_description ?? '',
       notes: line.notes ?? '',
-      ftc_method: line.ftc_method ?? 'BudgetRemaining',
+      ftc_method: line.ftc_method ?? 'Budget_Remaining',
       forecast_to_complete: line.forecast_to_complete ?? null,
       cost_code_id: line.cost_code_id ?? '',
       percentage_complete: line.percentage_complete ?? null,
@@ -134,7 +134,7 @@ export function LineDrawer({ budget, projectId, lineId, focus, onClose }) {
       form.reset({
         line_description: line.line_description ?? '',
         notes: line.notes ?? '',
-        ftc_method: line.ftc_method ?? 'BudgetRemaining',
+        ftc_method: line.ftc_method ?? 'Budget_Remaining',
         forecast_to_complete: line.forecast_to_complete ?? null,
         cost_code_id: line.cost_code_id ?? '',
         percentage_complete: line.percentage_complete ?? null,
@@ -157,7 +157,7 @@ export function LineDrawer({ budget, projectId, lineId, focus, onClose }) {
     form.reset({
       line_description: line.line_description ?? '',
       notes: line.notes ?? '',
-      ftc_method: line.ftc_method ?? 'BudgetRemaining',
+      ftc_method: line.ftc_method ?? 'Budget_Remaining',
       forecast_to_complete: line.forecast_to_complete ?? null,
       cost_code_id: line.cost_code_id ?? '',
       percentage_complete: line.percentage_complete ?? null,
@@ -329,7 +329,7 @@ export function LineDrawer({ budget, projectId, lineId, focus, onClose }) {
                 control={form.control}
                 render={({ field }) => (
                   <Select
-                    value={field.value ?? 'BudgetRemaining'}
+                    value={field.value ?? 'Budget_Remaining'}
                     onValueChange={field.onChange}
                     disabled={fieldsDisabled || !canSensitive}
                   >

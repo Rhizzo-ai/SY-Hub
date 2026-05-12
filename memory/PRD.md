@@ -17,6 +17,31 @@ Frontend / actuals / commitments / Xero are out of scope until later prompts.
 
 ## What's been implemented
 
+### 2026-05-12 — Prompt 2.4B-i §R8 component tests ✓
+- 10 test suites, 46 tests, 0 failures, ~3.4s runtime (`yarn test --watchAll=false`).
+- Coverage: lib/ 96%, schemas 86%, BudgetsList 92%; component coverage
+  46% (5 of 14 components 0% — relied on smoke-tested e2e paths).
+- Files: `__tests__/budgetCapability.test.js` (8 tests),
+  `__tests__/budgets-schemas.test.js` (5), `BudgetLinesGrid.pure.test.js`
+  (5), `VarianceBadge.test.jsx` (6), `StatusBadge.test.jsx` (1),
+  `SensitiveBanner.test.jsx` (2), `BudgetLineage.test.jsx` (4),
+  `LifecycleActions.test.jsx` (5), `BudgetsList.test.jsx` (4),
+  `LineDrawer.test.jsx` (5).
+- Test infra: `setupTests.js` + `test/mockMatchMedia.js`
+  + `test/renderWithProviders.jsx` + `test/mocks/fixtures.js`
+  + `__mocks__/react-router-dom.js` + `jest.resolver.cjs`
+  + craco.config.js jest section.
+- Required tests all present: `buildReorderedIds` pure-fn (H8),
+  lineage breadcrumb (E10), E9 conflict-banner, status×perm matrix,
+  sensitive-stripped schema parse, mobile-floor gates, dirtyFields-only
+  PATCH body.
+- §R6.3 H8 follow-up: extracted `buildReorderedIds` to
+  `lib/buildReorderedIds.js` so the pure-fn test doesn't drag dnd-kit /
+  zod / shadcn into its require graph.
+- §R7 follow-up: corrected FTC method enum values
+  (`BudgetRemaining` → `Budget_Remaining` etc.) after schema test
+  caught the divergence from backend.
+
 ### 2026-05-12 — Prompt 2.4B-i §R7 LineDrawer + LineItemsPanel + CostCodePicker ✓
 - `components/budgets/LineDrawer.jsx` — full rhf + Zod form (line_description,
   notes, ftc_method, forecast_to_complete, percentage_complete, cost_code_id);
@@ -115,15 +140,20 @@ Frontend / actuals / commitments / Xero are out of scope until later prompts.
 
 ## P0 / P1 / P2 backlog (next prompts)
 
-### P0 — current prompt (Chat 17, Prompt 2.4B-i Frontend)
-- R0–R6 ✓ shipped.
-- R7 LineDrawer + LineItemsPanel + CostCodePicker (rhf+Zod form,
-  dirtyFields-only PATCH body, refetch-on-save + `updated_at` mismatch
-  banner per E9, sensitive-field renders, items CRUD).
-- R8 Component tests — 29+ functions across 10 files via Jest/CRA (E1),
-  plus `buildReorderedIds` pure-fn unit test (§R6.3) and
-  `test_lineage_breadcrumb_renders_when_sibling_present`.
-- R9 Self-report template / R10 chat-end ritual + bundle delta.
+### P0 — current prompt (Chat 17, Prompt 2.4B-i Frontend) — **CLOSED**
+- R0–R10 ✓ shipped. See `docs/chat-summaries/chat-17-closing.md`.
+
+### P0 — next prompt (Chat 18)
+- **BudgetLinesGrid v2 (BT-style)** — dedicated Build Pack, full audit
+  cycle. Replace flat R6 grid with cost-code grouping, 11+ columns,
+  heat-mapped variance, sticky column, bulk-select, filtering. See
+  `docs/SY_Hub_Phase2_Backlog.md` HIGH-PRIORITY section.
+- **Track 8 P0** — wire `provision_postgres.sh` into `on-restart.sh`
+  step 0 (retires the recurring operator interruption pattern observed
+  6× in Chat 17). 1-2h fix.
+
+### P0 — Chat 19
+- Budgets E2E (Playwright) — pushed from Chat 18 to make room for v2.
 
 ### P0 — successor prompt (Chat 18, Prompt 2.4B-ii)
 - Budgets E2E (Playwright).

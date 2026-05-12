@@ -21,7 +21,7 @@ import {
   useSensor, useSensors,
 } from '@dnd-kit/core';
 import {
-  SortableContext, arrayMove,
+  SortableContext,
   sortableKeyboardCoordinates,
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
@@ -34,19 +34,10 @@ import { useIsDesktop } from '@/lib/useIsDesktop';
 import {
   isBudgetEditable, canEditLines,
 } from '@/lib/budgetCapability';
+import { buildReorderedIds } from '@/lib/buildReorderedIds';
 
-/**
- * Pure handler — exported for §R8 unit tests. Returns the new ordered
- * id array from a dnd-kit DragEndEvent, or null when nothing changed.
- */
-export function buildReorderedIds(lines, event) {
-  const { active, over } = event;
-  if (!over || active.id === over.id) return null;
-  const oldIdx = lines.findIndex((l) => l.id === active.id);
-  const newIdx = lines.findIndex((l) => l.id === over.id);
-  if (oldIdx < 0 || newIdx < 0) return null;
-  return arrayMove(lines, oldIdx, newIdx).map((l) => l.id);
-}
+// Re-exported for back-compat with §R6 imports.
+export { buildReorderedIds };
 
 export function BudgetLinesGrid({ budget, projectId }) {
   const { me } = useAuth();

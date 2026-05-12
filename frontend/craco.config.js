@@ -97,4 +97,24 @@ if (isDevServer) {
   }
 }
 
+// Jest path-alias support — mirror the webpack alias above so tests
+// can `import x from '@/...'` exactly like the runtime build does.
+// Also relax transformIgnorePatterns so ESM-only deps (date-fns,
+// date-fns-tz, lucide-react) are transpiled by Babel for Jest.
+webpackConfig.jest = {
+  configure: (jestConfig) => {
+    jestConfig.moduleNameMapper = {
+      ...(jestConfig.moduleNameMapper || {}),
+      '^@/(.*)$': '<rootDir>/src/$1',
+      '^react-router-dom$': '<rootDir>/src/__mocks__/react-router-dom.js',
+    };
+    jestConfig.resolver = '<rootDir>/jest.resolver.cjs';
+    jestConfig.transformIgnorePatterns = [
+      'node_modules/(?!(date-fns|date-fns-tz|lucide-react|@dnd-kit|sonner|@radix-ui|zod|@hookform)/)',
+      '^.+\\.module\\.(css|sass|scss)$',
+    ];
+    return jestConfig;
+  },
+};
+
 module.exports = webpackConfig;
