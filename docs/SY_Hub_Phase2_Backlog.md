@@ -156,10 +156,9 @@ decisions or the §R0 STOP-and-resplit triggers. Owner: Chat 17+.
 
 ### Postgres + supervisor wiring does not survive Emergent fork restarts
 Observed across multiple sessions (Chat 16.5 fresh-fork; Chat 17
-2.4B-i frontend session — twice in a single chat: once at session
-boot, once after a mid-session container rebuild that wiped
-`/var/lib/postgresql/`, `/usr/lib/postgresql/`, `/tmp/*`, and the
-`postgres` system user but left everything under `/app` intact).
+2.4B-i frontend session — **FOUR** times in a single chat: at session
+boot, then again after mid-session pod rebuilds at R4+R5 ship, lineage
+follow-up, and R6 ship). Cadence ~1-2h on average.
 
 **Symptom signature on a wiped pod:**
 - `supervisorctl status` → `unix:///var/run/supervisor.sock no such file`
@@ -167,47 +166,82 @@ boot, once after a mid-session container rebuild that wiped
   `Error: Invalid user name postgres in section 'program:postgres'`
 - `id postgres` → no such user
 - `ls /usr/lib/postgresql/` → not found
-- Preview URL → HTTP 502 (nginx ingress can't reach frontend)
+- `ls /tmp/` → empty (anything saved to /tmp survives 0 recycles)
+- `ls /app/` → intact (this layer is the durable repo)
+- Preview URL → HTTP 502 (Cloudflare → no upstream)
 
-**Expected per bootstrap-fix-p0 contract:**
-- `/root/.emergent/on-restart.sh` should fire on container start,
-  call `python -m app.bootstrap`, which is supposed to recover the
-  DB to a known-good state. Self-heal supervisor config exists for
-  the `[program:backend]` block but NOT for `[program:postgres]`.
-- The runbook (PostgreSQL install + role/DB provisioning + supervisor
-  wiring) lives only in `backend/app/bootstrap.py`'s docstring
-  (lines 72–124), not in a runnable script. The bootstrap orchestrator
-  itself assumes Postgres is already installed and running — it does
-  not provision it.
+**Durable recovery — committed to repo at `/app/scripts/provision_postgres.sh`.**
+Run once after each recycle:
 
-**Manual recovery (used twice in chat 17):**
-1. Reinstall Postgres 16 via PGDG apt repo (see bootstrap.py:77-85).
-2. Recreate the `syhomes` role + DB + pgcrypto extension (bootstrap.py:88-93).
-3. Write `/etc/supervisor/conf.d/supervisord_postgres.conf` from the
-   template in bootstrap.py:96-110.
-4. `sudo service supervisor start` → supervisord spawns all programs.
-5. `bash /root/.emergent/on-restart.sh` → bootstrap rc=0, backend up.
+```bash
+bash /app/scripts/provision_postgres.sh
+```
 
-**Track 8 / pre-launch hardening tasks:**
-- Audit which container-state survives an Emergent pod restart vs.
-  which doesn't. Confirm whether `/var/lib/postgresql/16/main` is
-  expected to be ephemeral or if it should be in a persistent volume.
-- Lift the docstring runbook into a runnable provisioning script
-  (e.g. `/app/scripts/provision_postgres.sh`) that the bootstrap
-  orchestrator can invoke when it detects the install is missing,
-  rather than exiting rc=2 (pg_unreachable) and waiting for an
-  operator to read the docstring.
-- Extend `on-restart.sh` to detect the "postgres not installed"
-  pre-condition and bail with a distinct exit code + actionable
-  log line ("provision via `bash /app/scripts/provision_postgres.sh`")
-  rather than letting supervisor refuse to start.
-- Consider whether the `[program:postgres]` block should be in the
-  same self-healing template pattern as `[program:backend]` (see
-  `/app/scripts/README.md` ⇒ Self-healing template section).
-- Document the recovery flow in a top-level `/app/RUNBOOK.md` so
-  any operator (human or fork agent) can find it without grepping
-  backend source docstrings.
-- Cost: recurring 5–10 min interruption every time a fork is reset
-  or container rebuilt. Not a launch blocker — but the next chat
-  that pre-launch hardens (Track 8) should retire this manual
-  workaround.
+Idempotent steps:
+1. `apt-get install postgresql-16` if `/usr/lib/postgresql/16` missing
+2. One-shot postgres → `CREATE ROLE syhomes` / `CREATE DATABASE syhomes`
+   / `CREATE EXTENSION pgcrypto` (all `IF NOT EXISTS`)
+3. Stop one-shot postgres
+4. Write `/etc/supervisor/conf.d/supervisord_postgres.conf` if missing
+5. `service supervisor start`
+6. `bash /root/.emergent/on-restart.sh` → bootstrap rc=0 → backend up
+
+**Total runtime budget:** 60-120s on a cold pod (apt-get dominates).
+
+### Investigation: why doesn't `on-restart.sh` catch this?
+
+Reviewed `/root/.emergent/on-restart.sh` 2026-05-12. Finding:
+
+**The hook has no provision-postgres step.** Its contract assumes:
+1. Postgres is installed (`/usr/lib/postgresql/16/`)
+2. The `postgres` system user exists
+3. The `[program:postgres]` supervisor block exists and is valid
+4. Supervisord is already running
+
+When ANY of those preconditions fail (the wipe-pattern observed in
+Chat 17 fails ALL FOUR simultaneously), the failure chain is:
+
+1. Container starts. `supervisord.conf` has `[program:postgres] user=postgres`.
+2. `service supervisor start` → exits with
+   `Invalid user name postgres in section 'program:postgres'`. No socket
+   created. Supervisord is never alive.
+3. Even if the platform invokes `on-restart.sh` on boot, the script
+   would (a) fail to `sudo supervisorctl reread` (no socket), and (b)
+   call `python -m app.bootstrap`, whose first real step
+   `wait_for_postgres` polls for 60s and exits rc=2 (pg_unreachable)
+   because no postgres is running.
+4. Even if the hook ran through to step 7 (`supervisorctl start backend`),
+   it would fail because the socket isn't there.
+
+**Conclusion:** the bootstrap-fix-p0 contract covers "DB is empty or
+out-of-migration" but does NOT cover "Postgres install missing" or
+"`postgres` system user missing". The runbook for those failures lives
+only in `backend/app/bootstrap.py`'s docstring lines 72-124 — not in
+any runnable script (until 2e462f2 in this session shipped one).
+
+### Track 8 / pre-launch hardening tasks
+
+- **P0:** Wire `provision_postgres.sh` into `on-restart.sh` as a step 0
+  precondition check. If `/usr/lib/postgresql/16` is missing OR `id postgres`
+  fails, invoke the provision script before continuing. This collapses
+  the manual recovery into the automatic boot hook.
+- **P0:** Investigate WHY the Emergent pod recycles wipe Postgres but
+  preserve `/app`. Is `/var/lib/postgresql` supposed to be on a
+  persistent volume? If so, why isn't it? If not, document the
+  fork-restart contract explicitly so future agents/operators know.
+- **P1:** Self-heal the `[program:postgres]` supervisor block the same
+  way `[program:backend]` is self-healed (template at
+  `/app/scripts/supervisord_postgres.conf.template`, splice idempotently
+  in `ensure_postgres_program_gated()` mirror of `ensure_backend_gated()`).
+- **P1:** Move the install-postgres runbook from
+  `backend/app/bootstrap.py` docstring into a top-level
+  `/app/RUNBOOK.md` so it's discoverable without grepping source.
+- **P2:** Consider a single shell-level health check exposed on the
+  on-restart hook stderr — recent operators reported the symptom is
+  hard to distinguish from "frontend dev server is still compiling".
+- **Cost so far in this chat:** ~30 min of session time absorbed by
+  4× manual recoveries. With `provision_postgres.sh` in repo the
+  recovery is now ~90s per recycle, but it still interrupts operator
+  flow. The P0 work above retires this fully.
+
+### Phase 1 cleanup carry-forwards (untouched by 2.4A)
