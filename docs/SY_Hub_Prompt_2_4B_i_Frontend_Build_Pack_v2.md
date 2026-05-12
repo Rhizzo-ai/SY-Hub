@@ -233,6 +233,17 @@ that need to exclude already-linked appraisals pass an
 `existingSourceAppraisalIds: Set<UUID>` derived from the project's
 budgets list.
 
+### E11 — Line items field is `rate`, not `unit_cost`
+The §R7.4 LineItemsPanel spec used `unit_cost` for the per-unit price.
+Backend (verified `backend/app/schemas/budgets.py:48-66`) uses **`rate`**.
+Backend also REQUIRES `amount` on `CreateBudgetLineItemRequest` — it is
+NOT auto-derived from `quantity * rate`. The component computes
+`amount = qty * rate` when both are numeric at add-row submit time and
+posts both fields; users can subsequently edit `amount` directly via
+inline edit if they need to break the qty*rate relationship.
+
+---
+
 ### E10 — Budget lineage is computed client-side (no backend pointer)
 The §R5.2 BudgetHeader design assumed a `superseded_by_id` field on the
 budget detail payload to render a "Superseded by → newer version" link.

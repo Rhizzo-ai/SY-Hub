@@ -17,6 +17,30 @@ Frontend / actuals / commitments / Xero are out of scope until later prompts.
 
 ## What's been implemented
 
+### 2026-05-12 — Prompt 2.4B-i §R7 LineDrawer + LineItemsPanel + CostCodePicker ✓
+- `components/budgets/LineDrawer.jsx` — full rhf + Zod form (line_description,
+  notes, ftc_method, forecast_to_complete, percentage_complete, cost_code_id);
+  dirtyFields-only PATCH body; defensive cost_code_id only sent when status
+  permits; sensitive-field gates (notes + FTC fields hidden unless
+  `budgets.view_sensitive`); E9 conflict-detect via `updated_at` watermark
+  (loadedAt + justSavedRef) with non-blocking "Reload" amber banner;
+  close-with-dirty AlertDialog confirm with sy-orange Discard; Cmd/Ctrl+S
+  save + Esc close keyboard shortcuts (operator addition).
+- `components/budgets/LineItemsPanel.jsx` — inline-CRUD on items table
+  (description / qty / unit / rate, computed amount column); add-row
+  builder beneath table; per-row Delete via existing ConfirmDialog
+  (sy-orange destructive variant); mobile read-only floor. Field rename
+  `unit_cost` → `rate` documented as **errata E11**.
+- `components/budgets/CostCodePicker.jsx` — shadcn Select wrapping
+  `useCostCodes(projectId)`; filters to `enabled` codes but always keeps
+  currently-selected even if disabled; loading + missing-label fallback.
+- Build: `main.js` 387.08 kB (+4 kB; rhf was already in the bundle).
+- Smoke (test-pm on Draft v1): drawer opens, all 6 form fields render,
+  dirty tracking flips on type, Cmd+S triggers PATCH + "Line saved"
+  toast + dirty resets, Esc with dirty shows discard dialog (Keep
+  editing / Discard sy-orange), discard closes drawer, items panel
+  shows existing rows + add flow appends new row with computed £500.00.
+
 ### 2026-05-11 — Prompt 2.4B-i §R6 Budget Lines Grid ✓
 - `components/budgets/SortableLineRow.jsx` — dnd-kit sortable row with
   setActivatorNodeRef-wired drag handle (C8/C9 a11y), inline edit on
