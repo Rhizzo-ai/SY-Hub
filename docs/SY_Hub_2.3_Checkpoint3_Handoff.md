@@ -198,7 +198,7 @@ Same procedure as C1/C2 R0. Expected state:
 ```bash
 cd /app/backend && set -a && source .env && set +a
 alembic current  # expect: 0022_appraisal_governance
-export REACT_APP_BACKEND_URL=https://sy-hub-budgets-ui.preview.emergentagent.com
+export REACT_APP_BACKEND_URL=https://pg-heal.preview.emergentagent.com
 pytest --tb=no 2>&1 | grep -E "^[0-9]+ passed"  # expect: 581 passed
 ```
 
@@ -315,7 +315,7 @@ Ensure:
 
 ```bash
 cd /app/backend && set -a && source .env && set +a
-export REACT_APP_BACKEND_URL=https://sy-hub-budgets-ui.preview.emergentagent.com
+export REACT_APP_BACKEND_URL=https://pg-heal.preview.emergentagent.com
 pytest --tb=no 2>&1 | grep -E "passed|failed"  # expect: 581 passed
 ```
 
@@ -487,7 +487,7 @@ appraisal's detail page (`/appraisals/{new.id}`). Do NOT stay on the source
 
 The test fixture at the top of `test_*.py` reads `REACT_APP_BACKEND_URL` from
 env — the preview URL changes per fork. As of this handoff it's
-`https://sy-hub-budgets-ui.preview.emergentagent.com`. The testing agent
+`https://pg-heal.preview.emergentagent.com`. The testing agent
 should resolve the URL at runtime via `grep REACT_APP_BACKEND_URL /app/frontend/.env`
 and not hardcode it in test scripts.
 
