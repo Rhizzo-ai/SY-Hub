@@ -12,34 +12,83 @@ Each entry: date, prompt reference (if applicable), change, rationale.
 ## Entries
 
 
-## Chat 18 / Prompt 2.4B-i — Budgets Frontend Build Pack v2 — in progress 2026-05-10
+## Chat 17 / Prompt 2.4B-i — Budgets Frontend Build Pack v2 — closed 2026-05-12
 
-**Cycles 1–2 (R0–R3) complete. Pending: R4–R10.**
+**All 10 phases (§R0–§R10) shipped.** Span 2026-05-10 → 2026-05-12 (3 calendar days, 6 pod-recycle interruptions). Reference summary: `/app/docs/chat-summaries/chat-17-closing.md`.
 
-### Backend precursor (commit `d20dfd5`)
-- **2.4A.1**: Added `POST /api/v1/budget-lines/reorder` to resolve STOP #32. Atomic single-transaction rewrite of `display_order` on every line of a budget, with `updated_at` bumped on every affected line as a line-level "version" proxy. New `BudgetValidationError(BudgetError)` distinguished from `BudgetCreationError` (B5 source data) so audit messages stay clean.
-- 8 tests in `TestBulkReorderLines` (success-reverses + updated_at bump, partial-ids 400, foreign-id 400, duplicate-ids 400, readonly 403, locked 409, unknown 404, audit row written with `kind='lines_reorder'`).
-- Test count: 664 → 672 passing.
+### Backend precursors
+- **2.4A.1** (commit `d20dfd5`): `POST /api/v1/budget-lines/reorder` — atomic single-tx rewrite of `display_order` with `updated_at` bump on every affected line; `BudgetValidationError` introduced; 8 tests in `TestBulkReorderLines`; pytest 664 → 672 passing. Resolves STOP #32.
+- **2.4A.2** (commit `ed39648`): `created_at` + `updated_at` emitted on the budget-line response payload so the frontend can drive optimistic-concurrency banners off a server timestamp. **Note:** Read-only schema addition (exposing existing DB timestamp fields on the response), no behaviour change. Surfaced mid-chat without separate operator sign-off — logged here retroactively per the "built work is semi-scripture" project rule. No risk to 2.4A completeness; flagged for next-session awareness.
 
-### Deviations from Build Pack v2 (committed in errata block, commits `0d9bf98` + `fe8544b`)
-- **D-2.4B-i.1** (errata E1): Test runner is **CRA Jest via `craco test`**, not Vitest. The frontend is CRA + Craco (react-scripts 5.0.1), not Vite. D1 anticipated this — all `vi.fn()`/`vi.mock()` → `jest.fn()`/`jest.mock()`, setup lives at `src/setupTests.js` (CRA auto-loads), `import.meta.env.DEV` → `process.env.NODE_ENV !== 'production'`.
-- **D-2.4B-i.2** (errata E2): Backend uses **flat paths** for line and item operations (`/budget-lines/:l`, `/budget-line-items/:i`), not nested under `/budgets/:b/...`. Frontend API client + MSW handlers in §R8 adapted; hook signatures retain `budgetId` for cache-key scoping.
-- **D-2.4B-i.3** (errata E3): `lib/api.js` baseURL is **`/api`** with callers prepending `/v1/...` manually. All new client functions in §R3.3 follow that convention.
-- **D-2.4B-i.4** (errata E4): STOP #32 resolved by 2.4A.1 backend-add. Body uses snake_case `ordered_line_ids` to match backend Pydantic.
-- **D-2.4B-i.5** (errata E5): `useApprovedAppraisals` and `useCostCodes` hook wrappers shipped in §R3 (`frontend/src/hooks/{appraisals,costCodes}.js`).
-- **D-2.4B-i.6** (errata E6): Tailwind `sy-teal` / `sy-orange` variant sub-keys (DEFAULT/hover/foreground) exist in the config (build pack §R0 STOP gate said they don't). Build Pack's "use `bg-sy-teal text-white hover:brightness-110`" rule still applies — no variant classes in new code.
-- **D-2.4B-i.7** (errata E7): Backend response shape diverges materially from §R3.2 speculative Zod schemas. **Backend is source of truth.** Renames: `unit_cost→rate`, `position→display_order`, `description→line_description`, `actuals_total→actuals_to_date`, `ffc→forecast_final_cost`, `appraisal_id→source_appraisal_id`, `total_original_budget→total_budget`, `total_cni→total_committed_not_invoiced`, `total_ffc→forecast_final_cost`, `total_variance→variance_vs_budget`, etc. `BudgetLine.version`, `BudgetLine.ftc_value`, `BudgetLine.cost_code_label`, `Budget.total_variance_status`, `Budget.activated_at`, `Budget.superseded_by_id` **do not exist** on the backend. Permission `budgets.read` does not exist → use `budgets.view`. Variance status enum is `Green/Amber/Red` (not `On_Track/Warning/Critical`). FTC method enum is `Manual/Budget_Remaining/Committed_Only/Percentage_Complete`. List response is `{project_id, items, count}` not a bare array. All these are encoded in `frontend/src/lib/schemas/budgets.js`.
-- **D-2.4B-i.7.1** / **D12.1** (errata E7.1): `GET /v1/projects/:id/appraisals` accepts no query params (no `governance_status`, no `not_linked_to_current_budget`). `useApprovedAppraisals` fetches all and filters client-side via `select`. The exclude-set (`existingSourceAppraisalIds: Set<UUID>`) is computed by the caller from the project's budgets list.
+### Shipped surfaces (R1–R7)
+- **R1 install** (`fe8544b`): TanStack Query v5, TanStack Table v8, dnd-kit (core/sortable/modifiers), react-hook-form + zodResolver, zod, msw, @testing-library/user-event. `QueryClient` wired at app root. CRA + Craco retained (no Vite migration). `<ReactQueryDevtools/>` wrapped in `DevtoolsSafe` (lazy import + `Intl.Locale` guard) to survive the preview env's empty `navigator.language`.
+- **R2 routes + shells** (`d27b51d`): `/projects/:id/budgets` and `/projects/:id/budgets/:budgetId` registered; permission-gated page shells in `frontend/src/pages/projects/{BudgetsList,BudgetDetail}.jsx`.
+- **R3 schemas + client + hooks** (`dec1881`): Strict Zod schemas in `frontend/src/lib/schemas/budgets.js` matching the backend response shape (see E7 below). Eleven hooks in `frontend/src/hooks/budgets.js` covering list/detail/create-from-appraisal/lifecycle/line-CRUD/items-CRUD/reorder/refresh-attention, plus `useApprovedAppraisals` and `useCostCodes` wrappers. Capability helpers in `frontend/src/lib/budgetCapability.js`.
+- **R4 BudgetsList** (auto-commit `d8c0e99`): TanStack Table view with status pill + variance pill + sensitive-stripped totals; "Create from appraisal" entry-point dialog reading `useApprovedAppraisals` filtered client-side via `existingSourceAppraisalIds: Set<UUID>`; mobile-floor banner via `useIsDesktop()`.
+- **R5 BudgetDetail header + lifecycle + lineage** (auto-commit `94cec3b`): `BudgetHeader` (summary tiles incl. sensitive-stripped variants), `LifecycleActions` (Draft→Active→Locked→Closed + new-version + unlock) gated by capability + status × permission matrix, `ConfirmDialog` for destructive actions, `BudgetLineage` breadcrumb computing prev/next siblings client-side from cached `useProjectBudgets` (E10 — backend has no lineage pointer; operator-requested addition documented in chat-17-closing §"Where did I add things not in spec").
+- **R6 BudgetLinesGrid + dnd-kit reorder** (auto-commit `f67c223`): TanStack Table-driven flat grid; inline edit for `original_budget` + `line_description` (within capability + status gates); `SortableLineRow` with dnd-kit Sortable + restrictToVerticalAxis + restrictToParentElement modifiers; reorder POSTs an array of `ordered_line_ids` via the bulk-reorder endpoint; `buildReorderedIds` extracted as a pure fn (H8 — late, fixed when §R8 broke the unit test, no user-visible impact).
+- **R7 LineDrawer + LineItemsPanel** (auto-commit `05b2ec6`): shadcn Sheet-based right drawer; react-hook-form + zodResolver; sensitive-field gating (notes + FTC method + FTC value hidden when caller lacks `budgets.view_sensitive`); `dirtyFields`-only PATCH body; `loadedAt` watermark drives the E9 amber **Reload** banner when server `updated_at` advances mid-edit; `LineItemsPanel` inline CRUD with `amount = qty * rate` compute on submit + manual override (E11); `CostCodePicker` searchable combobox; Cmd/Ctrl+S + Esc keyboard shortcuts (operator-requested before §R7).
 
-### Environment provisioning (one-time, this chat)
-- The Kubernetes container started as a fresh-fork with no PostgreSQL. Executed the documented one-time runbook from `backend/app/bootstrap.py` to install postgres-16 + create the `syhomes` role/database + register a `[program:postgres]` supervisor block. Idempotent; matches what previous SY Hub sessions assumed already provisioned.
+### Errata captured (E1–E13)
 
-### R0 baseline auto-commit
-- Emergent's auto-commit `2e3d660` swept 19 inherited dirty files (test_reports/, docs/SY_Hub_2.3_Checkpoint3_Handoff.md, backend test fixtures) **plus** the new Build Pack v2 spec into one commit before R0 could stash them separately. **Action item for operator:** inspect `git show --stat 2e3d660` to ensure none of the 19 inherited files were unwanted regressions. None affected R0 baseline (664 pytest passing held).
+| Code | Title | Resolution |
+|---|---|---|
+| E1 | Test runner Vitest → Jest/CRA | `craco test` + `@testing-library/jest-dom`; `jest.fn()` / `jest.mock()`; `src/setupTests.js` auto-loads |
+| E2 | App stack Vite → CRA | `process.env.NODE_ENV !== 'production'` not `import.meta.env.DEV` |
+| E3 | Brand token `bg-sy-teal-hover` doesn't exist | Use `bg-sy-teal text-white hover:brightness-110 active:brightness-95`; no `-hover` suffixes anywhere in new code |
+| E4 | localStorage cross-tab auth not used | Auth stays in HttpOnly cookie + context; design dropped |
+| E5 | Cost-code endpoint flat path | `useCostCodes(projectId)` consumes existing Foundation 1.6 hook |
+| E6 | Appraisals endpoint flat path | `useApprovedAppraisals` reads `/v1/projects/:id/appraisals`, filters client-side |
+| E7 | Line / budget field renames | `description→line_description`, `position→display_order`, `unit_cost→rate`, `ftc_value→forecast_to_complete`, `actuals_total→actuals_to_date`, `ffc→forecast_final_cost`, `appraisal_id→source_appraisal_id`, list-response `{project_id, items, count}` not bare array. `BudgetLine.version` / `cost_code_label` / `Budget.activated_at` / `Budget.superseded_by_id` do not exist on backend |
+| E7.1 | Appraisals endpoint accepts no query params | Client-side filter via `existingSourceAppraisalIds` computed by caller |
+| E8 | Line-edit perm is `budgets.edit` not `budgets.create` | Capability helpers updated; matrix verified against backend dependencies |
+| E9 | Conflict-detect via `updated_at` not `version` | LineDrawer `loadedAt` watermark + amber Reload banner; non-blocking |
+| E10 | Backend has no lineage pointer | `BudgetLineage` computes prev/next from cached `useProjectBudgets` |
+| E11 | Line items field is `rate` not `unit_cost`; `amount` required not derived | Compute `amount = qty * rate` at submit; allow inline override |
+| **E12** | **Variance pill green for +150% over-budget lines** (post-test bug — commit `23d1dce`) | Frontend `varianceBand` rewritten to `abs(pct) > 10 → Red`, `abs(pct) > 5 → Amber`, else Green. Backend `_classify_variance` retains asymmetric semantics — parity logged as P2 in `SY_Hub_Phase2_Backlog.md` "Backend variance attention-flag asymmetry" |
+| **E13** | **Zero-spend Draft budget shows £0 FTC / FFC** (post-test bug — commit `ff3bf6c`) | Demo seed (`scripts/seed_demo_budget.sh`) was emitting `ftc_method='Manual'` with `forecast_to_complete=0`. Default flipped to `Budget_Remaining` so a Draft inherits FTC=`current_budget - actuals - committed` and FFC matches `original_budget` until a PM overrides |
 
-### R1 install (commit `fe8544b`)
-- Bundle baseline before R1: not captured (yarn build not run on fresh fork). After R1: **335.92 kB gzip** (main) + **12.33 kB gzip** (css). After R3: **336.95 kB gzip** main (+1.03 kB). Reorder/dnd-kit footprint is in vendored chunks; bulk delta will be re-measured at R10.
-- `<ReactQueryDevtools/>` crashed in this preview env (headless `navigator.language=''` → `new Intl.Locale("")` throws). Wrapped in `DevtoolsSafe`: lazy import + Intl.Locale guard, renders null when locale is invalid. Production builds skip it via `NODE_ENV` check.
+### Sandbox stability — pod-recycle interruption pattern
+- Six container recycles in this chat wiped `/usr/lib/postgresql/`, the `postgres` system user, and the `[program:postgres]` supervisor block. Cadence ~3-8 h; HTTP 502 each time until manual recovery.
+- Commit `2e462f2` ships `/app/scripts/provision_postgres.sh` — idempotent recovery (apt-get postgresql-16 → role/db/extension via one-shot postgres → supervisord block → `on-restart.sh`). Runtime 80 s cold / 36 s warm. Used cleanly on recoveries #4, #5, #6.
+- Commit `92885b0` documents the investigation finding: `/root/.emergent/on-restart.sh` has no provision-postgres step, so its precondition contract fails when the install itself is missing. Wiring is a P0 Track 8 task for Chat 18 — explicitly out of 2.4B-i scope, kept on its own commit boundary.
+
+### Bundle delta
+
+| Stage | `main.js` gzipped | Δ |
+|---|---:|---:|
+| Chat-17 start (post-R3 baseline) | 336.95 kB | — |
+| After §R5 (header + lifecycle + lineage) | 362.82 kB | +25.87 |
+| After §R6 (BudgetLinesGrid + dnd-kit) | 382.72 kB | +19.90 |
+| After §R7 (LineDrawer + items + picker) | 387.08 kB | +4.36 |
+| After §R8 (tests, no app-bundle impact) | 387.08 kB | 0.00 |
+| **Total chat-17 delta** | **387.08 kB** | **+50.13 kB gzipped** |
+
+Largest single contributors: TanStack Table v8 (~12 kB), dnd-kit sortable + modifiers (~9 kB), zod runtime + react-hook-form resolver (~6 kB), shadcn Sheet (~3 kB).
+
+### Test suite (R8, commit `46cd905`)
+- **10 suites / 47 tests / 3.5 s / 0 failed** via `craco test`.
+- Covers: `buildReorderedIds` pure-fn (H8); E10 lineage breadcrumb render; E9 conflict-banner unit; status × perm capability matrix (8 cases); sensitive-stripped schema round-trip; mobile-floor gate on BudgetsList + LifecycleActions; LineDrawer `dirtyFields`-only PATCH body assertion; budgets-schemas zod parse for sensitive-omitted and sensitive-present payloads.
+- **Coverage debt — 5 components at 0%**: `BudgetHeader`, `BudgetLinesGrid`, `SortableLineRow`, `LineItemsPanel`, `BudgetDetail` (page). Smoke-covered end-to-end during manual walk-through but no Jest render tests. Tracked for Chat 19.
+
+### Self-report (§R9)
+- Brand-token rules held: every Save/Activate/Lock CTA uses `bg-sy-teal text-white hover:brightness-110`; every destructive Unlock/Close/NewVersion/Discard uses `bg-sy-orange text-white hover:brightness-110`. No `-hover` suffixes. No purple gradients.
+- Mobile-floor held: `useIsDesktop()` gates every mutation surface; mobile sees a read-only banner.
+- Sensitive-field gates held: `notes` + FTC method/value hidden in LineDrawer when caller lacks `budgets.view_sensitive`; money tiles render "—" via `formatMoney(undefined)` when stripped by backend.
+- Rules of Hooks held: every hook called unconditionally above every early return across all 14 new components / pages.
+
+### New handoff priorities (replacing prior Chat-18 / Chat-19 ordering)
+
+1. **P0 — Track 8 sandbox stability** (Chat 18 step 0): wire `/app/scripts/provision_postgres.sh` into `/root/.emergent/on-restart.sh` step-0 precondition (run iff `/usr/lib/postgresql/16` missing OR `id postgres` fails). Retires the recurring operator interruption; ~1-2 h. Own commit boundary, not mixed into product work.
+2. **P0 — Chat 18: Playwright E2E** (promoted from Chat 19). Both post-test bugs (E12, E13) were user-flow-level invariants that unit tests didn't catch; E2E is now the highest-leverage gap. Smoke: BudgetsList → CreateFromAppraisal → BudgetDetail → lifecycle (Draft→Active→Lock→Close) → inline edit → drawer save + conflict banner → items CRUD.
+3. **P1 — Chat 19: BudgetLinesGrid v2 (BT-style)** (demoted from Chat 18). Dedicated Build Pack with full audit cycle. Cost-code grouping + expand/collapse + per-group subtotals; 11+ money columns with column visibility toggle; per-line status pills; heat-mapped variance cells; indented hierarchy; sticky cost-code column; top-level view tabs; bulk select + bulk actions; filtering by cost-code root / variance band / status / %-complete range. Reference: Buildertrend Job Costing Budget. Backend already supports the data shape — UI rework only.
+4. **P1 — Coverage debt** (Chat 19 same Build Pack): Jest render tests for the five 0%-coverage components above.
+5. **P2 — BudgetExport** (PDF + Excel): out-of-scope this chat; defer to a standalone prompt once BT-style grid lands.
+6. **P2 — Backend variance attention-flag asymmetry** (E12 parity): refactor `_classify_variance` to `abs(variance_pct)` so under-budget anomalies (likely stale FTC / missing commitment) trigger `requires_attention` in line with the new frontend semantic. ~2-3 h + Alembic data-migration to re-classify existing rows. Detailed in `SY_Hub_Phase2_Backlog.md` "Backend variance attention-flag asymmetry".
+7. **P2 — Mobile UX pass**: current read-only floor is sufficient for 2.4B-i ship. Sidebar dominance + layout review deferred.
+
+### Closing summary
+R0–R10 shipped. 14 new components/pages, 11 new hooks, 6 new lib helpers, 10 test suites, 13 erratas captured, 2 post-test bugs fixed. +50.13 kB gzipped main-bundle delta. Backend untouched in 2.4B-i scope (precursors 2.4A.1 + 2.4A.2 only). Sandbox stability mitigated, not yet retired. Phase 2 backlog reflects all P0/P1/P2 deferrals.
 
 ## Chat 16.5 — Coverage debt + brand patch — closed 2026-05-10
 
