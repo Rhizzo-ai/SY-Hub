@@ -146,6 +146,28 @@ else
     log "step=start_supervisor result=skip (already running)"
 fi
 
+# ─── 4.5. Self-install on-restart.sh wiring (Track 8 P0) ─────────────
+# Durability: /root/.emergent/on-restart.sh lives outside the repo and may
+# be wiped on pod recycle. The repo-resident template at
+# /app/scripts/on-restart.sh.template is the durable source of truth.
+# Self-install must happen BEFORE step 5 (which invokes on-restart.sh),
+# otherwise a cold pod with no /root/.emergent/on-restart.sh would fail
+# step 5 before we ever reach an end-of-script self-install. Idempotent:
+# we only (re)install if the live copy does not reference this script.
+if ! grep -q "provision_postgres.sh" /root/.emergent/on-restart.sh 2>/dev/null; then
+    log "step=self_install installing on-restart.sh from /app/scripts/on-restart.sh.template"
+    sudo mkdir -p /root/.emergent
+    if [ ! -f /app/scripts/on-restart.sh.template ]; then
+        log "step=self_install result=FAIL template missing at /app/scripts/on-restart.sh.template"
+        exit 3
+    fi
+    sudo cp /app/scripts/on-restart.sh.template /root/.emergent/on-restart.sh
+    sudo chmod +x /root/.emergent/on-restart.sh
+    log "step=self_install result=ok"
+else
+    log "step=self_install result=skip (on-restart.sh already references provision_postgres.sh)"
+fi
+
 # ─── 5. Run app bootstrap (alembic + seeds + backend start) ──────────
 log "step=app_bootstrap invoking on-restart.sh"
 if ! bash /root/.emergent/on-restart.sh 2>&1 | tail -5 >&2; then

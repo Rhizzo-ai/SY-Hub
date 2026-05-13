@@ -12,6 +12,11 @@ Each entry: date, prompt reference (if applicable), change, rationale.
 ## Entries
 
 
+## Track 8 P0 — Pod-recycle auto-recovery — closed 2026-05-13
+
+**Wired `provision_postgres.sh` into the pod-restart hook so the next container recycle self-heals without operator intervention.** New `/app/scripts/on-restart.sh.template` is the durable source of truth; `provision_postgres.sh` self-installs it to `/root/.emergent/on-restart.sh` at step 4.5 (idempotent grep guard). Step 0 of the template detects missing `/usr/lib/postgresql/16` or missing `postgres` system user and calls `provision_postgres.sh` (which itself recursively invokes `on-restart.sh` at its own step 5 — postgres-now-present, Step 0 skips, bootstrap-fix-p0 runs to completion). Operator-approved deviations from spec: Step 0 uses the existing `log()` helper for uniform ISO-8601 prefixing (not a raw `echo`), and `exit 0` after a successful provision to avoid double-running the (idempotent) bootstrap in the outer frame. The wiring point is `/entrypoint.sh` (PID 1, container ENTRYPOINT), confirmed in V1. Verification: V2 static (template + live identical, self-install block present), cold provision rc=0 in 34s (apt-cache warm; well under the 120s ceiling), all 5 supervisor programs RUNNING (backend + frontend + mongodb + nginx-code-proxy + postgres; code-server is autostart=false by design), V3 idempotent on the now-healthy pod (rc=0, no `Postgres install / user missing` line), V5 pytest 673 passed (chat-17 baseline was 672 — one extra from inherited working-tree test changes, above the floor, not a regression), V6 preview HTTP 200, seed_demo_budget.sh rc=0 with fresh UUIDs (project `b2a265ef-dc30-4779-96f6-e139d1881e07`, budget `7ee6d269-71ba-4470-913d-befcd0f6c726`). Explicit destructive V4 simulated-wipe was superseded by the initial cold provision — same evidence captured.
+
+
 ## Chat 17 / Prompt 2.4B-i — Budgets Frontend Build Pack v2 — closed 2026-05-12
 
 **All 10 phases (§R0–§R10) shipped.** Span 2026-05-10 → 2026-05-12 (3 calendar days, 6 pod-recycle interruptions). Reference summary: `/app/docs/chat-summaries/chat-17-closing.md`.
