@@ -17,6 +17,20 @@ Frontend / actuals / commitments / Xero are out of scope until later prompts.
 
 ## What's been implemented
 
+### 2026-05-14 — Prompt 2.4B-ii Playwright E2E ✓
+- **Test infrastructure only** — zero changes under `backend/app/` or `frontend/src/`.
+- Playwright `@playwright/test@1.60.0` + `otplib@12.0.1` (devDependencies).
+- 32 physical Playwright tests in 12 spec files across 8 groups (31 active + 1 quarantined LineDrawer #6 per Build Pack v4 §15 known risk + operator policy 3a).
+- Smoke subset (`yarn e2e:smoke`): **6/6 passing in 19.3s**.
+- `frontend/playwright.config.ts` — single worker, headless, 5 named projects (chromium-pm/admin/readonly/site/anon) with per-role `storageState`.
+- `frontend/e2e/global-setup.ts` re-seeds users + extended demo data, primes `storageState` files. `frontend/e2e/global-teardown.ts` exclusion-list sweep.
+- 6 helpers in `frontend/e2e/helpers/`: `login.ts`, `seed.ts`, `asserts.ts`, `api.ts`, `factory.ts`, `freshBudget.ts`. No POM per locked decision #9.
+- `scripts/seed_demo_budget.sh` extended with `E2E_PROJECT_ID` env override + 3 flags (`--with-v2-lineage`, `--empty-project`, `--extra-appraisal`). All idempotent.
+- Baseline gate BEFORE + AFTER: Jest 47 ✓, pytest 673 ✓, bundle 387.09→387.10 kB (delta 0).
+- D13 (new): `AppraisalCostLine` schema drift — Build Pack v4 §R2.2b listed 5 phantom columns; corrected to live 10-column schema. Annotation: `docs/chat-summaries/chat-18-build-pack-annotations.md`.
+- D14: LineDrawer #6 quarantined (`test.skip`) — covered by Chat 17 Jest unit test.
+- Reference: `docs/chat-summaries/chat-18-closing.md`.
+
 ### 2026-05-12 — Prompt 2.4B-i §R8 component tests ✓
 - 10 test suites, 46 tests, 0 failures, ~3.4s runtime (`yarn test --watchAll=false`).
 - Coverage: lib/ 96%, schemas 86%, BudgetsList 92%; component coverage

@@ -23,6 +23,22 @@ export interface FreshBudget {
 }
 
 /**
+ * Supersede the current non-terminal budget on a project (if any) via
+ * a direct DB write — bypasses the API since the project may be in
+ * an intermediate state (Active / Locked) that requires explicit
+ * supersede flow we don't care about exercising here.
+ *
+ * Sets status='Superseded' + is_current=false on every non-terminal
+ * budget. Safe to call when there is nothing to supersede.
+ */
+function supersedeCurrent(projectId: string): void {
+  execSync(
+    `${PG_CMD_BASE} -c "UPDATE budgets SET status='Superseded', is_current=false WHERE project_id='${projectId}' AND status IN ('Draft','Active','Locked')"`,
+    { stdio: 'pipe' },
+  );
+}
+
+/**
  * Re-seed an un-linked Approved appraisal, then POST from-appraisal
  * via the supplied API context. Returns the created budget summary.
  */
@@ -30,6 +46,9 @@ export async function createFreshBudget(
   ctx: APIRequestContext,
   projectId: string,
 ): Promise<FreshBudget> {
+  // Supersede any current non-terminal budget so from-appraisal accepts.
+  supersedeCurrent(projectId);
+
   // Re-seed --extra-appraisal so we always have a usable un-linked one.
   execSync(`bash ${SEED_SH} --extra-appraisal`, {
     env: { ...process.env, E2E_PROJECT_ID: projectId },
@@ -45,7 +64,7 @@ export async function createFreshBudget(
   const appraisalId = out.split('\n')[0].trim();
 
   const resp = await ctx.post(`/api/v1/projects/${projectId}/budgets/from-appraisal`, {
-    data: { appraisal_id: appraisalId },
+    data: { source_appraisal_id: appraisalId },
   });
   if (!resp.ok()) {
     throw new Error(`from-appraisal failed ${resp.status()}: ${await resp.text()}`);

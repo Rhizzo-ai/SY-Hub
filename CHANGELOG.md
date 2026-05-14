@@ -12,6 +12,43 @@ Each entry: date, prompt reference (if applicable), change, rationale.
 ## Entries
 
 
+## Chat 18 / Prompt 2.4B-ii — Budgets Playwright E2E — closed 2026-05-14
+
+**Test infrastructure only — zero production source touched.** Playwright + 31 active E2E tests (32 physical, 1 quarantined) layered over Chat 17's Budgets frontend. Predecessor anchors: Jest 47, pytest 673, bundle 387.09 kB on commit `b5ebdf3` (Track 8 P0 close, 2026-05-13). Reference summary: `/app/docs/chat-summaries/chat-18-closing.md`.
+
+### Shipped surfaces (R0–R7)
+- **§R0 preflight**: `@playwright/test@1.60.0` + `otplib@12.0.1` installed (caret-minor pin resolved 1.60, captured here per Build Pack §R0.1); chromium downloaded via `--with-deps` (no fallback needed; sudo was available); `frontend/.gitignore` extended with `playwright/.auth/`, `playwright-report/`, `test-results/`; six `e2e:*` scripts wired in `frontend/package.json`.
+- **§R1 config + fixtures**: `frontend/playwright.config.ts` per spec (workers:1, retries:0 local, trace retain-on-failure, 5 named projects). `globalSetup` re-seeds users + demo data, captures v1+v2 IDs, primes four `storageState` files. `globalTeardown` exclusion-list sweep on the two E2E project UUID prefixes.
+- **§R2 helpers**: 6 lightweight modules (no POM) — `login.ts`, `seed.ts`, `asserts.ts`, `api.ts`, `factory.ts`, `freshBudget.ts`. `factory.ts` supersedes any non-terminal current budget before each `from-appraisal` POST so the per-test fresh-budget pattern works on a single project (one current per project per `uq_budgets_one_current_per_project`).
+- **§R2.2b seeder extensions**: 4 narrow additions to `scripts/seed_demo_budget.sh` — `E2E_PROJECT_ID` env override, `--with-v2-lineage`, `--empty-project`, `--extra-appraisal`. All four idempotent on re-runs (skip-guards + ON CONFLICT). Cost-line clone uses live 10-column schema (D13 below).
+- **§R3 tests**: 32 physical Playwright tests in 12 spec files across 8 groups — Auth 4 / BudgetsList 5 / BudgetDetail 4 / Lifecycle 3 / Lines grid 4 / LineDrawer 7 / Items 4 / E13 1. BudgetsList #4 split into `.pm` + `.admin` companions per §R3.2 (counts as 1 logical / 2 physical → net 32 physical, 31 active).
+- **§R6 smoke run**: `yarn e2e:smoke` → **6/6 passing in 19.3s** (target ≤1 min). Full 31-test run NOT executed in this session per operator policy 2 → smoke-only; Rhys runs full suite locally on clean state.
+
+### Deviations (D1–D13)
+- D1–D12 carry over from Build Pack v4 unchanged.
+- **D13 (new — schema drift)**: `AppraisalCostLine` clone column list in Build Pack v4 §R2.2b referenced 5 columns that do not exist in the live model (`subcategory_id`, `input_basis`, `input_rate`, `input_quantity`, `manual_override_value`). Verified against `backend/app/models/appraisals.py` lines 164–186: the model has 10 columns (`appraisal_id, display_order, cost_code_id, label, category, auto_source, percentage, amount, is_locked, notes`) plus 3 default-managed (`id, created_at, updated_at`). Git history shows the model was created in commit `0f47ef8` (2026-05-02, initial 206-line model) with one adjustment in `b1e6712` (2026-05-03) — both predate Prompt 2.4A. The 5 phantom columns in v4 were drafted from a Prompt-2.2-era earlier schema that never landed on `main`. **Resolution**: seeder uses the live 10-column list. Build Pack §R2.2b annotated inline.
+- **D14 (operational — quarantine)**: LineDrawer #6 (E9 conflict banner) marked `test.skip` per Build Pack v4 §15 known risk + operator policy 3a. The deterministic refetch path requires `window.queryClient = queryClient` exposure in `App.jsx` (a frontend/src/ change). No source-code change made. Equivalent coverage remains in Chat 17 `LineDrawer.test.jsx` Jest harness ("E9 conflict banner" test). Inventory is 31 active + 1 quarantined.
+
+### Baseline gates
+| Gate | Jest | pytest | Bundle (gzipped main) |
+|---|---|---|---|
+| BEFORE | 47/47 ✓ | 673 ✓ | 387.09 kB ✓ |
+| AFTER  | 47/47 ✓ | 673 ✓ | 387.10 kB ✓ |
+| Δ      | 0       | 0       | +0.01 kB (rounding; effectively 0) |
+
+Bundle delta is effectively zero (the +10 byte drift is gzip rounding; Playwright is a `devDependency` and does not enter the prod bundle).
+
+### Pod-recovery preamble (Track 8 P0 #7)
+Pod was recycled before this session began. Recovery sequence per `bootstrap.py` docstring:
+1. Re-wrote `/app/backend/.env` (DATABASE_URL, BOOTSTRAP_ADMIN_*, JWT_SECRET, TEST_USER_PASSWORD, MFA_ENCRYPTION_KEY, APP_ENV=test, SYHOMES_RATE_LIMIT_DISABLED=1, CORS_ORIGINS) and `/app/frontend/.env` (REACT_APP_BACKEND_URL + REACT_APP_PREVIEW_URL pointing at `budget-e2e-suite.preview.emergentagent.com`).
+2. `bash /app/scripts/provision_postgres.sh` — installed PG16, provisioned `syhomes` role + DB, ran bootstrap (alembic head `0024_budgets`, 84 perms, 10 roles, super_admin seeded for `rhys@syhomes.co.uk`, 7 test users seeded), started backend.
+3. Added `MFA_ENCRYPTION_KEY` (Fernet) to `.env` after first pytest run surfaced 500s on MFA enroll/confirm (key was missing from the reconstructed .env template).
+4. Added `APP_ENV=test` + `SYHOMES_RATE_LIMIT_DISABLED=1` after first pytest cluster of 232 errors traced to the in-process rate limiter at 5/min/email. Build Pack v4 references this assumption implicitly via `conftest.py::_reset_rate_limiter` autouse fixture but did not surface it as a required env. Documented for next chat.
+
+### Errata captured
+None added; quarantine of LineDrawer #6 is a known v4 risk, not a new defect.
+
+
 ## Track 8 P0 — Pod-recycle auto-recovery — closed 2026-05-13
 
 **Wired `provision_postgres.sh` into the pod-restart hook so the next container recycle self-heals without operator intervention.** New `/app/scripts/on-restart.sh.template` is the durable source of truth; `provision_postgres.sh` self-installs it to `/root/.emergent/on-restart.sh` at step 4.5 (idempotent grep guard). Step 0 of the template detects missing `/usr/lib/postgresql/16` or missing `postgres` system user and calls `provision_postgres.sh` (which itself recursively invokes `on-restart.sh` at its own step 5 — postgres-now-present, Step 0 skips, bootstrap-fix-p0 runs to completion). Operator-approved deviations from spec: Step 0 uses the existing `log()` helper for uniform ISO-8601 prefixing (not a raw `echo`), and `exit 0` after a successful provision to avoid double-running the (idempotent) bootstrap in the outer frame. The wiring point is `/entrypoint.sh` (PID 1, container ENTRYPOINT), confirmed in V1. Verification: V2 static (template + live identical, self-install block present), cold provision rc=0 in 34s (apt-cache warm; well under the 120s ceiling), all 5 supervisor programs RUNNING (backend + frontend + mongodb + nginx-code-proxy + postgres; code-server is autostart=false by design), V3 idempotent on the now-healthy pod (rc=0, no `Postgres install / user missing` line), V5 pytest 673 passed (chat-17 baseline was 672 — one extra from inherited working-tree test changes, above the floor, not a regression), V6 preview HTTP 200, seed_demo_budget.sh rc=0 with fresh UUIDs (project `b2a265ef-dc30-4779-96f6-e139d1881e07`, budget `7ee6d269-71ba-4470-913d-befcd0f6c726`). Explicit destructive V4 simulated-wipe was superseded by the initial cold provision — same evidence captured.
