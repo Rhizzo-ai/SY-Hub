@@ -86,4 +86,4 @@ This is the **7th** consecutive pod-recycle requiring `provision_postgres.sh` + 
 5. `sudo supervisorctl restart frontend` so CRA's webpack-dev-server picks up the new `.env` (otherwise `process.env.REACT_APP_BACKEND_URL` is undefined in the bundle → frontend calls `/undefined/api/...`).
 6. Verify Jest 47, pytest 673, bundle ≤390 kB.
 
-The preview URL is captured via Emergent sandbox `preview_endpoint` env var (was `https://budget-e2e-suite.preview.emergentagent.com` this session).
+The preview URL is captured via Emergent sandbox `preview_endpoint` env var (was `https://actuals-backend.preview.emergentagent.com` this session).

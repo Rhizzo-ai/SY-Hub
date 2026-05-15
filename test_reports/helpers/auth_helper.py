@@ -1,7 +1,7 @@
 """Helper — seed test users, log in as test-admin with MFA auto-enrol, emit cookies JSON."""
 import os, sys, json, subprocess, pyotp, requests
 
-BASE = os.environ.get("REACT_APP_BACKEND_URL", "https://budget-e2e-suite.preview.emergentagent.com").rstrip("/")
+BASE = os.environ.get("REACT_APP_BACKEND_URL", "https://actuals-backend.preview.emergentagent.com").rstrip("/")
 EMAIL = "test-admin@example.test"
 PW = "TestUser-Dev-2026!"
 
