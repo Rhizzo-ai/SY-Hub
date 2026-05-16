@@ -20,6 +20,9 @@ from alembic.config import Config as AlembicConfig  # noqa: E402
 from app.jobs.audit_retention import (  # noqa: E402
     start_audit_retention_scheduler, stop_audit_retention_scheduler,
 )
+from app.jobs.ai_capture_dispatcher import (  # noqa: E402
+    start_ai_capture_dispatcher, stop_ai_capture_dispatcher,
+)
 from app.jobs.insurance_alerts import start_scheduler, stop_scheduler  # noqa: E402
 from app.jobs.notification_expiry import (  # noqa: E402
     start_notification_expiry_scheduler, stop_notification_expiry_scheduler,
@@ -29,6 +32,9 @@ from app.jobs.planning_expiry import (  # noqa: E402
 )
 from app.jobs.role_expiry import start_role_expiry_scheduler, stop_role_expiry_scheduler  # noqa: E402
 from app.routers.audit import router as audit_router  # noqa: E402
+from app.routers.actuals import router as actuals_router  # noqa: E402
+from app.routers.ai_capture import router as ai_capture_router  # noqa: E402
+from app.routers.inbound import router as inbound_router  # noqa: E402
 from app.routers.appraisals import router as appraisals_router  # noqa: E402
 from app.routers.appraisal_governance import router as appraisal_governance_router  # noqa: E402
 from app.routers.auth import router as auth_router  # noqa: E402
@@ -91,6 +97,7 @@ async def lifespan(app: FastAPI):
     start_planning_expiry_scheduler()
     start_notification_expiry_scheduler()
     start_audit_retention_scheduler()
+    start_ai_capture_dispatcher()
     try:
         yield
     finally:
@@ -99,6 +106,7 @@ async def lifespan(app: FastAPI):
         stop_planning_expiry_scheduler()
         stop_notification_expiry_scheduler()
         stop_audit_retention_scheduler()
+        stop_ai_capture_dispatcher()
 
 
 app = FastAPI(
@@ -143,6 +151,9 @@ v1_router.include_router(reference_data_router)
 v1_router.include_router(appraisals_router)
 v1_router.include_router(appraisal_governance_router)
 v1_router.include_router(budgets_router)
+v1_router.include_router(actuals_router)
+v1_router.include_router(ai_capture_router)
+v1_router.include_router(inbound_router)
 api_router.include_router(v1_router)
 
 app.include_router(api_router)

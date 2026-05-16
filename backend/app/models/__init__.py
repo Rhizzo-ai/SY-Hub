@@ -73,6 +73,13 @@ from app.models.budgets import (
     BUDGET_STATUSES, FTC_METHODS, VARIANCE_STATUSES,
     TERMINAL_BUDGET_STATUSES, LINE_FROZEN_BUDGET_STATUSES,
 )
+from app.models.actuals import (
+    Actual, ActualAttachment, ActualChangeLog,
+    AICaptureJob, InboundEmailMessage,
+    ACTUAL_STATUSES, ACTUAL_SOURCE_TYPES, AI_CAPTURE_STATUSES,
+    ACTUAL_ATTACHMENT_SOURCES, TERMINAL_ACTUAL_STATUSES,
+    VALID_TRANSITIONS, CHANGE_LOG_EVENT_TYPES,
+)
 
 __all__ = [
     "Tenant",

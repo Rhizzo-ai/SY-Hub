@@ -318,6 +318,6 @@ class TestPermissionsCatalogue:
             # total was 81. Prompt 2.2 adds 2 new appraisal codes
             # (appraisals.submit + appraisals.view_financials) → 83.
             # Prompt 2.4A adds budgets.admin → 84.
-            assert total == 84
+            assert total == 85
         finally:
             db.close()

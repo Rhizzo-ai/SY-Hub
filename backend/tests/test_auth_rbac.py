@@ -145,7 +145,7 @@ class TestAuthMe:
         assert data["is_super_admin"] is True
         # 81 baseline + 2 from Prompt 2.2 (appraisals.submit + .view_financials)
         # + 1 from Prompt 2.4A (budgets.admin) = 84.
-        assert len(data["permissions"]) == 84
+        assert len(data["permissions"]) == 85
         assert data["email"] == TEST_ADMIN_EMAIL
 
     def test_me_unauthenticated_returns_401(self):
@@ -189,16 +189,19 @@ class TestRoles:
         role_perms = {r["code"]: r["permission_count"] for r in roles}
         # Prompt 2.2: +2 new appraisal codes (submit + view_financials) → 83.
         # Prompt 2.4A: +1 (budgets.admin) → 84.
-        assert role_perms["super_admin"] == 84
+        # Prompt 2.5A: +1 (actuals.admin) → 85.
+        assert role_perms["super_admin"] == 85
         # Patch #3: director loses 4 orphan grants (cost_codes.{create,edit,
         # delete} + notifications.edit). notifications.view was already
         # excluded by being ungranted. Prompt 2.2 adds 2 codes director gets.
         # Prompt 2.4A: director gets budgets.admin (+1) → 80.
-        assert role_perms["director"] == 80
+        # Prompt 2.5A: director gets actuals.admin (+1) → 81.
+        assert role_perms["director"] == 81
         assert role_perms["project_manager"] >= 30
         assert role_perms["finance"] >= 25
         # 1.7: +system_config.view granted to all 10 roles.
-        assert role_perms["read_only"] == 9  # 1.6: +cost_codes.view, 1.7: +system_config.view
+        # 2.5A: read_only gets actuals.view (+1) → 10.
+        assert role_perms["read_only"] == 10
         assert role_perms["investor_read_only"] == 4  # 1.6: +cost_codes.view, 1.7: +system_config.view
         assert role_perms["subcontractor_portal"] == 3  # 1.7: +system_config.view
         assert role_perms["consultant_portal"] == 4  # 1.6: +cost_codes.view, 1.7: +system_config.view

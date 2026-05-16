@@ -26,6 +26,12 @@ AUDIT_ACTIONS = (
     "Appraisal.ScenarioCreate",
     "Appraisal.DecisionLog",
     "Appraisal.Withdraw",
+    # Prompt 2.5A / Chat 19A — Actuals ledger lifecycle.
+    # Title-case verbs, NOT dotted permission codes (audit pass #4).
+    # Enum values added in /app/backend/alembic/versions/0025_actuals.py.
+    "Post", "Mark_Paid", "Void",
+    "Dispute", "Undispute", "Release_Retention",
+    "Add_Attachment", "Remove_Attachment", "Promote_From_Capture",
 )
 
 

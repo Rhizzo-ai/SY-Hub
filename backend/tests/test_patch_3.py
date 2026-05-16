@@ -52,7 +52,7 @@ class TestPatch3Permissions:
             # Patch #3 baseline was 81. Prompt 2.2 adds two new appraisal
             # permission codes (appraisals.submit + appraisals.view_financials).
             # Prompt 2.4A adds budgets.admin → 84.
-            assert total == 84
+            assert total == 85
         finally:
             db.close()
 
