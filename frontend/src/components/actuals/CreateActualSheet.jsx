@@ -73,7 +73,10 @@ export function CreateActualSheet({ open, onOpenChange, projectId }) {
     register, handleSubmit, watch, setValue, reset,
     formState: { errors },
   } = useForm({
-    defaultValues: { ...DEFAULTS },
+    // `project_id` is required by `CreateActualRequestSchema` (uuid). Seed it
+    // into the form defaults so Zod validation passes before onSubmit runs —
+    // otherwise the form would silently reject every submit (no POST fires).
+    defaultValues: { ...DEFAULTS, project_id: projectId },
     resolver: zodResolver(CreateActualRequestSchema),
   });
 

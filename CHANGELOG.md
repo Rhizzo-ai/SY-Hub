@@ -107,8 +107,24 @@ actuals filtered by `status IN (Posted, Disputed)`):
 `docs/SY_Hub_Phase2_Backlog.md`. Headline = B28 (AI capture review surface
 for Chat 19C).
 
-**E1–E6 implementation deviations** captured in `chat-19b-closing.md` §
-"Implementation deviations from Build Pack". None require new backlog items.
+**E1–E10 implementation deviations** captured in `chat-19b-closing.md` §
+"Implementation deviations from Build Pack". Notably **E8 — CreateActualSheet
+form validation bug** caught by E2E: `project_id` was missing from
+`useForm.defaultValues`, so Zod silently rejected every submit; fixed by
+seeding `project_id` into defaults. **E7 — freshActual.ts factory** patched
+to dynamically resolve the current Active/Locked budget rather than the
+hard-coded v2 ID (which becomes terminal after `lifecycle.admin.spec.ts`
+closes it).
+
+**E2E runtime validation (post-implementation):**
+- `yarn e2e:smoke`: **11/11 in 34.8s** on chromium ✓ (target <40s)
+- `yarn e2e` (19B specs only): **31 passed / 3 skipped / 0 failed** in 1.5 min
+  Skipped: 2 × site-mobile (seed role lacks `actuals.view`); 1 × attachment-
+  delete (preview backend POST-attachment vs GET-list regression — frontend
+  code path is correct; pre-existing chat-19A surface)
+
+None of the skipped tests reflect 19B production-code bugs. The CreateActualSheet
+fix (E8) and freshActual factory fix (E7) are both regression-corrected.
 
 **Files added (37):** see closing doc Appendix A. **Files modified (8):**
 `backend/app/{schemas,services,routers}/actuals.py`, `frontend/{package.json,

@@ -50,8 +50,11 @@ Frontend / actuals / commitments / Xero are out of scope until later prompts.
   `/payments` is top-level; project routes are `/projects/:id/actuals[/new|/:actualId]`.
 - **8 new backlog items (B28–B35)** appended to Phase 2 backlog. Headline:
   B28 — AI capture review surface for Chat 19C.
-- Reference: `docs/chat-summaries/chat-19b-closing.md`. 6 implementation
-  deviations (E1–E6) captured in closing doc.
+- Reference: `docs/chat-summaries/chat-19b-closing.md`. **10 implementation
+  deviations (E1–E10)** captured. Notably E8 fixed a shipped-code bug in
+  `CreateActualSheet` (missing `project_id` in form defaults caused Zod to
+  silently reject every submit); E7 patched the `freshActual.ts` factory to
+  dynamically resolve the current Active/Locked budget.
 
 ### 2026-02-15 — Prompt 2.5A Actuals Backend ✓
 - **Backend only — bundle delta 0.** Migration `0025_actuals` applied; 21 new

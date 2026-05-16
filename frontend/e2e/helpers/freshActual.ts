@@ -1,13 +1,19 @@
 // frontend/e2e/helpers/freshActual.ts
 //
 // Chat 19B §R7.2 — Per-test factory: create a Draft / Posted actual against
-// the already-seeded budget (v2 Active budget on the demo project).
+// whatever Active/Locked+is_current budget exists on the demo project.
 //
-// Same pattern as freshBudget.ts (chat-18 §R3).
+// Build-pack-shipped E7 deviation: the original factory hard-coded the v2
+// budget ID from the seed state. But `lifecycle.admin.spec.ts` lifecycles v2
+// through Draft→Active→Locked→Closed, leaving v2 in a terminal status and
+// breaking subsequent actuals tests. The factory now queries the project for
+// its current non-terminal budget and (if none exists) bootstraps one via
+// `createActiveBudget`.
 
 import { test as base, expect, APIRequestContext } from '@playwright/test';
 import { pmApi } from './api';
-import { getProjectId, getBudgetIds } from './seed';
+import { createActiveBudget } from './factory';
+import { getProjectId } from './seed';
 
 export type FreshActual = {
   id: string;
@@ -69,20 +75,40 @@ export async function createPostedActual(
   return postActual(ctx, draft.id);
 }
 
-// Resolve the first budget line on the v2 budget for E2E factory use.
-// Returns the full line object so callers have entity_id (and anything
-// else they need) without a second round-trip.
+// Resolve the first budget line on the current Active/Locked budget. If no
+// such budget exists (e.g. lifecycle.admin closed v2), bootstrap a fresh
+// Active budget via the chat-18 factory.
 export async function getDefaultBudgetLine(
-  ctx: APIRequestContext, _projectId: string,
+  ctx: APIRequestContext, projectId: string,
 ): Promise<{ id: string; entity_id: string }> {
-  const { v2 } = getBudgetIds();
-  const res = await ctx.get(`/api/v1/budgets/${v2}`);
-  if (!res.ok()) {
-    throw new Error(`getDefaultBudgetLine failed: ${await res.text()}`);
+  // 1. Look for a non-terminal current budget on the project.
+  const listResp = await ctx.get(`/api/v1/projects/${projectId}/budgets`);
+  if (!listResp.ok()) {
+    throw new Error(`getDefaultBudgetLine list failed: ${listResp.status()}`);
   }
-  const budget = await res.json();
+  const listBody = await listResp.json();
+  const items = (listBody.items ?? []) as Array<{
+    id: string; status: string; is_current: boolean;
+  }>;
+  let current =
+    items.find((b) => b.is_current && (b.status === 'Active' || b.status === 'Locked')) ||
+    items.find((b) => b.status === 'Active') ||
+    items.find((b) => b.status === 'Locked');
+
+  // 2. None? Bootstrap a fresh Active budget (chat-18 factory).
+  if (!current) {
+    const fresh = await createActiveBudget(ctx, projectId);
+    current = { id: fresh.id, status: fresh.status, is_current: true };
+  }
+
+  // 3. Fetch detail to get the lines.
+  const detailResp = await ctx.get(`/api/v1/budgets/${current.id}`);
+  if (!detailResp.ok()) {
+    throw new Error(`getDefaultBudgetLine detail failed: ${detailResp.status()}`);
+  }
+  const budget = await detailResp.json();
   if (!budget.lines || budget.lines.length === 0) {
-    throw new Error(`v2 budget has no lines — seed must be re-run`);
+    throw new Error(`Budget ${current.id} has no lines — seed must be re-run`);
   }
   const line = budget.lines[0];
   return { id: line.id, entity_id: line.entity_id };

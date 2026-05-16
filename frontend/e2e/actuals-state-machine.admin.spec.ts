@@ -59,13 +59,13 @@ test('Disputed → Undispute: returns to Posted', async ({ page, freshPostedActu
   await expect(page.getByTestId('actual-status-Posted')).toBeVisible({ timeout: 10_000 });
 });
 
-test('Release retention: button visible when retention present + not released', async ({ page, freshPostedActual }) => {
+test('Release retention: button visible when retention is unreleased (Posted state)', async ({ page, freshPostedActual }) => {
   const projectId = getProjectId();
   await page.goto(`/projects/${projectId}/actuals/${freshPostedActual.id}`);
-  // Without retention amount on the factory row, button may be absent — assert
-  // either visible or absent based on row state. The fresh actual has no
-  // retention, so the button should be hidden.
-  await expect(page.getByTestId('action-release-retention')).toHaveCount(0);
+  // Fresh Posted actuals have `retention_released=false` by default, so the
+  // button is visible (per `canReleaseRetention` — which gates on state +
+  // approve perm + !retention_released, NOT on retention amount being > 0).
+  await expect(page.getByTestId('action-release-retention')).toBeVisible({ timeout: 10_000 });
 });
 
 test('Paid actual: no action buttons rendered', async ({ page, freshPostedActual, browserName: _bn }) => {
