@@ -2,7 +2,7 @@ import React from "react";
 import { NavLink, Link, useNavigate } from "react-router-dom";
 import {
     Building2, Users, Layers, Calculator, LineChart, Wallet,
-    CalendarDays, FileText, ShieldCheck, Landmark, Link2, LogOut, KeyRound, Laptop, User as UserIcon, ShieldAlert, ChevronDown, ScrollText, Settings, Percent,
+    CalendarDays, FileText, ShieldCheck, Landmark, Link2, LogOut, KeyRound, Laptop, User as UserIcon, ShieldAlert, ChevronDown, ScrollText, Settings, Percent, Receipt,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import NotificationBell from "@/components/NotificationBell";
@@ -23,6 +23,7 @@ const NAV = [
     { label: "Audit Log", to: "/audit", icon: ScrollText, enabled: true, testid: "nav-audit", requires: "audit.view" },
     { label: "Projects", to: "/projects", icon: Layers, enabled: true, testid: "nav-projects", requires: "projects.view" },
     { label: "Cost Codes", to: "/cost-codes", icon: Calculator, enabled: true, testid: "nav-cost-codes", requires: "cost_codes.view" },
+    { label: "Payments", to: "/payments", icon: Receipt, enabled: true, testid: "nav-payments", requires: "actuals.view" },
     { label: "System Config", to: "/config", icon: Settings, enabled: true, testid: "nav-config", requires: "system_config.view" },
     { label: "SDLT Rates", to: "/settings/sdlt-rates", icon: Percent, enabled: true, testid: "nav-sdlt-rates", requires: "system_config.view" },
     { label: "Appraisal Defaults", to: "/settings/appraisal-defaults", icon: LineChart, enabled: true, testid: "nav-appraisal-defaults", requires: "system_config.view" },
