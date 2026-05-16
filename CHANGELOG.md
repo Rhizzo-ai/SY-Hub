@@ -12,6 +12,63 @@ Each entry: date, prompt reference (if applicable), change, rationale.
 ## Entries
 
 
+## Chat 19A / Prompt 2.5A — Actuals Backend — closed 2026-02-15
+
+**Backend only — zero frontend changes (bundle delta 0).** Migration `0025_actuals`,
+21 new endpoints across 3 routers, AI capture pipeline (Postmark inbound +
+APScheduler dispatcher + Anthropic stub/live), full state machine for Draft →
+Posted → Paid with retention + CIS + VAT auto-compute. Reference summary:
+`/app/docs/chat-summaries/chat-19a-closing.md`.
+
+### Shipped (§R1–§R6)
+
+- **§R1 data model**: migration `0025_actuals` (51 cols on `actuals`, 13 plain +
+  2 partial-unique indexes, 6 user triggers, 3 functions). 5 new tables. 9 new
+  `audit_action` enum values. Round-trip downgrade/upgrade verified.
+- **§R2 services**: 5 new services (`actuals`, `actual_attachments`, `ai_capture`,
+  `postmark_webhook`, `budgets_reconciliation`) + `actual_errors` (11 domain
+  exceptions, HTTP-status-mapped).
+- **§R3 endpoints**: 21 endpoints across 3 routers
+  (`actuals.py` 15, `inbound.py` 1, `ai_capture.py` 5). APScheduler dispatcher
+  wired in `app/jobs/ai_capture_dispatcher.py`.
+- **§R4 RBAC**: `actuals.admin` (sensitive) added; finance role gets full set
+  including admin; PM role gets view/create/edit only.
+- **§R5 ops**: `POSTMARK_INBOUND_ENABLED` master kill-switch; `AI_CAPTURE_MODEL=test-stub`
+  short-circuits Anthropic; local-filesystem attachment store under `var/attachments/`.
+- **§R6 tests**: +107 new tests (target 85–120). Test files:
+  `test_migration_0025_actuals.py` (10), `test_actuals_service.py` (42),
+  `test_budgets_reconciliation.py` (8), `test_actuals_routes.py` (30),
+  `test_ai_capture.py` (17). **Total: 780 passed / 0 failed / 0 errors.**
+
+### Baselines
+- **Before**: Jest 47, pytest 673, e2e 6/6, bundle 387.10 kB.
+- **After**: Jest 47, **pytest 780**, e2e 6/6, bundle 387.10 kB (delta 0).
+
+### Deviations from Build Pack v1
+
+- **D15–D24** carry over from Build Pack front matter unchanged.
+- **E1**: `db_engine_actuals` / `make_draft_actual` conftest factory pattern
+  from §R6.1 not adopted as-is — each test module has self-contained `seeds`.
+  Coverage equivalent.
+- **E2**: Migration test names diverge from §R6.2 spec but cover every
+  behavioural assertion (plus the alembic head, function presence, trigger
+  count, and 9-enum-value assertions consolidated into the same 10-test file).
+- **E3**: 503 kill-switch test uses FastAPI `TestClient` (in-process) instead
+  of HTTP round-trip — supervisor server keeps the flag enabled so other
+  webhook tests can exercise the 200/401/422 paths.
+- **E4**: `POSTMARK_INBOUND_ENABLED` flipped to `true` in `backend/.env` so
+  the 6 webhook tests can exercise the live HTTP path. Production deployments
+  MUST keep `=false` until Postmark is provisioned (per B23).
+- **E5**: `post_actual` does NOT re-check parent-budget terminal status at
+  post-time (only at create-time). Documented as expected; tracked as B27
+  for product decision.
+
+### Backlog additions
+
+B19 through B26 added to `docs/SY_Hub_Phase2_Backlog.md` per §R8 ritual.
+B27 (new) added for post-time budget-terminal guard decision.
+
+
 ## Chat 18 / Prompt 2.4B-ii — Budgets Playwright E2E — closed 2026-05-14
 
 **Test infrastructure only — zero production source touched.** Playwright + 31 active E2E tests (32 physical, 1 quarantined) layered over Chat 17's Budgets frontend. Predecessor anchors: Jest 47, pytest 673, bundle 387.09 kB on commit `b5ebdf3` (Track 8 P0 close, 2026-05-13). Reference summary: `/app/docs/chat-summaries/chat-18-closing.md`.

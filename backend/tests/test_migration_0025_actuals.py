@@ -26,8 +26,12 @@ def engine():
 
 @pytest.fixture(scope="module")
 def seed_refs(engine):
-    """Create a project + budget + line + entity so behavioural tests can insert
-    Real budget_line rows that respect FKs. Cleans up at module teardown.
+    """Create a full project → appraisal → budget → budget_line chain so the
+    behavioural tests can insert real Actual rows that respect every FK.
+    Cleans up at module teardown.
+
+    `appraisal_group_id` is a NOT NULL uuid (no FK), application-managed —
+    one group per (project, scenario_chain). We mint one inline.
     """
     refs = {}
     with engine.begin() as c:
@@ -50,15 +54,22 @@ def seed_refs(engine):
         """), {"id": project_id, "code": f"M0025-{project_id[:6]}",
                 "name": f"Mig0025 Test {project_id[:6]}",
                 "ent": entity_id, "u": user_id})
+        # Seed a minimal appraisal so budgets.source_appraisal_id is satisfied.
+        appraisal_id = str(uuid.uuid4())
+        appraisal_group_id = str(uuid.uuid4())
+        c.execute(text("""
+            INSERT INTO appraisals (
+                id, project_id, name, reference_date,
+                created_by_user_id, appraisal_group_id, scenario,
+                is_current, status, version_number
+            ) VALUES (
+                :id, :pid, 'Mig0025 Base', CURRENT_DATE,
+                :uid, :gid, 'Base',
+                true, 'Approved', 1
+            )
+        """), {"id": appraisal_id, "pid": project_id, "uid": user_id,
+                "gid": appraisal_group_id})
         budget_id = str(uuid.uuid4())
-        appraisal_id = c.execute(text(
-            "SELECT id FROM appraisals LIMIT 1"
-        )).scalar()
-        if appraisal_id is None:
-            pytest.skip("Behavioural tests need at least one appraisal seeded — "
-                        "run the appraisals/budgets tests first, or use the "
-                        "service-level tests in test_actuals_service.py which "
-                        "exercise the same triggers via the API.")
         c.execute(text("""
             INSERT INTO budgets (id, project_id, source_appraisal_id, version_number,
               version_label, is_current, status, created_from_appraisal_at,
@@ -66,7 +77,7 @@ def seed_refs(engine):
               total_forecast_to_complete, forecast_final_cost,
               variance_vs_budget, variance_pct, summary_refreshed_at,
               created_by_user_id)
-            VALUES (:id, :pid, :ap, 1, 'v1', true, 'Draft', NOW(),
+            VALUES (:id, :pid, :ap, 1, 'v1', true, 'Active', NOW(),
                     100000, 0, 0, 100000, 100000, 0, 0, NOW(), :u)
         """), {"id": budget_id, "pid": project_id, "ap": appraisal_id,
                 "u": user_id})
@@ -83,7 +94,7 @@ def seed_refs(engine):
             VALUES (:id, :bid, :cc, 1, 'Line A', :ent, 'Manual',
                     100000, 0, 100000,
                     0, 0, 0, 0, 100000, 100000,
-                    0, 0, 'On_Budget',
+                    0, 0, 'Green',
                     false, false)
         """), {"id": line_id, "bid": budget_id, "cc": cc_id, "ent": entity_id})
         refs["project_id"] = project_id
@@ -91,6 +102,7 @@ def seed_refs(engine):
         refs["budget_line_id"] = line_id
         refs["entity_id"] = entity_id
         refs["user_id"] = user_id
+        refs["appraisal_id"] = appraisal_id
     yield refs
     with engine.begin() as c:
         c.execute(text("ALTER TABLE actuals DISABLE TRIGGER USER"))
@@ -103,6 +115,8 @@ def seed_refs(engine):
         c.execute(text("DELETE FROM budget_lines WHERE budget_id=:b"),
                   {"b": refs["budget_id"]})
         c.execute(text("DELETE FROM budgets WHERE id=:b"), {"b": refs["budget_id"]})
+        c.execute(text("DELETE FROM appraisals WHERE id=:a"),
+                  {"a": refs["appraisal_id"]})
         c.execute(text("DELETE FROM projects WHERE id=:p"), {"p": refs["project_id"]})
 
 

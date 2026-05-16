@@ -317,3 +317,22 @@ any runnable script (until 2e462f2 in this session shipped one).
   flow. The P0 work above retires this fully.
 
 ### Phase 1 cleanup carry-forwards (untouched by 2.4A)
+
+---
+
+## Chat 19A additions (2026-02-15)
+
+Added at chat-end per Prompt 2.5A §R8. Verbatim from Build Pack v1 front matter.
+
+- **B19** — Unbudgeted-cost director sign-off escape route. Design pass needed: column-on-actual vs auto-create "Unbudgeted" budget_line vs separate override table. Block on Track-2 wrap (Chat 21 review with MD/Louise).
+- **B20** — Subcontract module (`SC_Valuation` source wiring). Activates the reserved enum value once subcontract module ships. Depends on Track-4 subcontractor portal.
+- **B21** — Xero connector (Track 6). Will wire `Xero_Bill` source_type and populate `external_id` from Xero invoice IDs; idempotency-protected by the partial unique index on `(external_id, source_type)`.
+- **B22** — Document module integration (Track 5). Backfill `actuals.document_ids` JSONB from `actual_attachments` table; deprecate the local-filesystem path.
+- **B23** — Email forwarding cutover runbook. When Postmark is provisioned, configure `bills@syhomes.co.uk` forwarding rule in Outlook → Postmark inbound address. Parallel run with PC system until matched on 100 invoices, then deprecate PC system. Per Q10.
+- **B24** — AI capture cost dashboard. Track per-extraction tokens + cost (already stored in `ai_capture_jobs`). Surface in admin UI in a future chat.
+- **B25** — Auto-routing rules (entity/project/cost code suggestion from vendor heuristics). Operator's existing PC-side rules to be lifted into this once Q7 keywords are shared. Until then, AI capture returns suggestions only; user confirms in 19B UI.
+- **B26** — `pause_ai_capture` / `resume_ai_capture` operator helper scripts. Wrap the APScheduler `pause_job("ai_capture_dispatcher")` / `resume_job(...)` calls in `python -m app.scripts.pause_ai_capture` etc. Useful during incident response without needing a redeploy. Currently the only "pause" path is flipping `POSTMARK_INBOUND_ENABLED=false` (which blocks inbound but lets the queue drain) or `AI_CAPTURE_MODEL=test-stub` (which produces dummy data — destructive). Per Appendix D.
+
+### Chat 19A — implementation-driven addition
+
+- **B27 (new — from 19A E5)**: Post-time budget-terminal status check. Currently `post_actual` enforces parent-budget terminal guard at CREATE time only. Decide whether to re-check at POST time (Build Pack §R6.2 implies "AT POST TIME") or whether the create-time guard is sufficient (operator must Void Drafts after a budget close). Suggested resolution: leave create-time guard; document the contract for 19B UI to surface "your Draft's parent budget is Closed — Void or move to current".

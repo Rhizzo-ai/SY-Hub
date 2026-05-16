@@ -17,6 +17,29 @@ Frontend / actuals / commitments / Xero are out of scope until later prompts.
 
 ## What's been implemented
 
+### 2026-02-15 — Prompt 2.5A Actuals Backend ✓
+- **Backend only — bundle delta 0.** Migration `0025_actuals` applied; 21 new
+  endpoints across 3 routers (`actuals`, `inbound`, `ai_capture`); AI capture
+  pipeline (Postmark inbound + APScheduler dispatcher + Anthropic stub/live).
+- 5 new services: `actuals`, `actual_attachments`, `ai_capture`,
+  `postmark_webhook`, `budgets_reconciliation`. 11 domain exceptions in
+  `actual_errors`.
+- 5 new tables: `actuals` (51 cols), `actual_attachments`,
+  `inbound_email_messages`, `ai_capture_jobs`, `actuals_change_log`. 13 plain
+  + 2 partial-unique indexes; 6 user triggers; 3 functions. Round-trip
+  downgrade/upgrade verified.
+- 9 new `audit_action` enum values (`Post`, `Mark_Paid`, `Void`, `Dispute`,
+  `Undispute`, `Release_Retention`, `Add_Attachment`, `Remove_Attachment`,
+  `Promote_From_Capture`).
+- RBAC: `actuals.admin` (sensitive) added. Catalogue exposes 6 actuals perms
+  (view/view_sensitive/create/edit/approve/admin). Finance role inherits admin;
+  PM gets view/create/edit only.
+- 107 new tests across 5 files. **Total backend: 780 passed / 0 failed / 0
+  errors.** Baseline gate Jest 47 / pytest 673 / bundle 387.10 kB → after Jest
+  47 / **pytest 780** / bundle 387.10 kB (Δ 0).
+- Reference: `docs/chat-summaries/chat-19a-closing.md`. 5 implementation
+  deviations (E1–E5) captured in chat summary and CHANGELOG.
+
 ### 2026-05-14 — Prompt 2.4B-ii Playwright E2E ✓
 - **Test infrastructure only** — zero changes under `backend/app/` or `frontend/src/`.
 - Playwright `@playwright/test@1.60.0` + `otplib@12.0.1` (devDependencies).
