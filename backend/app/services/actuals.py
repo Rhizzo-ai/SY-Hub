@@ -427,6 +427,18 @@ def post_actual(
 ) -> Actual:
     a = _load_actual(db, actual_id, user, perms, lock_for_update=True)
     _check_transition(a.status, "Posted")
+    # B27 — post-time re-check of parent budget terminal status. The
+    # create-time guard catches the common case; this guard catches the
+    # window where a Draft is in-flight when an operator/admin closes the
+    # parent budget. Operators must Void or move-to-current after a close.
+    line = db.get(BudgetLine, a.budget_line_id)
+    if line is not None:
+        budget = db.get(Budget, line.budget_id)
+        if budget is not None and budget.status in TERMINAL_BUDGET_STATUSES:
+            raise BudgetLineLockedError(
+                f"Cannot post actual: parent budget is {budget.status}. "
+                "Void this Draft or move it to the Current budget version.",
+            )
     a.status = "Posted"
     a.posted_at = datetime.now(timezone.utc)
     a.posted_by_user_id = user.id

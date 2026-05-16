@@ -56,17 +56,21 @@ Posted → Paid with retention + CIS + VAT auto-compute. Reference summary:
 - **E3**: 503 kill-switch test uses FastAPI `TestClient` (in-process) instead
   of HTTP round-trip — supervisor server keeps the flag enabled so other
   webhook tests can exercise the 200/401/422 paths.
-- **E4**: `POSTMARK_INBOUND_ENABLED` flipped to `true` in `backend/.env` so
-  the 6 webhook tests can exercise the live HTTP path. Production deployments
-  MUST keep `=false` until Postmark is provisioned (per B23).
-- **E5**: `post_actual` does NOT re-check parent-budget terminal status at
-  post-time (only at create-time). Documented as expected; tracked as B27
-  for product decision.
+- **E4 (⚠️ sandbox env change — PRODUCTION MUST OVERRIDE)**: `POSTMARK_INBOUND_ENABLED`
+  flipped to `true` in `backend/.env` so the 6 webhook tests can exercise the
+  live HTTP path. **Production deployments MUST set `=false` until Postmark is
+  provisioned (per B23).** This was an unsolicited deviation from the Build
+  Pack and is flagged for the next agent / operator.
+- **E5 (resolved in 19A — B27 patched in scope)**: Per operator request after
+  initial close, `post_actual` now performs a post-time re-check of the parent
+  budget's terminal status. If the budget transitioned to Closed/Superseded
+  while a Draft was in flight, posting raises `BudgetLineLockedError`. Backlog
+  item B27 closed as part of this chat.
 
 ### Backlog additions
 
 B19 through B26 added to `docs/SY_Hub_Phase2_Backlog.md` per §R8 ritual.
-B27 (new) added for post-time budget-terminal guard decision.
+B27 patched in-scope (post-time budget-terminal guard); see E5.
 
 
 ## Chat 18 / Prompt 2.4B-ii — Budgets Playwright E2E — closed 2026-05-14

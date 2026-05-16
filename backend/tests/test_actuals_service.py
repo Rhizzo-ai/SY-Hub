@@ -530,11 +530,10 @@ class TestStateMachine:
     def test_draft_to_posted_blocked_when_budget_terminal(
         self, db, seeds, admin_user, perms, draft_factory, engine,
     ):
-        """Documentation: the service enforces budget-terminal check at CREATE
-        time, not POST time. This test asserts the documented behaviour:
-        Once a Draft exists, flipping the budget to Closed does NOT prevent
-        posting — the immutability of an in-flight transaction is the higher
-        priority. (Operator workflow: void the Draft after the budget close.)
+        """B27 — post-time guard: if the parent budget transitions to a
+        terminal status (Closed/Superseded) while a Draft actual is in flight,
+        posting must be blocked with BudgetLineLockedError. Operator workflow:
+        void the Draft, or move it to the current budget version, then re-post.
         """
         a = draft_factory()
         try:
@@ -543,12 +542,12 @@ class TestStateMachine:
                     "UPDATE budgets SET status='Closed' WHERE id=:b"
                 ), {"b": seeds["budget_id"]})
             # Don't expire `a` — its in-session status is still 'Draft', which
-            # matches reality. The budget change is irrelevant to immutability.
-            a2 = actuals_svc.post_actual(
-                db, actual_id=a.id, user=admin_user, perms=perms,
-            )
-            db.commit()
-            assert a2.status == "Posted"
+            # matches reality. The budget terminal-check fires server-side.
+            with pytest.raises(BudgetLineLockedError):
+                actuals_svc.post_actual(
+                    db, actual_id=a.id, user=admin_user, perms=perms,
+                )
+            db.rollback()
         finally:
             with engine.begin() as c:
                 c.execute(text(

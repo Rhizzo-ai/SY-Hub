@@ -38,7 +38,10 @@ Frontend / actuals / commitments / Xero are out of scope until later prompts.
   errors.** Baseline gate Jest 47 / pytest 673 / bundle 387.10 kB → after Jest
   47 / **pytest 780** / bundle 387.10 kB (Δ 0).
 - Reference: `docs/chat-summaries/chat-19a-closing.md`. 5 implementation
-  deviations (E1–E5) captured in chat summary and CHANGELOG.
+  deviations (E1–E5) captured in chat summary and CHANGELOG. E5 patched
+  in-scope (B27 — post-time budget-terminal re-check) per operator request.
+  ⚠️ E4 sandbox env change: `POSTMARK_INBOUND_ENABLED=true` for tests;
+  production MUST override to `false` until B23 cutover.
 
 ### 2026-05-14 — Prompt 2.4B-ii Playwright E2E ✓
 - **Test infrastructure only** — zero changes under `backend/app/` or `frontend/src/`.

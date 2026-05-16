@@ -333,6 +333,11 @@ Added at chat-end per Prompt 2.5A §R8. Verbatim from Build Pack v1 front matter
 - **B25** — Auto-routing rules (entity/project/cost code suggestion from vendor heuristics). Operator's existing PC-side rules to be lifted into this once Q7 keywords are shared. Until then, AI capture returns suggestions only; user confirms in 19B UI.
 - **B26** — `pause_ai_capture` / `resume_ai_capture` operator helper scripts. Wrap the APScheduler `pause_job("ai_capture_dispatcher")` / `resume_job(...)` calls in `python -m app.scripts.pause_ai_capture` etc. Useful during incident response without needing a redeploy. Currently the only "pause" path is flipping `POSTMARK_INBOUND_ENABLED=false` (which blocks inbound but lets the queue drain) or `AI_CAPTURE_MODEL=test-stub` (which produces dummy data — destructive). Per Appendix D.
 
-### Chat 19A — implementation-driven addition
+### Chat 19A — implementation-driven addition (resolved in scope)
 
-- **B27 (new — from 19A E5)**: Post-time budget-terminal status check. Currently `post_actual` enforces parent-budget terminal guard at CREATE time only. Decide whether to re-check at POST time (Build Pack §R6.2 implies "AT POST TIME") or whether the create-time guard is sufficient (operator must Void Drafts after a budget close). Suggested resolution: leave create-time guard; document the contract for 19B UI to surface "your Draft's parent budget is Closed — Void or move to current".
+- **B27 (closed 2026-02-15)**: Post-time budget-terminal status check. `post_actual`
+  now re-checks the parent budget's terminal status (Closed/Superseded) and raises
+  `BudgetLineLockedError` if the budget transitioned to a terminal state while a
+  Draft was in flight. Operator workflow: Void the Draft, or move it to the
+  Current budget version, then re-post. Implementation: `app/services/actuals.py::post_actual`.
+  Test: `tests/test_actuals_service.py::TestStateMachine::test_draft_to_posted_blocked_when_budget_terminal`.

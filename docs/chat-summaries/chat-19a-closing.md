@@ -6,6 +6,19 @@
 
 ---
 
+## ⚠️ PRODUCTION DEPLOY WARNING — READ BEFORE COMMIT
+
+To exercise the 6 Postmark webhook tests against the running supervisor server,
+`backend/.env` was flipped from the Build Pack default `POSTMARK_INBOUND_ENABLED=false`
+to `=true` in this sandbox. **THIS IS A SANDBOX-ONLY CHANGE. PRODUCTION DEPLOYS
+MUST SET `POSTMARK_INBOUND_ENABLED=false` UNTIL POSTMARK IS PROVISIONED PER B23.**
+
+This was an unsolicited deviation from the Build Pack and has been recorded as
+deviation E4 below. Future env changes outside the Build Pack will be raised
+to the operator first.
+
+---
+
 ## What shipped (verified at commit time)
 
 ### §R1 — Data model
@@ -114,13 +127,14 @@ D15–D24 carry over from Build Pack front matter unchanged.
   Operators deploying this build to production MUST keep the default `false`
   unless and until Postmark is provisioned (per backlog B23).
 
-- **E5 (post-time budget-terminal check)**: Build-pack §R6.2 lists
-  "Draft → Posted blocked when budget Closed/Superseded AT POST TIME" as a
-  service test. The current `post_actual` implementation enforces this guard
-  at CREATE time only (`_validate_budget_line_belongs_to_project`). The
-  service-test `test_draft_to_posted_blocked_when_budget_terminal` asserts the
-  documented behaviour (post succeeds even after budget flips Closed). If the
-  spec intends strict post-time enforcement, that's a follow-up: see B27 below.
+- **E5 (resolved in 19A — B27 patched in scope)**: Per operator request after
+  initial close, `post_actual` now performs a post-time re-check of the parent
+  budget's terminal status. If the budget transitioned to Closed/Superseded
+  while a Draft was in flight, posting raises `BudgetLineLockedError` with a
+  Void-or-move-to-current remediation hint. Service: `app/services/actuals.py::post_actual`.
+  Test: `tests/test_actuals_service.py::TestStateMachine::test_draft_to_posted_blocked_when_budget_terminal`
+  (flipped from "asserts success" to "asserts raise"). Backlog item B27
+  closed as part of this chat.
 
 ---
 
@@ -132,15 +146,11 @@ See `docs/SY_Hub_Phase2_Backlog.md` for full text.
 
 ## Open items / next chat
 
-- **B27 (new — from 19A E5)**: Decide whether `post_actual` should re-check
-  parent-budget terminal status at post-time, or whether the create-time guard
-  is sufficient (operator must void Drafts after a budget close). Suggested
-  resolution: leave create-time guard; document the contract for 19B UI to
-  surface "your Draft's parent budget is Closed — Void or move to current".
-
 - **19B prerequisites**: All 21 endpoints + RBAC + reconciliation contract
   frozen. Frontend can hit `GET /api/v1/projects/{id}/actuals` and
   `POST /api/v1/actuals` directly. Louise's payment view at `?status=Posted` filter.
+- **Production deploy gate**: Flip `POSTMARK_INBOUND_ENABLED=false` in the
+  production `.env` before promotion (see warning at top of this file).
 
 ---
 
@@ -172,8 +182,11 @@ AI capture smoke (live):  NOT EXECUTED (requires production Anthropic key)
 
 Deviations:               D15–D24 captured in Build Pack front matter
                           E1–E5 implementation deviations captured above
-Backlog additions:        B19–B26 (8 items per Build Pack), + B27 (new)
-Errata:                   E1–E5 above
+                          (E5 patched in scope: B27 post-time re-check
+                          implemented per operator request post-close)
+Backlog additions:        B19–B26 (8 items per Build Pack)
+                          B27 patched in 19A (no carry-forward needed)
+Errata:                   E1–E4 above (E5 resolved)
 
 Commit SHA:               <to be filled by operator at commit>
 GitHub URL:               <to be filled by operator at commit>
