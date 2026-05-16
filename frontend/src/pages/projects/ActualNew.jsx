@@ -1,31 +1,41 @@
 /**
- * ActualNew page (Chat 19B §R2 stub; full impl in §R3.3).
+ * ActualNew page (Chat 19B §R3.3).
  *
- * Mobile entry point for creating an actual — a standalone route since
- * Sheets are desktop-only (Q2). On desktop, this URL also opens the
- * create flow (no fallback notice).
+ * Mobile primary entry for creating an actual; desktop deep-link fallback.
+ * Renders the same `CreateActualSheet` always-open — the Sheet's Cancel
+ * button + onSuccess close both navigate back to the list. Avoids
+ * duplicating ~250 lines of form code.
  */
-import { useParams, useNavigate } from 'react-router-dom';
-import { Button } from '@/components/ui/button';
+import { useNavigate, useParams } from 'react-router-dom';
+import { useAuth } from '@/context/AuthContext';
+import { useIsDesktop } from '@/lib/useIsDesktop';
+import { CreateActualSheet } from '@/components/actuals/CreateActualSheet';
+import { canCreateActual } from '@/lib/actualCapability';
 
 export default function ActualNew() {
   const { projectId } = useParams();
   const navigate = useNavigate();
-  return (
-    <div className="space-y-4 p-4 md:p-6" data-testid="actual-new-page">
-      <h1 className="font-heading text-2xl text-slate-900">Create actual</h1>
+  const { me } = useAuth();
+  const isDesktop = useIsDesktop();
+
+  if (!canCreateActual(me, isDesktop)) {
+    return (
       <div
-        data-testid="actual-new-placeholder"
-        className="rounded-md border border-dashed border-slate-300 p-6 text-sm text-slate-500"
+        data-testid="actual-new-no-perm"
+        className="m-6 rounded-lg border border-slate-200 bg-slate-50 p-6 text-slate-600"
       >
-        The full create form lands in §R3 — this is a stub for §R2 STOP gate 2.
+        You don't have permission to create actuals.
       </div>
-      <Button
-        variant="outline"
-        onClick={() => navigate(`/projects/${projectId}/actuals`)}
-      >
-        Back to actuals
-      </Button>
-    </div>
+    );
+  }
+
+  return (
+    <CreateActualSheet
+      open
+      onOpenChange={(o) => {
+        if (!o) navigate(`/projects/${projectId}/actuals`);
+      }}
+      projectId={projectId}
+    />
   );
 }
