@@ -17,6 +17,42 @@ Frontend / actuals / commitments / Xero are out of scope until later prompts.
 
 ## What's been implemented
 
+### 2026-02-15 — Prompt 2.5B Actuals Frontend + Payment View + E2E ✓
+- **Frontend + E2E chat** following 19A backend. Bundle 387.10 kB →
+  **419.72 kB** (+32.62 kB gz, target ≤+35 / hard cap +50).
+- **Surfaces shipped:** ActualsList (per-project table + filters + create
+  Sheet), ActualNew (mobile create route), ActualDetail (header / state
+  actions / attachments / collapsible history), PaymentsView (Louise's
+  global cross-project list with bulk Mark-Paid), AttachmentUploader
+  (`react-dropzone@^14` + React synthetic onPaste for clipboard).
+- **15 actuals endpoints wired** via `lib/api/actuals.js`; Zod schemas in
+  `lib/schemas/actuals.js`; React Query hooks in `hooks/actuals.js`;
+  capability helpers in `lib/actualCapability.js`.
+- **State machine UI** matches the live router. `canPostDraft` correctly
+  uses `actuals.edit` (verified — router docstring's "actuals.post" label
+  is documentation-only). All non-trivial actions open a Radix Dialog
+  with reason capture; field state resets on action change.
+- **BulkPayDialog (Louise)** uses D30 N-call loop with snapshot pattern,
+  shared `paid_date`, per-row auto-generated `BACS-YYYYMMDD-{id6}` refs
+  (editable), per-row pending/success/error pills, full
+  `actualsKeys.all`+`['budgets']` cache invalidation on completion.
+- **Sensitive-field gating (D26):** Zod schemas declare sensitive fields as
+  `.nullable().optional()`; backend strips at serialiser layer; UI renders
+  "—" for `null|undefined` via `fmtGBP`. `ActualHistory` payload tile is
+  client-gated on `actuals.view_sensitive`.
+- **Pre-prompt backend patch (D32 + D33):** `ActualsListFilters.status`
+  now accepts comma-separated values; ValidationError wrapped to 422 in
+  both routes. **pytest 780 → 782 passed.**
+- **Test deltas:** Jest 47 → **88** (+41 across 7 spec files); Playwright
+  32 → **66** (+34 across 9 spec files); smoke 6 → **11**. Coverage:
+  `actualCapability.js` 95.16% / `lib/schemas/actuals.js` 100%.
+- **Routes are FLAT siblings in App.js** (not nested under ProjectDetail).
+  `/payments` is top-level; project routes are `/projects/:id/actuals[/new|/:actualId]`.
+- **8 new backlog items (B28–B35)** appended to Phase 2 backlog. Headline:
+  B28 — AI capture review surface for Chat 19C.
+- Reference: `docs/chat-summaries/chat-19b-closing.md`. 6 implementation
+  deviations (E1–E6) captured in closing doc.
+
 ### 2026-02-15 — Prompt 2.5A Actuals Backend ✓
 - **Backend only — bundle delta 0.** Migration `0025_actuals` applied; 21 new
   endpoints across 3 routers (`actuals`, `inbound`, `ai_capture`); AI capture

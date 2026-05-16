@@ -341,3 +341,56 @@ Added at chat-end per Prompt 2.5A §R8. Verbatim from Build Pack v1 front matter
   Draft was in flight. Operator workflow: Void the Draft, or move it to the
   Current budget version, then re-post. Implementation: `app/services/actuals.py::post_actual`.
   Test: `tests/test_actuals_service.py::TestStateMachine::test_draft_to_posted_blocked_when_budget_terminal`.
+
+### Chat 19B — new items added at chat-end (2026-02-15)
+
+Verbatim from Build Pack v1 front matter §"New backlog items (added at chat-end)".
+
+- **B28** — AI-capture review surface. The full UI for `Awaiting_Review` job
+  inspection, promote-to-actual workflow, confidence-score display, and
+  per-extraction-cost visibility. Target: Chat 19C. Reasonable scope: list page
+  + detail page + promote form + retry/discard actions. ≈25 tests.
+
+- **B29** — Bulk-pay batch endpoint. Currently 19B does N independent
+  `POST /actuals/:id/mark-paid` calls for a multi-selection bulk-pay. If Louise
+  routinely pays >50 invoices in a single session, the N-call pattern becomes
+  flaky on slow networks. Backend should add `POST /actuals/bulk/mark-paid`
+  accepting an array; frontend swaps the loop for a single POST. Defer until
+  usage data shows the loop is a problem.
+
+- **B30** — Money input UX polish. The Draft-create form takes raw Decimal
+  strings for net/vat. A custom money input component (`<MoneyInput>`) that
+  handles thousand-separators on display, strips them on submit, and validates
+  2dp would reduce data-entry errors. Pattern can also be back-applied to the
+  Budgets line edit. Defer pending the broader "form polish pass" backlog item.
+
+- **B31** — Louise's payment-view filters. v1 supports only `status` + `project`.
+  Realistic Louise needs are: `aged > N days`, `supplier`, `entity` (Parent/SPV/
+  ConstructionCo), `amount band`. Defer; ship v1 with status+project; iterate
+  after week 1 of real use.
+
+- **B32** — Actuals export. CSV/PDF export of the actuals list (per project and
+  global). Finance team will want this for monthly reporting. Defer to Chat 22+
+  (broader reporting track).
+
+- **B33** — Attachment thumbnails. v1 renders attachments as a row with filename
+  + size + download link. PDF page-1 thumbnail (server-side or client-side via
+  pdf.js) would help recognise the right invoice at a glance. Defer; nice-to-have.
+
+- **B34** — Defensive 422 on project-scoped actuals list. The live
+  `GET /projects/{project_id}/actuals` constructs `ActualsListFilters` mid-handler.
+  After the D32 patch, if a non-frontend caller (Postman, future module) passes a
+  comma-separated `status` to this endpoint, the field_validator raises
+  `ValueError` during model construction and surfaces a 500 (not the intended 422).
+  Frontend in 19B never triggers this path (multi-status only goes to the global
+  endpoint), but wrapping construction in try/except → HTTPException(422) is a
+  small hardening pass. Defer until a real consumer asks.
+
+- **B35** — Server-side sensitive-field stripping in the change-log response.
+  The 19A backend `_serialise_change_log` returns raw `event_payload` JSONB to
+  all callers. 19B gates the display in `ActualHistory.jsx` on
+  `actuals.view_sensitive`, but a readonly user who calls
+  `GET /actuals/:id/change-log` directly still sees sensitive payloads
+  (dispute_reason, void_reason, etc.). UI-only gating is fragile; backend should
+  strip sensitive keys from the payload for callers without
+  `actuals.view_sensitive`. Defer; this is a 19A hardening item, not in 19B's scope.

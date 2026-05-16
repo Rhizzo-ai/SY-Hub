@@ -12,6 +12,110 @@ Each entry: date, prompt reference (if applicable), change, rationale.
 ## Entries
 
 
+## Chat 19B / Prompt 2.5B — Actuals Frontend + Payment View + E2E — closed 2026-02-15
+
+**Frontend + E2E chat following 19A backend. Bundle delta: +32.62 kB gz (target ≤+35).** All 7 STOP gates passed. Reference: `docs/chat-summaries/chat-19b-closing.md`.
+
+**§R0 baseline gates:**
+- Before: Jest 47, pytest 780, e2e smoke 6/6, bundle 387.10 kB
+- After:  **Jest 88, pytest 782, e2e smoke 11/11, bundle 419.72 kB**
+
+**Pre-prompt backend patch (D32 + D33).** Two backend tweaks landed before
+§R1 frontend work, to support Louise's Payment View (cross-project list of
+actuals filtered by `status IN (Posted, Disputed)`):
+
+- **D32** — `ActualsListFilters.status` is now comma-separated tolerant
+  (`"Posted,Disputed"`). The Pydantic `@field_validator` rejects unknown
+  values with a 422 (`status=Bogus` -> `{"detail":[{...value_error...}]}`).
+  The service-layer list filter (`app/services/actuals.list_actuals`)
+  splits on comma and emits `Actual.status.in_(...)` when 2+ statuses are
+  requested, falling back to `==` for a single value.
+- **D33** — Wrapped `ActualsListFilters` construction in both
+  `GET /actuals` (now via `_actuals_filters_dep` wrapper) and
+  `GET /projects/{id}/actuals` (try/except in handler) so a
+  `pydantic.ValidationError` raised by the new `status` validator surfaces
+  as a clean `HTTPException(422)` rather than escaping `Depends()` and
+  becoming a 500. Pydantic's `errors(include_url=False, include_context=False)`
+  is passed to `HTTPException.detail` so the payload is JSON-serialisable.
+- **Backend tests:** 2 added (multi-status filter; invalid status 422).
+  780 → **782 passed**.
+
+**Frontend shipped surfaces (§R1–§R5):**
+
+- **Data layer.** Zod schemas (`lib/schemas/actuals.js`) mirror
+  `_serialise_actual`. Axios client wires all 15 actuals endpoints
+  (`lib/api/actuals.js`). React Query hooks with `actualsKeys.all` cache
+  bucket (`hooks/actuals.js`). Capability helpers (`lib/actualCapability.js`)
+  — pure functions, no React.
+- **Routes + project nav.** Three flat sibling routes
+  (`/projects/:projectId/actuals[/new|/:actualId]`) and one top-level
+  route `/payments`. `ProjectDetail` tab strip gets an `Actuals` Link
+  gated on `actuals.view`. `AppShell.NAV` gets a `Payments` entry
+  (Receipt icon, `requires: actuals.view`) between `Cost Codes` and
+  `System Config`.
+- **ActualsList.** TanStack Table; server-side status + source filters;
+  client-side debounced search (250ms); mobile read-only banner;
+  sensitive-field banner for non-`view_sensitive` users.
+- **CreateActualSheet + ActualNew.** React Hook Form + Zod resolver;
+  `BudgetLinePicker` (standalone `<select>` over the current Active/Locked
+  budget — D25); CIS toggle reveals 3 sensitive fields. Desktop opens a
+  shadcn `Sheet`; mobile uses the full-page route (D33).
+- **AttachmentUploader.** `react-dropzone@^14` for drag-drop, plus React
+  synthetic `onPaste` for clipboard pasting (Q8). v14 hardcodes its internal
+  ref so React's `onPaste` is attached to the wrapper after spreading
+  `getRootProps()`. 25 MB cap.
+- **ActualDetail page.** Composes Header / StateActions / Attachments /
+  History. Delete-Draft is a top-right ghost button gated by `canDeleteDraft`.
+- **ActualStateActions.** Context-aware buttons (Post / Mark Paid / Void /
+  Dispute / Undispute / Release Retention) matching the live state machine.
+  Each non-trivial action opens a Radix Dialog with reason capture
+  (paid_date, payment_reference, void_reason, dispute_reason,
+  retention_release_date). Field state resets on action change.
+  `canPostDraft` correctly requires `actuals.edit` (NOT `actuals.approve`,
+  despite the router docstring's "actuals.post" label).
+- **ActualHistory.** Q9 collapsible change-log timeline; default closed;
+  payload fetching gated on `enabled: open`. Sensitive `event_payload` is
+  rendered only when caller has `actuals.view_sensitive` (D26).
+- **PaymentsView (Louise).** Server-side filter `status=Posted,Disputed`
+  (D32). Groups by project. Selection model is `Set`-based with tri-state
+  per-section header checkbox. Selected total uses `gross_amount`.
+- **BulkPayDialog.** D30 N-call loop: sequential
+  `POST /actuals/:id/mark-paid` with shared `paid_date` + per-row
+  `payment_reference`. Auto-generated default `BACS-YYYYMMDD-{id6}` ref,
+  editable per row. Per-row pending/success/error pills. Snapshot pattern
+  freezes the `actuals` prop at open-time so post-`onComplete` shrinkage
+  of the parent's selection doesn't wipe the result pills. Cache
+  invalidation: `actualsKeys.all` + `['budgets']`.
+
+**Test deltas (§R6 + §R7):**
+
+- **Jest: +41 tests across 7 spec files** (47 → 88). Coverage:
+  `lib/actualCapability.js` 95.16% stmts / 95.08% branches / 100% funcs;
+  `lib/schemas/actuals.js` 100% across all four. Distribution:
+  actualCapability×16, schemas×6, ActualStatusBadge×2, BudgetLinePicker×3,
+  ActualsFilters×3, ActualHistory×3, BulkPayDialog×5, ActualsList×3.
+- **Playwright: +34 tests across 9 spec files** (32 → 66). +5 @smoke
+  (6 → 11). New `helpers/freshActual.ts` factory mirrors `freshBudget.ts`;
+  exposes `freshDraftActual` and `freshPostedActual` fixtures via
+  `test.extend`. New `readonlyApi()` and `siteApi()` factories appended
+  to `helpers/api.ts`. Per-project routing verified via
+  `npx playwright test --list`: pm runs 5 specs (16 tests), admin runs
+  2 specs (13 tests), readonly runs 1 spec (3 tests), site runs 1 spec
+  (2 tests) on mobile viewport.
+
+**Backlog additions:** B28–B35 (8 items) appended to
+`docs/SY_Hub_Phase2_Backlog.md`. Headline = B28 (AI capture review surface
+for Chat 19C).
+
+**E1–E6 implementation deviations** captured in `chat-19b-closing.md` §
+"Implementation deviations from Build Pack". None require new backlog items.
+
+**Files added (37):** see closing doc Appendix A. **Files modified (8):**
+`backend/app/{schemas,services,routers}/actuals.py`, `frontend/{package.json,
+yarn.lock,src/App.js,src/components/AppShell.jsx,src/pages/ProjectDetail.jsx,
+src/test/mocks/fixtures.js,src/lib/format.js,e2e/helpers/api.ts}`.
+
+
 ## Chat 19B / Prompt 2.5B — Actuals Frontend — opened 2026-05-16
 
 **Pre-prompt backend patch (D32 + D33).** Two backend tweaks landed before
