@@ -608,7 +608,11 @@ def list_actuals(
     if filters.entity_id:
         q = q.where(Actual.entity_id == filters.entity_id)
     if filters.status:
-        q = q.where(Actual.status == filters.status)
+        statuses = [s.strip() for s in filters.status.split(",") if s.strip()]
+        if len(statuses) == 1:
+            q = q.where(Actual.status == statuses[0])
+        else:
+            q = q.where(Actual.status.in_(statuses))
     if filters.source_type:
         q = q.where(Actual.source_type == filters.source_type)
     if filters.supplier_id:

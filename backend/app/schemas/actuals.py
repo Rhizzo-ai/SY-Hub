@@ -150,13 +150,27 @@ class ActualsListFilters(BaseModel):
     project_id: Optional[uuid.UUID] = None
     budget_line_id: Optional[uuid.UUID] = None
     entity_id: Optional[uuid.UUID] = None
-    status: Optional[str] = None
+    status: Optional[str] = None  # Comma-separated allowed: "Posted,Disputed"
     source_type: Optional[str] = None
     supplier_id: Optional[uuid.UUID] = None
     transaction_date_from: Optional[date] = None
     transaction_date_to: Optional[date] = None
     limit: int = Field(default=100, ge=1, le=500)
     offset: int = Field(default=0, ge=0)
+
+    @field_validator("status")
+    @classmethod
+    def _validate_status(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        valid = {"Draft", "Posted", "Paid", "Disputed", "Void"}
+        parts = [s.strip() for s in v.split(",") if s.strip()]
+        if not parts:
+            return None
+        bad = [p for p in parts if p not in valid]
+        if bad:
+            raise ValueError(f"invalid status value(s): {bad}; allowed: {sorted(valid)}")
+        return ",".join(parts)
 
 
 # ---------- AI capture ---------------------------------------------------

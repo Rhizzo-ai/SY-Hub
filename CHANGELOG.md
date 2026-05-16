@@ -12,6 +12,41 @@ Each entry: date, prompt reference (if applicable), change, rationale.
 ## Entries
 
 
+## Chat 19B / Prompt 2.5B — Actuals Frontend — opened 2026-05-16
+
+**Pre-prompt backend patch (D32 + D33).** Two backend tweaks landed before
+§R1 frontend work begins, to support Louise's Payment View (cross-project
+list of actuals filtered by `status IN (Posted, Disputed)`):
+
+- **D32** — `ActualsListFilters.status` is now comma-separated tolerant
+  (`"Posted,Disputed"`). The Pydantic `@field_validator` rejects unknown
+  values with a 422 (`status=Bogus` -> `{"detail":[{...value_error...}]}`).
+  The service-layer list filter (`app/services/actuals.list_actuals`)
+  splits on comma and emits `Actual.status.in_(...)` when 2+ statuses are
+  requested, falling back to `==` for a single value.
+- **D33** — Wrapped `ActualsListFilters` construction in both
+  `GET /actuals` (now via `_actuals_filters_dep` wrapper) and
+  `GET /projects/{id}/actuals` (try/except in handler) so a
+  `pydantic.ValidationError` raised by the new `status` validator surfaces
+  as a clean `HTTPException(422)` rather than escaping `Depends()` and
+  becoming a 500. Pydantic's `errors(include_url=False, include_context=False)`
+  is passed to `HTTPException.detail` so the payload is JSON-serialisable
+  (the default `ctx` contains the raw `ValueError` instance which can't be
+  json.dumps'd).
+- **Tests**: 2 added — `TestListFilters.test_list_actuals_filter_multi_status_returns_both`
+  and `TestListFilters.test_list_actuals_filter_invalid_status_returns_422`
+  in `backend/tests/test_actuals_routes.py`. Counts: 780 → **782 passed**
+  (via `pytest --ignore=tests/test_c3_governance_smoke.py`).
+
+Files touched:
+- `backend/app/schemas/actuals.py` — `ActualsListFilters` validator
+- `backend/app/services/actuals.py` — `list_actuals` multi-status split
+- `backend/app/routers/actuals.py` — `_actuals_filters_dep`, project-scoped wrap
+- `backend/tests/test_actuals_routes.py` — +2 tests
+
+Migration head unchanged at `0025_actuals` (FE-only chat after D32/D33).
+
+
 ## Chat 19A / Prompt 2.5A — Actuals Backend — closed 2026-02-15
 
 **Backend only — zero frontend changes (bundle delta 0).** Migration `0025_actuals`,

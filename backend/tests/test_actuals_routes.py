@@ -663,3 +663,38 @@ class TestListFilters:
         assert r.status_code == 200, r.text
         body = r.json()
         assert any(item["id"] == a["id"] for item in body["items"])
+
+
+    def test_list_actuals_filter_multi_status_returns_both(
+        self, admin, primary_entity_id, line_id, project,
+    ):
+        """D32 — comma-separated status filter should match each value."""
+        a1 = _create_draft(admin, primary_entity_id, line_id, project["id"])
+        a2 = _create_draft(admin, primary_entity_id, line_id, project["id"])
+        # a1 -> Posted, a2 -> Posted then -> Disputed
+        r = admin.post(f"{BASE_URL}/api/v1/actuals/{a1['id']}/post", json={})
+        assert r.status_code == 200, r.text
+        r = admin.post(f"{BASE_URL}/api/v1/actuals/{a2['id']}/post", json={})
+        assert r.status_code == 200, r.text
+        r = admin.post(
+            f"{BASE_URL}/api/v1/actuals/{a2['id']}/dispute",
+            json={"dispute_reason": "test multi-status filter"},
+        )
+        assert r.status_code == 200, r.text
+
+        r = admin.get(
+            f"{BASE_URL}/api/v1/actuals?status=Posted,Disputed"
+            f"&project_id={project['id']}",
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        ids = {item["id"] for item in body["items"]}
+        assert a1["id"] in ids, "expected Posted actual in multi-status list"
+        assert a2["id"] in ids, "expected Disputed actual in multi-status list"
+        for item in body["items"]:
+            assert item["status"] in {"Posted", "Disputed"}
+
+    def test_list_actuals_filter_invalid_status_returns_422(self, admin):
+        """D32 — unknown status value must be rejected by the validator."""
+        r = admin.get(f"{BASE_URL}/api/v1/actuals?status=Bogus")
+        assert r.status_code == 422, r.text

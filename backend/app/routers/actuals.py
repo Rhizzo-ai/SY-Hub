@@ -39,6 +39,7 @@ from fastapi import (
     APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile,
     Response,
 )
+from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from app.auth.deps import get_current_user, require_permission
@@ -57,6 +58,44 @@ from app.services.actual_errors import ActualError
 
 
 router = APIRouter(tags=["actuals"])
+
+
+def _actuals_filters_dep(
+    project_id: Optional[uuid.UUID] = Query(default=None),
+    budget_line_id: Optional[uuid.UUID] = Query(default=None),
+    entity_id: Optional[uuid.UUID] = Query(default=None),
+    status: Optional[str] = Query(default=None),
+    source_type: Optional[str] = Query(default=None),
+    supplier_id: Optional[uuid.UUID] = Query(default=None),
+    transaction_date_from: Optional[str] = Query(default=None),
+    transaction_date_to: Optional[str] = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+) -> ActualsListFilters:
+    """D32 — wraps `ActualsListFilters` construction so that a
+    `ValidationError` raised from a `@field_validator` (e.g. comma-separated
+    status containing an invalid value) is converted to a clean
+    `HTTPException(422)` instead of escaping the dependency stack and
+    surfacing as a 500.
+    """
+    try:
+        return ActualsListFilters(
+            project_id=project_id,
+            budget_line_id=budget_line_id,
+            entity_id=entity_id,
+            status=status,
+            source_type=source_type,
+            supplier_id=supplier_id,
+            transaction_date_from=transaction_date_from,
+            transaction_date_to=transaction_date_to,
+            limit=limit,
+            offset=offset,
+        )
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=exc.errors(include_url=False, include_context=False),
+        ) from exc
 
 
 # ---------------------------------------------------------------------
@@ -183,7 +222,7 @@ def _include_sensitive(perms: UserPermissions) -> bool:
 
 @router.get("/actuals")
 def list_actuals(
-    filters: ActualsListFilters = Depends(),
+    filters: ActualsListFilters = Depends(_actuals_filters_dep),
     current: User = Depends(get_current_user),
     perms: UserPermissions = Depends(require_permission("actuals.view")),
     db: Session = Depends(get_db),
@@ -212,10 +251,20 @@ def list_project_actuals(
     perms: UserPermissions = Depends(require_permission("actuals.view")),
     db: Session = Depends(get_db),
 ):
-    filters = ActualsListFilters(
-        project_id=project_id, status=status, budget_line_id=budget_line_id,
-        limit=limit, offset=offset,
-    )
+    # D32 — wrap mid-handler model construction so a `field_validator`
+    # raise (e.g. invalid comma-separated status) surfaces as 422 rather
+    # than 500. B34 closure.
+    try:
+        filters = ActualsListFilters(
+            project_id=project_id, status=status,
+            budget_line_id=budget_line_id,
+            limit=limit, offset=offset,
+        )
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=exc.errors(include_url=False, include_context=False),
+        ) from exc
     rows, total = actuals_svc.list_actuals(
         db, filters=filters, user=current, perms=perms,
     )
