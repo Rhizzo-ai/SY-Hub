@@ -169,3 +169,53 @@ export function mockMe(perms = ['budgets.view']) {
     permissions: perms,
   };
 }
+
+
+// ─── Actuals fixtures (Chat 19B §R6) ─────────────────────────────────
+export const makePostedActual = (overrides = {}) => ({
+  id: '11111111-1111-4111-8111-111111111111',
+  project_id: '22222222-2222-4222-8222-222222222222',
+  budget_line_id: '33333333-3333-4333-8333-333333333333',
+  entity_id: '44444444-4444-4444-8444-444444444444',
+  source_type: 'Manual_Entry',
+  source_reference: null,
+  external_id: null,
+  transaction_date: '2026-05-15',
+  posting_date: '2026-05-15',
+  description: 'Test bill',
+  net_amount: '1000.00',
+  vat_amount: '200.00',
+  gross_amount: '1200.00',
+  vat_rate_pct: '20',
+  is_vat_recoverable: true,
+  currency: 'GBP',
+  exchange_rate: null,
+  supplier_id: null,
+  supplier_name_snapshot: 'ACME Ltd',
+  supplier_invoice_ref: 'INV-001',
+  is_cis_applicable: false,
+  retention_released: false,
+  linked_commitment_id: null,
+  related_subcontract_id: null,
+  is_reconciled_to_xero: false,
+  status: 'Posted',
+  posted_at: '2026-05-15T10:00:00+00:00',
+  paid_date: null,
+  payment_reference: null,
+  disputed_at: null,
+  voided_at: null,
+  created_at: '2026-05-15T09:00:00+00:00',
+  updated_at: '2026-05-15T10:00:00+00:00',
+  ...overrides,
+});
+
+export const makeDraftActual = (overrides = {}) =>
+  makePostedActual({ status: 'Draft', posted_at: null, ...overrides });
+
+export const makePaidActual = (overrides = {}) =>
+  makePostedActual({
+    status: 'Paid',
+    paid_date: '2026-05-20',
+    payment_reference: 'BACS-20260520-abcdef',
+    ...overrides,
+  });
