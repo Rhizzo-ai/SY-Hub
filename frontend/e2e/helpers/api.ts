@@ -83,3 +83,18 @@ export async function lockBudget(ctx: APIRequestContext, budgetId: string): Prom
     throw new Error(`lockBudget ${budgetId} failed ${r.status()}: ${await r.text()}`);
   }
 }
+
+// ─── Chat 19B §R7.4 — readonly + site role API contexts ──────────────
+export async function readonlyApi(): Promise<APIRequestContext> {
+  return request.newContext({
+    baseURL: PREVIEW_URL,
+    storageState: path.join(AUTH_DIR, 'readonly.json'),
+  });
+}
+
+export async function siteApi(): Promise<APIRequestContext> {
+  return request.newContext({
+    baseURL: PREVIEW_URL,
+    storageState: path.join(AUTH_DIR, 'site.json'),
+  });
+}
