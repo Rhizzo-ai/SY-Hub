@@ -212,6 +212,13 @@ export default function ProjectDetail() {
                       data-testid="tab-appraisals">
                     Appraisals
                 </Link>
+                {(perms.includes('actuals.view') || me?.is_super_admin) && (
+                    <Link to={`/projects/${project.id}/actuals`}
+                          className="pb-2 text-sm font-medium text-slate-500 hover:text-slate-700"
+                          data-testid="tab-actuals">
+                        Actuals
+                    </Link>
+                )}
             </nav>
 
             {tab === "overview" && (

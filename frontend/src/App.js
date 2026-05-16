@@ -65,6 +65,10 @@ import AppraisalsList from "@/pages/AppraisalsList";
 import AppraisalPage from "@/pages/AppraisalPage";
 import BudgetsList from "@/pages/projects/BudgetsList";
 import BudgetDetail from "@/pages/projects/BudgetDetail";
+import ActualsList from "@/pages/projects/ActualsList";
+import ActualNew from "@/pages/projects/ActualNew";
+import ActualDetail from "@/pages/projects/ActualDetail";
+import PaymentsView from "@/pages/payments/PaymentsView";
 import ForgotPassword from "@/pages/ForgotPassword";
 import ResetPassword from "@/pages/ResetPassword";
 
@@ -84,6 +88,12 @@ function ShellRoutes() {
                 <Route path="/projects/:id/appraisals" element={<AppraisalsList />} />
                 <Route path="/projects/:projectId/budgets" element={<BudgetsList />} />
                 <Route path="/projects/:projectId/budgets/:budgetId" element={<BudgetDetail />} />
+                {/* Chat 19B §R2.1 — Actuals (flat siblings; ProjectDetail is NOT an Outlet) */}
+                <Route path="/projects/:projectId/actuals" element={<ActualsList />} />
+                <Route path="/projects/:projectId/actuals/new" element={<ActualNew />} />
+                <Route path="/projects/:projectId/actuals/:actualId" element={<ActualDetail />} />
+                {/* Louise's global cross-project payments view */}
+                <Route path="/payments" element={<PaymentsView />} />
                 <Route path="/appraisals/:id" element={<AppraisalPage />} />
                 <Route path="/cost-codes" element={<CostCodesList />} />
                 <Route path="/cost-codes/sections" element={<CostCodeSections />} />

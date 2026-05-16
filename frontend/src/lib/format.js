@@ -68,6 +68,11 @@ export function formatMoney(value, currency = "GBP") {
     }).format(n);
 }
 
+// Chat 19B §R2 — Actuals UI alias. Equivalent to `formatMoney(v, "GBP")`.
+// Returns "—" for null / undefined / empty string (D26 sensitive-field
+// pattern: a single render path covers both gated and ungated responses).
+export const fmtGBP = (value) => formatMoney(value, "GBP");
+
 export function formatPercent(value) {
     if (value == null || value === "") return "—";
     const n = typeof value === "number" ? value : parseFloat(value);
