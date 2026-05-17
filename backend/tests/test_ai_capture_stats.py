@@ -81,14 +81,13 @@ def _seed_inbound(engine) -> uuid.UUID:
             pytest.skip("test-admin user missing — run seed_test_users.py")
         c.execute(text("""
             INSERT INTO inbound_email_messages
-              (id, postmark_message_id, sender_email, recipient_email,
-               subject, received_at, raw_payload_hash, status)
+              (id, postmark_message_id, from_email, to_email,
+               subject, received_at, attachment_count)
             VALUES (:id, :pmid, 'supplier@example.com', 'bills@syhomes.co.uk',
-                    'Test invoice', NOW(), :h, 'Received')
+                    'Test invoice', NOW(), 1)
         """), {
             "id": mid,
             "pmid": f"pm-{mid.hex[:12]}",
-            "h": f"hash-{mid.hex[:16]}",
         })
     return mid
 
