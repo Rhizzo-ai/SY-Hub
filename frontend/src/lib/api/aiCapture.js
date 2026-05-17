@@ -11,6 +11,7 @@ import {
   AICaptureJobSchema,
   CaptureJobsListResponseSchema,
 } from '@/lib/schemas/aiCapture';
+import { CaptureStatsResponseSchema } from '@/lib/schemas/aiCaptureStats';
 
 const BASE = '/v1/ai-capture-jobs';
 
@@ -75,4 +76,17 @@ export async function fetchCaptureAttachment(jobId, { signal } = {}) {
     signal,
   });
   return data; // Blob — callers wrap with URL.createObjectURL
+}
+
+// Chat 20 §R2.2 (B38) — aggregated cost / token / volume stats.
+export async function getCaptureCostStats({ fromDate, toDate, signal } = {}) {
+  const params = {};
+  if (fromDate) params.from_date = fromDate;
+  if (toDate) params.to_date = toDate;
+  const { data } = await api.get('/v1/ai-capture-jobs/stats', {
+    params, signal,
+  });
+  return parseOrThrow(
+    CaptureStatsResponseSchema, data, 'GET /ai-capture-jobs/stats',
+  );
 }

@@ -102,6 +102,11 @@ PERMISSION_CATALOGUE += _perms_for(
     include=["view", "view_sensitive", "create", "edit", "approve", "admin"],
     sensitive={"admin"},
 )
+# Chat 20 §R1.2 (Prompt 2.5D / B38) — new resource + action for cost dashboard.
+PERMISSION_CATALOGUE += [
+    ("ai_capture.view_costs", "ai_capture", "view_costs",
+     "View aggregated AI capture cost / token / volume statistics", True),
+]
 PERMISSION_CATALOGUE += _perms_for(
     "commitments",
     include=["view", "view_sensitive", "create", "edit", "approve"],
@@ -254,6 +259,7 @@ ROLE_PERMISSIONS["finance"] = {
     "reports.view", "reports.export",
     "users.view",
     "audit.view",
+    "ai_capture.view_costs",   # Chat 20 §R1.2 — cost dashboard visibility
 }
 
 # site_manager

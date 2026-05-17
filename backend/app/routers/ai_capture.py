@@ -12,6 +12,7 @@ Endpoints:
 from __future__ import annotations
 
 import uuid
+from datetime import date as date_type, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -212,3 +213,50 @@ def download_capture_attachment(
         path.suffix.lower(), "application/octet-stream",
     )
     return FileResponse(path, media_type=mime, filename=path.name)
+
+
+# ---------------------------------------------------------------------
+# 7. Stats — Chat 20 §R1.3 (B38 cost dashboard)
+# ---------------------------------------------------------------------
+
+
+@router.get("/ai-capture-jobs/stats")
+def get_capture_stats(
+    from_date: Optional[date_type] = Query(
+        default=None, description="ISO date YYYY-MM-DD, inclusive"
+    ),
+    to_date: Optional[date_type] = Query(
+        default=None, description="ISO date YYYY-MM-DD, inclusive"
+    ),
+    current: User = Depends(get_current_user),
+    perms: UserPermissions = Depends(require_permission("ai_capture.view_costs")),
+    db: Session = Depends(get_db),
+):
+    """Aggregated AI capture statistics for a date range.
+
+    All monetary fields are returned as integer pence to avoid float
+    round-tripping. Frontend renders as £ via /100 division.
+
+    Date bucketing uses Europe/London tz (NOT UTC) so the day boundaries
+    match what Louise expects in the dashboard (L10).
+    """
+    today = datetime.now(timezone.utc).astimezone().date()
+    if to_date is None:
+        to_date = today
+    if from_date is None:
+        from_date = to_date - timedelta(days=29)  # inclusive 30-day window
+
+    if from_date > to_date:
+        raise HTTPException(422, detail={
+            "code": "invalid_date_range",
+            "message": "from_date must be <= to_date",
+        })
+    if to_date > today:
+        raise HTTPException(422, detail={
+            "code": "future_date",
+            "message": "to_date cannot be in the future",
+        })
+
+    return cap_svc.compute_capture_stats(
+        db, from_date=from_date, to_date=to_date,
+    )

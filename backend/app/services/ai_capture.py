@@ -356,3 +356,123 @@ def retry_capture(
         request=request,
     )
     return job
+
+
+# ---------------------------------------------------------------------
+# Stats aggregation — Chat 20 §R1.4 (B38)
+# ---------------------------------------------------------------------
+
+from datetime import date as date_type, timedelta  # noqa: E402
+from sqlalchemy import text as sa_text  # noqa: E402
+
+
+def compute_capture_stats(
+    db: Session, *, from_date: date_type, to_date: date_type,
+) -> dict:
+    """Aggregate ai_capture_jobs over a date range.
+
+    Returns:
+        {
+          "period": {"from_date": "...", "to_date": "...", "days": N},
+          "totals": {
+            "total_jobs": int,
+            "total_cost_pence": int,
+            "avg_cost_pence": int,  # rounded; 0 if total_jobs == 0
+            "total_prompt_tokens": int,
+            "total_completion_tokens": int,
+          },
+          "daily_series": [
+            {"date": "YYYY-MM-DD", "cost_pence": int, "job_count": int},
+            ...   # ZERO-FILLED for missing days (D6)
+          ],
+          "by_status": [
+            {"status": "Completed", "cost_pence": int, "job_count": int},
+            {"status": "Failed",    "cost_pence": int, "job_count": int},
+            {"status": "Discarded", "cost_pence": int, "job_count": int},
+          ],
+        }
+    """
+    # ----- Totals (single query, NULL-safe) -----
+    totals_row = db.execute(sa_text("""
+        SELECT
+          COUNT(*) AS total_jobs,
+          COALESCE(SUM(cost_pence), 0) AS total_cost_pence,
+          COALESCE(SUM(prompt_tokens), 0) AS total_prompt_tokens,
+          COALESCE(SUM(completion_tokens), 0) AS total_completion_tokens
+        FROM ai_capture_jobs
+        WHERE created_at AT TIME ZONE 'Europe/London' >= :from_date
+          AND created_at AT TIME ZONE 'Europe/London' < :to_date_excl
+    """), {
+        "from_date": from_date,
+        "to_date_excl": to_date + timedelta(days=1),
+    }).one()
+
+    total_jobs = int(totals_row.total_jobs)
+    total_cost_pence = int(totals_row.total_cost_pence)
+    avg_cost_pence = round(total_cost_pence / total_jobs) if total_jobs else 0
+
+    # ----- Daily series, zero-filled -----
+    raw_series = db.execute(sa_text("""
+        SELECT
+          DATE(created_at AT TIME ZONE 'Europe/London') AS d,
+          COUNT(*) AS job_count,
+          COALESCE(SUM(cost_pence), 0) AS cost_pence
+        FROM ai_capture_jobs
+        WHERE created_at AT TIME ZONE 'Europe/London' >= :from_date
+          AND created_at AT TIME ZONE 'Europe/London' < :to_date_excl
+        GROUP BY d
+        ORDER BY d
+    """), {
+        "from_date": from_date,
+        "to_date_excl": to_date + timedelta(days=1),
+    }).all()
+    series_by_day = {r.d: (int(r.cost_pence), int(r.job_count)) for r in raw_series}
+
+    daily_series = []
+    day = from_date
+    while day <= to_date:
+        cost, count = series_by_day.get(day, (0, 0))
+        daily_series.append({
+            "date": day.isoformat(),
+            "cost_pence": cost,
+            "job_count": count,
+        })
+        day += timedelta(days=1)
+
+    # ----- Status breakdown (Completed / Failed / Discarded only — L11) -----
+    status_rows = db.execute(sa_text("""
+        SELECT
+          status,
+          COUNT(*) AS job_count,
+          COALESCE(SUM(cost_pence), 0) AS cost_pence
+        FROM ai_capture_jobs
+        WHERE created_at AT TIME ZONE 'Europe/London' >= :from_date
+          AND created_at AT TIME ZONE 'Europe/London' < :to_date_excl
+          AND status IN ('Completed', 'Failed', 'Discarded')
+        GROUP BY status
+    """), {
+        "from_date": from_date,
+        "to_date_excl": to_date + timedelta(days=1),
+    }).all()
+    status_lookup = {r.status: (int(r.cost_pence), int(r.job_count)) for r in status_rows}
+    by_status = []
+    for s in ("Completed", "Failed", "Discarded"):
+        cost, count = status_lookup.get(s, (0, 0))
+        by_status.append({"status": s, "cost_pence": cost, "job_count": count})
+
+    return {
+        "period": {
+            "from_date": from_date.isoformat(),
+            "to_date": to_date.isoformat(),
+            "days": (to_date - from_date).days + 1,
+        },
+        "totals": {
+            "total_jobs": total_jobs,
+            "total_cost_pence": total_cost_pence,
+            "avg_cost_pence": avg_cost_pence,
+            "total_prompt_tokens": int(totals_row.total_prompt_tokens),
+            "total_completion_tokens": int(totals_row.total_completion_tokens),
+        },
+        "daily_series": daily_series,
+        "by_status": by_status,
+    }

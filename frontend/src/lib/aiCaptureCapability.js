@@ -37,4 +37,14 @@ export function isLowConfidence(value) {
   return value < CONFIDENCE_WARN_THRESHOLD;
 }
 
+// Chat 20 §R2.4 (B38) — cost dashboard gate. Separate from canViewCaptures;
+// reveals operational pricing data and so is treated as finance-sensitive.
+// Granted to super_admin, director, finance via seed_rbac (D3).
+export function canViewCaptureCosts(me) {
+  if (!me) return false;
+  if (me.is_super_admin === true) return true;
+  const perms = me.permissions || [];
+  return perms.includes('ai_capture.view_costs');
+}
+
 export { CONFIDENCE_WARN_THRESHOLD };

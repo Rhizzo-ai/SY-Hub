@@ -9,7 +9,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
   listCaptureJobs, getCaptureJob, promoteCaptureJob,
-  discardCaptureJob, retryCaptureJob,
+  discardCaptureJob, retryCaptureJob, getCaptureCostStats,
 } from '@/lib/api/aiCapture';
 import { actualsKeys } from '@/hooks/actuals';
 
@@ -19,6 +19,10 @@ export const aiCaptureKeys = {
   list: (filters) => [...aiCaptureKeys.lists(), filters],
   details: () => [...aiCaptureKeys.all, 'detail'],
   detail: (id) => [...aiCaptureKeys.details(), id],
+  // Chat 20 §R2.3 (B38) — stats factory under .all so promote/discard/retry
+  // mutations' existing aiCaptureKeys.all-prefix invalidation also picks up
+  // an open cost dashboard. (I12, in-domain.)
+  stats: (filters) => [...aiCaptureKeys.all, 'stats', filters],
 };
 
 function _invalidateAll(qc) {
@@ -89,5 +93,16 @@ export function useRetryCapture(jobId) {
     onError: (err) => {
       toast.error(err?.response?.data?.detail || err?.friendlyMessage || 'Retry failed');
     },
+  });
+}
+
+// Chat 20 §R2.3 (B38) — cost dashboard query hook. Slightly stale-tolerant
+// (dashboard refresh expectation differs from the inbox table).
+export function useCaptureCostStats(filters = {}, opts = {}) {
+  return useQuery({
+    queryKey: aiCaptureKeys.stats(filters),
+    queryFn: ({ signal }) => getCaptureCostStats({ ...filters, signal }),
+    staleTime: 60_000,
+    ...opts,
   });
 }

@@ -77,6 +77,12 @@ import ResetPassword from "@/pages/ResetPassword";
 // pulled out of the main bundle. Tight head-room (419.72 → ≤436.72 kB).
 const AICaptureInbox = React.lazy(() => import("@/pages/AICaptureInbox"));
 const CaptureJobDetail = React.lazy(() => import("@/pages/CaptureJobDetail"));
+// Chat 20 §R4.1 (B38) — Cost dashboard. recharts code-split into its
+// own chunk via the webpackChunkName magic comment. Main bundle delta
+// must stay under +3 kB gz (PASS 2 M4, gate 1).
+const AICaptureCosts = React.lazy(() =>
+    import(/* webpackChunkName: "ai-capture-costs" */ "@/pages/AICaptureCosts")
+);
 
 function ShellRoutes() {
     return (
@@ -106,6 +112,16 @@ function ShellRoutes() {
                     element={
                         <React.Suspense fallback={<div className="p-6 text-sm text-slate-500">Loading…</div>}>
                             <AICaptureInbox />
+                        </React.Suspense>
+                    }
+                />
+                {/* Chat 20 §R4.1 — Cost dashboard route MUST precede :jobId so
+                    the literal "cost" segment is never matched as a jobId. */}
+                <Route
+                    path="/ai-capture/cost"
+                    element={
+                        <React.Suspense fallback={<div className="p-6 text-sm text-slate-500">Loading…</div>}>
+                            <AICaptureCosts />
                         </React.Suspense>
                     }
                 />

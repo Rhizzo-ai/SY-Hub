@@ -25,6 +25,7 @@ const NAV = [
     { label: "Cost Codes", to: "/cost-codes", icon: Calculator, enabled: true, testid: "nav-cost-codes", requires: "cost_codes.view" },
     { label: "Payments", to: "/payments", icon: Receipt, enabled: true, testid: "nav-payments", requires: "actuals.view" },
     { label: "AI Capture", to: "/ai-capture", icon: Bot, enabled: true, testid: "nav-ai-capture", requires: "actuals.admin" },
+    { label: "AI Capture Costs", to: "/ai-capture/cost", icon: LineChart, enabled: true, testid: "nav-ai-capture-cost", requires: "ai_capture.view_costs" },
     { label: "System Config", to: "/config", icon: Settings, enabled: true, testid: "nav-config", requires: "system_config.view" },
     { label: "SDLT Rates", to: "/settings/sdlt-rates", icon: Percent, enabled: true, testid: "nav-sdlt-rates", requires: "system_config.view" },
     { label: "Appraisal Defaults", to: "/settings/appraisal-defaults", icon: LineChart, enabled: true, testid: "nav-appraisal-defaults", requires: "system_config.view" },

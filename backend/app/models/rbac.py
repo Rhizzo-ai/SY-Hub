@@ -33,6 +33,7 @@ RESOURCES = (
     "document_registers", "certificates",
     "xero_connections", "xero_bills", "xero_invoices", "xero_sync",
     "system_config", "notifications", "reports",
+    "ai_capture",  # Chat 20 §R1.1 (B38) — cost dashboard resource
 )
 
 ACTIONS = (
@@ -40,6 +41,7 @@ ACTIONS = (
     "create", "edit", "delete",
     "submit", "approve", "reopen",
     "export", "admin",
+    "view_costs",  # Chat 20 §R1.1 (B38) — cost dashboard action
 )
 
 ENTITY_SCOPES = ("All", "Specific")
