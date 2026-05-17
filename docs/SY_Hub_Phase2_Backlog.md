@@ -394,3 +394,39 @@ Verbatim from Build Pack v1 front matter §"New backlog items (added at chat-end
   (dispute_reason, void_reason, etc.). UI-only gating is fragile; backend should
   strip sensitive keys from the payload for callers without
   `actuals.view_sensitive`. Defer; this is a 19A hardening item, not in 19B's scope.
+
+### Chat 19C — new items added at chat-end (2026-02-17)
+
+Verbatim from chat-19C Build Pack v-final front matter, lines 86–91.
+
+- **B37** — pdf.js lazy-loaded attachment thumbnails. v1 uses `<embed>` (D38);
+  v2 wraps `pdfjs-dist` in `React.lazy` + `Suspense` to render a page-1
+  thumbnail without busting the bundle cap. Re-scopes B33 with explicit
+  lazy-load requirement.
+
+- **B38** — AI capture cost dashboard UI. Surfaces per-job and rolling-window
+  `cost_pence`, `prompt_tokens`, `completion_tokens` from `ai_capture_jobs`.
+  Pairs with existing B24 (backend ready).
+
+- **B39** — Auto-routing rules engine UI. Operator-defined rules:
+  "supplier X → entity Y, project Z, cost code C". Backend B25 implementation
+  prerequisite.
+
+- **B40** — Multi-status filter on the AI capture list (e.g. "Awaiting Review
+  AND Failed"). v1 single-status per D40 + D45.
+
+- **B41** — Bulk discard. v1 is per-row.
+
+- **B42** — Re-promote a Discarded job. Currently terminal; would need a
+  backend transition `Discarded → Queued`. Defer.
+
+### Chat 19C — B36 resolution note
+
+**B36** (logged in chat-19B closing under §"Open items for Chat 19C") is
+closed via regression test only. Symptom not reproducible at HEAD; zero LOC
+backend change applied per operator instruction. The invariant is locked by
+`backend/tests/test_actuals_attachments.py::TestB36AttachmentReadAfterWrite::
+test_post_attachment_immediately_visible_in_list` (green at HEAD) and the
+chat-19B `actuals-attachments.pm.spec.ts:Delete attachment` E2E has been
+un-skipped. See `docs/chat-summaries/chat-19c-closing.md` §"B36 RCA — not
+reproducible" for the full RCA and the hypothesised silent fix.

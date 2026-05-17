@@ -12,6 +12,96 @@ Each entry: date, prompt reference (if applicable), change, rationale.
 ## Entries
 
 
+## Chat 19C / Prompt 2.5C — AI Capture Review Surface — closed 2026-02-17
+
+**Frontend + minimal backend chat. Bundle delta: +4.27 kB gz (target ≤+14 / hard cap +17).** 8 of 9 STOP gates green at close (gate 9 = operator-side Playwright full-suite run, by policy). Reference: `docs/chat-summaries/chat-19c-closing.md`.
+
+**§R0 baseline gates:**
+- Before: Jest 88, pytest 782, e2e smoke 11/11, bundle 419.72 kB
+- After:  **Jest 118, pytest 790, e2e smoke 11/11, bundle 423.99 kB** (13.01 kB headroom vs +17 cap)
+
+**Surfaces shipped (§R1–§R5):**
+
+- **Data layer.** Zod schemas (`lib/schemas/aiCapture.js`) mirror the
+  `_serialise_capture_job` 19A payload. Axios client wires all 6 capture
+  endpoints (`lib/api/aiCapture.js`). React Query hooks bucketed under
+  `captureKeys.all` (`hooks/aiCapture.js`). Capability helpers
+  (`lib/aiCaptureCapability.js`) — `canViewCaptures`, `canPromote`,
+  `canDiscard`, `canRetry`, pure functions.
+- **Routes + AppShell nav.** Two flat sibling routes (`/ai-capture` list,
+  `/ai-capture/:jobId` detail). `AppShell.NAV` gets an `AI Capture` entry
+  (FileScan icon, `requires: actuals.view`) above `Payments`.
+- **AICaptureInbox (list page).** TanStack Table over `GET /ai-capture-jobs`.
+  Server-side single-status filter (D40); mobile read-only banner; counts
+  pill in the header. Status badge per row (Queued / Processing /
+  Awaiting_Review / Failed / Promoted / Discarded), Confidence pill
+  derived from `extracted_data.confidence_overall` (D39 single-band).
+- **CaptureJobDetail page.** Side-by-side layout on lg+: attachment preview
+  left, extracted-fields + promote-form right. `AttachmentPreview`
+  fetches via the new `GET /v1/ai-capture-jobs/:id/attachment` (returns
+  file bytes) and wraps a blob URL — `<embed>` for PDFs (D38),
+  `<img>` for images. Cleanup on unmount / job change with a `cancelled`
+  ref to guard late setState (E11).
+- **ExtractedFieldsPanel.** Per-field rendering of supplier_name,
+  invoice_date, net_amount, vat_amount, vat_rate_pct, description, with a
+  per-field ConfidencePill if the extractor surfaced a confidence map.
+- **PromoteForm.** React Hook Form + Zod. Re-uses 19B's `BudgetLinePicker`
+  directly (D37 — no capture-specific picker). Pre-populates from
+  `job.suggested_project_id`, `job.suggested_entity_id`,
+  `job.extracted_data.*`, but operator can override every field. CIS
+  toggle reveals 3 sensitive fields. On success navigates to
+  `/projects/:p/actuals/:a` (D44).
+- **CaptureActions.** Per-row + page-level Promote / Retry / Discard
+  buttons gated by `aiCaptureCapability`. Discard uses 19B's trigger-based
+  `ConfirmDialog`.
+- **Backend extension (B36-orthogonal).** One new endpoint:
+  `GET /api/v1/ai-capture-jobs/:id/attachment` — streams the file bytes
+  (auth-gated on `actuals.view`). Zero LOC change to existing AI-capture
+  service or actuals state machine.
+
+**B36 — read-after-write attachment list invariant. NOT REPRODUCIBLE AT HEAD.**
+
+Chat-19A operator reported `GET /actuals/:id/attachments` returning `count=0`
+after a successful POST. Chat-19B skipped the relevant E2E delete-flow with a
+TODO referencing 19C. Chat-19C walkthrough at HEAD: the symptom no longer
+manifests. **Zero LOC backend change applied** — per operator instruction
+(chat user message 230) no speculative session-handling patches were made.
+
+A regression test (`backend/tests/test_actuals_attachments.py::
+TestB36AttachmentReadAfterWrite::test_post_attachment_immediately_visible_in_list`)
+pins the read-after-write contract at the pytest layer. It exercises the same
+HTTP path the E2E walks (POST attachment → immediate GET list → assert count=1
++ id matches + filename/MIME survive). Green at HEAD. The chat-19B E2E delete
+case has been un-skipped (E14).
+
+**Hypothesised silent fix (HYPOTHESIS, not verified):** chat-19B's
+`freshActual` factory rework (E7) replaced a hard-coded `getBudgetIds()` v2
+budget lookup with runtime resolution of the current Active/Locked budget.
+The original symptom was consistent with a Draft actual created against a
+terminal budget; the factory rework prevents that state from being reachable.
+See `chat-19c-closing.md` §"B36 RCA — not reproducible" for full text.
+
+**Test deltas:** Jest 88 → **118** (+30 across 7 spec files); pytest
+782 → **790** (+8 from B36 lock-in test + capture endpoint coverage);
+Playwright +6 spec files (full count operator-side).
+
+**6 new backlog items (B37–B42)** appended verbatim from Build Pack front
+matter to `docs/SY_Hub_Phase2_Backlog.md`. Headline: B37 — pdf.js
+lazy-loaded thumbnails (re-scoped from B33 with explicit React.lazy
+requirement). B36 closed via regression test (no patch).
+
+**5 implementation deviations (E11–E15)** captured in
+`docs/chat-summaries/chat-19c-closing.md`:
+- E11 — `AttachmentPreview` blob-URL cleanup pattern + `cancelled` ref.
+- E12 — `PromoteForm` BudgetLinePicker stub strategy (real picker exercised
+  via 19B integration tests; UUIDs in stub must be real v4-shape).
+- E13 — `useCaptureJob` hook MUST come above the perm-gate (rules-of-hooks).
+- E14 — `actuals-attachments.pm.spec.ts:Delete attachment` un-skipped (B36 RCA).
+- E15 — Postmark inbound seed hoisted to `global-setup.ts` (HMAC needs
+  process-loaded `POSTMARK_INBOUND_SECRET`).
+
+---
+
 ## Chat 19B / Prompt 2.5B — Actuals Frontend + Payment View + E2E — closed 2026-02-15
 
 **Frontend + E2E chat following 19A backend. Bundle delta: +32.62 kB gz (target ≤+35).** All 7 STOP gates passed. Reference: `docs/chat-summaries/chat-19b-closing.md`.

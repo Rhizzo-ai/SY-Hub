@@ -17,6 +17,25 @@ Frontend / actuals / commitments / Xero are out of scope until later prompts.
 
 ## What's been implemented
 
+### 2026-02-17 — Prompt 2.5C AI Capture Review Surface ✓
+- **Frontend + minimal backend chat.** Surface shipped: AI Capture inbox
+  list page (`/ai-capture`) + capture-job detail page (`/ai-capture/:jobId`)
+  with side-by-side attachment preview / extracted-fields / promote form.
+  PromoteForm re-uses 19B's `BudgetLinePicker` (D37); navigates to the
+  created Draft actual on success (D44). One new backend endpoint:
+  `GET /api/v1/ai-capture-jobs/:id/attachment` (file bytes, auth-gated).
+- **B36 outcome: NOT REPRODUCIBLE AT HEAD.** Zero LOC backend change.
+  Hypothesised silent fix in chat-19B's `freshActual` factory rework.
+  Regression test `tests/test_actuals_attachments.py::TestB36AttachmentRead
+  AfterWrite` pins the read-after-write contract; chat-19B's skipped E2E
+  delete case un-skipped (E14). See `chat-19c-closing.md` §"B36 RCA".
+- **Bundle headroom remaining post-build: 13.01 kB** (423.99 kB vs +17
+  hard-cap of 437.00 kB). Jest 88 → **118**; pytest 782 → **790**;
+  smoke unchanged 11/11. 6 new Playwright spec files (operator-run).
+- Reference: `docs/chat-summaries/chat-19c-closing.md`. 5 implementation
+  deviations (E11–E15) captured. 6 new backlog items B37–B42 appended
+  verbatim from Build Pack to Phase 2 backlog.
+
 ### 2026-02-15 — Prompt 2.5B Actuals Frontend + Payment View + E2E ✓
 - **Frontend + E2E chat** following 19A backend. Bundle 387.10 kB →
   **419.72 kB** (+32.62 kB gz, target ≤+35 / hard cap +50).
