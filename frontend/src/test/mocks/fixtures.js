@@ -219,3 +219,83 @@ export const makePaidActual = (overrides = {}) =>
     payment_reference: 'BACS-20260520-abcdef',
     ...overrides,
   });
+
+
+// ---------------------------------------------------------------------------
+// AI capture job fixtures — Chat 19C §R6.8
+// ---------------------------------------------------------------------------
+
+export function makeQueuedJob(overrides = {}) {
+  return {
+    id: '00000000-0000-0000-0000-000000000001',
+    inbound_email_message_id: '00000000-0000-0000-0000-000000000010',
+    attachment_path: '/var/attachments/test.pdf',
+    status: 'Queued',
+    attempts: 0,
+    last_attempted_at: null,
+    last_error_message: null,
+    extracted_data: null,
+    confidence_scores: null,
+    suggested_entity_id: null,
+    suggested_project_id: null,
+    suggested_cost_code_id: null,
+    target_actual_id: null,
+    model_used: null,
+    prompt_tokens: null,
+    completion_tokens: null,
+    cost_pence: null,
+    created_at: '2026-05-16T10:00:00Z',
+    updated_at: '2026-05-16T10:00:00Z',
+    ...overrides,
+  };
+}
+
+export function makeAwaitingReviewJob(overrides = {}) {
+  return {
+    ...makeQueuedJob(),
+    status: 'Awaiting_Review',
+    attempts: 1,
+    last_attempted_at: '2026-05-16T10:01:00Z',
+    extracted_data: {
+      supplier_name: 'Acme Supplies Ltd',
+      supplier_invoice_ref: 'INV-001',
+      invoice_date: '2026-04-01',
+      description: 'Stub: materials delivery',
+      net_amount: '100.00',
+      vat_amount: '20.00',
+      gross_amount: '120.00',
+      vat_rate_pct: '20.00',
+    },
+    confidence_scores: {
+      supplier_name: 0.95,
+      supplier_invoice_ref: 0.90,
+      invoice_date: 0.85,
+      net_amount: 0.99,
+      vat_amount: 0.99,
+      gross_amount: 0.99,
+      overall: 0.93,
+    },
+    model_used: 'test-stub',
+    ...overrides,
+  };
+}
+
+export function makeFailedJob(overrides = {}) {
+  return {
+    ...makeQueuedJob(),
+    status: 'Failed',
+    attempts: 3,
+    last_attempted_at: '2026-05-16T10:05:00Z',
+    last_error_message: 'Anthropic returned 500',
+    ...overrides,
+  };
+}
+
+export function makeCompletedJob(overrides = {}) {
+  return {
+    ...makeAwaitingReviewJob(),
+    status: 'Completed',
+    target_actual_id: '00000000-0000-0000-0000-0000000000aa',
+    ...overrides,
+  };
+}

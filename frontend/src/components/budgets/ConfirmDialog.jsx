@@ -32,6 +32,11 @@ export function ConfirmDialog({
   requireReason = false,
   isPending = false,
   variant = 'default',
+  // Chat 19C §R4.1 H10: optional Tailwind class string override for the
+  // confirm button. When provided, takes precedence over `variant` so callers
+  // can pick a colour outside the default/destructive pair (e.g. rose-600
+  // for AI Capture discard, where the surface uses a different palette).
+  confirmClass: confirmClassOverride = null,
   onConfirm,
   testId = 'confirm-dialog',
   // Optional render-prop for extra form fields (e.g. version_label).
@@ -46,9 +51,11 @@ export function ConfirmDialog({
   const [reason, setReason] = useState('');
 
   const confirmClass =
-    variant === 'destructive'
-      ? 'bg-sy-orange text-white hover:brightness-110 active:brightness-95'
-      : 'bg-sy-teal text-white hover:brightness-110 active:brightness-95';
+    confirmClassOverride
+      ? confirmClassOverride
+      : variant === 'destructive'
+        ? 'bg-sy-orange text-white hover:brightness-110 active:brightness-95'
+        : 'bg-sy-teal text-white hover:brightness-110 active:brightness-95';
 
   const reasonValid = !requireReason || !!reason.trim();
   const extrasValid = extraValid ? !!extraValid() : true;

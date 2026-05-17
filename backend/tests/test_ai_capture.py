@@ -505,3 +505,56 @@ class TestPermissionCatalogue:
         # Project manager has view/create/edit but not admin
         assert "actuals.admin" not in ROLE_PERMISSIONS["project_manager"]
         assert "actuals.create" in ROLE_PERMISSIONS["project_manager"]
+
+
+# ---------------------------------------------------------------------------
+# Attachment download endpoint test (1) — Chat 19C §R5.1 C1 / §R6.2 STOP gate 0
+# ---------------------------------------------------------------------------
+#
+# Locks the new `GET /api/v1/ai-capture-jobs/{job_id}/attachment` endpoint:
+# returns the file bytes with the inferred MIME type when the path exists,
+# 410 when the row references a path that's been wiped from disk.
+
+class TestAttachmentDownload:
+    def test_attachment_download_returns_file_bytes(
+        self, db, seeds, admin_user, perms, tmp_path,
+    ):
+        """End-to-end: enqueue a job with a real PDF on disk → download it
+        via the new endpoint → assert content + content-type.
+        """
+        from fastapi.testclient import TestClient
+        from server import app
+        from app.auth.deps import get_current_principal, Principal
+
+        pdf = tmp_path / "invoice-19c.pdf"
+        pdf.write_bytes(b"%PDF-1.4\n%real bytes for B36+19C test\n%%EOF\n")
+        _, job = _make_inbound_and_job(db, seeds, attachment_path=str(pdf))
+
+        # Override the upstream principal dep so both get_current_user and
+        # require_permission("actuals.admin") see a fully-permissioned admin
+        # without needing a live login cookie. require_permission returns a
+        # fresh closure per call so it can't be overridden directly — but it
+        # depends on get_current_principal, which we CAN override.
+        def _principal():
+            return Principal(
+                user=admin_user,
+                tenant_id=seeds["tenant_id"],
+                token_type="access",
+                session=None,
+            )
+        app.dependency_overrides[get_current_principal] = _principal
+        try:
+            client = TestClient(app)
+            r = client.get(f"/api/v1/ai-capture-jobs/{job.id}/attachment")
+            assert r.status_code == 200, r.text
+            assert r.headers["content-type"].startswith("application/pdf")
+            assert r.content.startswith(b"%PDF-1.4")
+            assert b"%%EOF" in r.content
+
+            # Path gone -> 410
+            pdf.unlink()
+            r2 = client.get(f"/api/v1/ai-capture-jobs/{job.id}/attachment")
+            assert r2.status_code == 410
+        finally:
+            app.dependency_overrides.clear()
+

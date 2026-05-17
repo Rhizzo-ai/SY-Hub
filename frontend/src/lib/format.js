@@ -114,3 +114,16 @@ export function displayEnum(value) {
     if (!value) return "—";
     return String(value).replace(/_/g, " ");
 }
+
+
+// ---- AI capture confidence ---- (Chat 19C §R1.5)
+//
+// Backend stores per-field + overall confidence as 0.0–1.0 floats in the
+// JSONB confidence_scores column. UI renders them as integer percentages
+// or "—" for null. Defensive against string payloads from older jobs.
+export function fmtConfidence(value) {
+    if (value == null) return "—";
+    const num = typeof value === "string" ? parseFloat(value) : value;
+    if (!Number.isFinite(num)) return "—";
+    return `${Math.round(num * 100)}%`;
+}

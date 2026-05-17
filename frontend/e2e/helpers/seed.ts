@@ -9,6 +9,11 @@ type State = {
   projectId: string;
   emptyProjectId: string;
   budgets: { v1: string; v2: string };
+  capture?: {
+    awaitingReviewJobId: string;
+    failedJobId: string;
+    queuedJobId: string;
+  } | null;
   seededAt: string;
 };
 

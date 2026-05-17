@@ -12,9 +12,11 @@ Endpoints:
 from __future__ import annotations
 
 import uuid
+from pathlib import Path
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from app.auth.deps import get_current_user, require_permission
@@ -164,3 +166,49 @@ def retry_job(
     db.commit()
     db.refresh(job)
     return _serialise_job(job)
+
+
+
+# ---------------------------------------------------------------------
+# 6. Attachment download — Chat 19C §R5.1 C1
+# ---------------------------------------------------------------------
+#
+# Streams the file bytes referenced by job.attachment_path. Used by the
+# AI Capture Review surface (AttachmentPreview component) so reviewers
+# can see the source document inline before promoting / discarding the
+# job.
+#
+# Gated on `actuals.admin` to match the other 5 endpoints in this router
+# (sensitive surface — extraction artefacts may contain supplier PII).
+# Inline disposition; MIME inferred from the file extension, with a safe
+# fallback to application/octet-stream. 404 if job is missing, 410 if the
+# attachment file no longer exists on disk (i.e. row references a dead
+# path — surfaced to the operator rather than swallowed).
+
+_ATTACHMENT_MIME_BY_EXT: dict[str, str] = {
+    ".pdf": "application/pdf",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+}
+
+
+@router.get("/ai-capture-jobs/{job_id}/attachment")
+def download_capture_attachment(
+    job_id: uuid.UUID,
+    current: User = Depends(get_current_user),
+    perms: UserPermissions = Depends(require_permission("actuals.admin")),
+    db: Session = Depends(get_db),
+):
+    job = db.get(AICaptureJob, job_id)
+    if job is None:
+        raise HTTPException(404, "Capture job not found")
+    path = Path(job.attachment_path)
+    if not path.exists():
+        raise HTTPException(410, "Attachment file no longer exists on disk")
+    mime = _ATTACHMENT_MIME_BY_EXT.get(
+        path.suffix.lower(), "application/octet-stream",
+    )
+    return FileResponse(path, media_type=mime, filename=path.name)

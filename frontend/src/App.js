@@ -72,6 +72,12 @@ import PaymentsView from "@/pages/payments/PaymentsView";
 import ForgotPassword from "@/pages/ForgotPassword";
 import ResetPassword from "@/pages/ResetPassword";
 
+// Chat 19C §R8 Q9 mitigation: lazy-load AI Capture pages so the
+// review surface (incl. heavy PromoteForm + RHF/zod payload) is
+// pulled out of the main bundle. Tight head-room (419.72 → ≤436.72 kB).
+const AICaptureInbox = React.lazy(() => import("@/pages/AICaptureInbox"));
+const CaptureJobDetail = React.lazy(() => import("@/pages/CaptureJobDetail"));
+
 function ShellRoutes() {
     return (
         <AppShell>
@@ -94,6 +100,23 @@ function ShellRoutes() {
                 <Route path="/projects/:projectId/actuals/:actualId" element={<ActualDetail />} />
                 {/* Louise's global cross-project payments view */}
                 <Route path="/payments" element={<PaymentsView />} />
+                {/* Chat 19C §R2 — AI Capture review surface (top-level siblings) */}
+                <Route
+                    path="/ai-capture"
+                    element={
+                        <React.Suspense fallback={<div className="p-6 text-sm text-slate-500">Loading…</div>}>
+                            <AICaptureInbox />
+                        </React.Suspense>
+                    }
+                />
+                <Route
+                    path="/ai-capture/:jobId"
+                    element={
+                        <React.Suspense fallback={<div className="p-6 text-sm text-slate-500">Loading…</div>}>
+                            <CaptureJobDetail />
+                        </React.Suspense>
+                    }
+                />
                 <Route path="/appraisals/:id" element={<AppraisalPage />} />
                 <Route path="/cost-codes" element={<CostCodesList />} />
                 <Route path="/cost-codes/sections" element={<CostCodeSections />} />

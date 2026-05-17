@@ -32,16 +32,12 @@ test('Upload >25MB: rejected with error', async ({ page, freshDraftActual }) => 
 });
 
 test('Delete attachment: ConfirmDialog → confirm → row removed', async ({ page, freshDraftActual }) => {
-  // KNOWN-FLAKY on the chat-19A preview backend: POST /actuals/:id/attachments
-  // returns success in tests 1+2 but the GET listing returns 0 rows, so the
-  // delete trigger never mounts. Tests 1+2 above pass because they assert on
-  // toast text ('Uploaded foo.pdf') rather than the attachment-row testid.
-  // The frontend delete-flow itself is correctly wired; this is an upstream
-  // (backend or seed) regression to debug in chat-19C if it persists.
-  test.skip(
-    true,
-    'Skipped pending chat-19A preview attachment list regression — frontend code path is correct',
-  );
+  // Chat-19C §R0.6.4: B36 (POST-attachment vs GET-list regression) is no
+  // longer reproducible at HEAD per the chat-19c-closing.md walkthrough.
+  // Backend regression test test_actuals_attachments.py::
+  // test_post_attachment_immediately_visible_in_list locks the read-after-
+  // write invariant. Re-enabled here so the full delete flow is back under
+  // E2E coverage.
   const projectId = getProjectId();
   await page.goto(`/projects/${projectId}/actuals/${freshDraftActual.id}`);
   const fileInput = page.locator('[data-testid="actual-attachments"] input[type="file"]');
