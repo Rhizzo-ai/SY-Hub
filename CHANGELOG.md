@@ -51,6 +51,7 @@ with two new issues. Both fixed in-place; no new Build Pack.
   fallbacks added in source.
 - Local validation #2: pytest 799 passed / 0 failed (135s);
   YAML re-parses; no source / requirements changes.
+- **Follow-up 3: MFA_ENCRYPTION_KEY added to CI env.** Root cause of CI run #4's 27 failures + 406 errors — `app/auth/mfa.py:_get_fernet()` raises `RuntimeError` (no default) on every `encrypt_secret`/`decrypt_secret` call, which fanned out through every admin-fixture test's `login_with_auto_enroll` helper as 500s on `/api/auth/mfa/enroll/confirm`. Diagnosed via full env-var audit (25 env reads across `backend/app/` + `server.py` classified into has-default / hard-required / not-needed-in-tests buckets; full report in chat-22-followup investigation): only one var was actually missing from the CI workflow. Added inline (not as GitHub Secret — CI Fernet key protects no real data) with a 12-line explanatory comment block above it. Local repro under `env -i` with the exact 14 ci.yml vars and no `backend/.env` on disk: **799 passed / 0 failed** (102s).
 
 
 ## Chat 22 — CI pipeline hardening (2026-05-18)

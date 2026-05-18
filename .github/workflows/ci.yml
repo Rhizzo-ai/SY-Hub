@@ -92,6 +92,18 @@ jobs:
       # speaks to the backend server-to-server via requests, no browser
       # preflight) — this just satisfies the startup guard.
       CORS_ORIGINS: "https://pipeline-drift-patch.preview.emergentagent.com"
+      # Fernet key for MFA secret/backup-code envelope encryption.
+      # app/auth/mfa.py:_get_fernet() requires this; with no default it
+      # raises RuntimeError → 500 on every mfa/enroll/confirm call (CI run
+      # #4 saw 27 fails + 406 errors all caused by this single missing var
+      # cascading through every admin-fixture test that triggers
+      # login_with_auto_enroll). The value below is a deterministic
+      # CI-only key (32-byte url-safe base64 per Fernet's contract) —
+      # generated once via `python -c "from cryptography.fernet import
+      # Fernet; print(Fernet.generate_key().decode())"`. Same key must
+      # be used for the lifetime of a CI run; tests don't share state
+      # across runs so leaking it is harmless.
+      MFA_ENCRYPTION_KEY: "yh4DnC26mgbmTRBK7zY6FyofSCfGUWw6qhWlVqPTF6Y="
       # DATABASE_URL uses the "postgresql+psycopg://" scheme (psycopg3 driver),
       # NOT bare "postgresql://" which makes SQLAlchemy default to psycopg2.
       # requirements.txt / requirements-ci.txt pin psycopg==3.3.3 +
