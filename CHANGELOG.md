@@ -35,6 +35,22 @@ with two new issues. Both fixed in-place; no new Build Pack.
   source code changes.
 - Local validation: pytest 799 passed / 0 failed / 0 errors (157s);
   `yarn install --frozen-lockfile` clean.
+- **Follow-up 2: CORS_ORIGINS env var added to CI workflow.** CI run #3
+  (after the psycopg3-URL fix) reached "Start backend HTTP server" then
+  crashed on `backend/server.py:172`'s defensive guard:
+  `RuntimeError: CORS misconfiguration: allow_credentials=True is
+  incompatible with a wildcard CORS_ORIGINS. ... Currently CORS_ORIGINS=''`.
+  The CI env block hadn't set `CORS_ORIGINS` — locally it lives in
+  `backend/.env`. Added `CORS_ORIGINS:
+  "https://pipeline-drift-patch.preview.emergentagent.com"` to the backend
+  job env block in `.github/workflows/ci.yml` (value copied verbatim from
+  `backend/.env`) plus a 6-line explanatory comment noting that CORS is
+  never exercised in CI (pytest speaks server-to-server, no browser
+  preflight) — the var only exists to satisfy the startup guard. No
+  changes to `server.py` (the guard is correct defensive code), no
+  fallbacks added in source.
+- Local validation #2: pytest 799 passed / 0 failed (135s);
+  YAML re-parses; no source / requirements changes.
 
 
 ## Chat 22 — CI pipeline hardening (2026-05-18)
