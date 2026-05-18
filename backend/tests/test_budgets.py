@@ -1772,9 +1772,14 @@ class TestLineItems:
         db.expire(b.lines[0])
         reloaded = db.get(BudgetLine, line_id)
         assert reloaded is not None
-        assert len(reloaded.items) == 1
-        assert reloaded.items[0].id == item.id
-        assert reloaded.items[0].description == "rel-test"
+        # Chat 23 R1.2: every new line auto-creates 4 default items
+        # (Materials, Labour, Plant & Subcontractors, Other). Our
+        # `create_item(... description="rel-test" ...)` adds a 5th.
+        assert len(reloaded.items) == 5
+        descs = [i.description for i in reloaded.items]
+        assert "rel-test" in descs
+        rel_item = next(i for i in reloaded.items if i.description == "rel-test")
+        assert rel_item.id == item.id
 
     def test_item_amount_validation_warns_but_does_not_block(
         self, admin, fresh_active_budget,
@@ -1816,13 +1821,13 @@ class TestLineItems:
                 json={"description": desc, "amount": "10.00"},
             )
             assert rc.status_code == 201, rc.text
-        # Sanity check: 2 items present.
+        # Sanity check: 2 user-added items + 4 R1.2 defaults = 6 total.
         with db_engine.connect() as c:
             before = c.execute(text(
                 "SELECT COUNT(*) FROM budget_line_items "
                 "WHERE budget_line_id=:l"
             ), {"l": line_id}).scalar()
-        assert before == 2
+        assert before == 6
 
         # Raw-SQL DELETE the parent line. FK cascade should fire.
         with db_engine.begin() as c:
@@ -2016,9 +2021,10 @@ class TestNewVersion:
             l["cost_code_id"]: len(l.get("items", []))
             for l in rv1["lines"]
         }
-        assert v1_counts[v1_line["cost_code_id"]] == 2, (
-            f"setup invariant violated: expected 2 items on v1 line, "
-            f"got {v1_counts[v1_line['cost_code_id']]}"
+        assert v1_counts[v1_line["cost_code_id"]] == 6, (
+            f"setup invariant violated: expected 6 items (4 R1.2 defaults "
+            f"+ 2 user-added) on v1 line, got "
+            f"{v1_counts[v1_line['cost_code_id']]}"
         )
 
         rv = admin.post(

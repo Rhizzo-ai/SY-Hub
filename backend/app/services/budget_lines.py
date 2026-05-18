@@ -34,6 +34,43 @@ from app.services.budgets import (
 
 log = logging.getLogger(__name__)
 
+# ----------------------------------------------------------------------
+# Chat 23 R1.2 — default 4 budget_line_items injected on every new line.
+# Order is stable: Materials, Labour, Plant & Subcontractors, Other.
+# Amounts are 0.00 so the parent line's `original_budget` is the
+# accountant-set total and items are placeholders for breakdown entry.
+# Also consumed by:
+#   - services.budgets.create_from_appraisal (R1.2 second call-site)
+#   - migrations.0027 backfill of zero-item lines (R1.3)
+# ----------------------------------------------------------------------
+DEFAULT_LINE_ITEMS: tuple[str, ...] = (
+    "Materials",
+    "Labour",
+    "Plant & Subcontractors",
+    "Other",
+)
+
+
+def _create_default_items(db: Session, line: BudgetLine) -> list[BudgetLineItem]:
+    """Insert the 4 default items for a freshly-created line.
+
+    Caller is responsible for `db.flush()`. We do not flush here so the
+    caller can batch flushes when seeding many lines (e.g. create_from_
+    appraisal). Returns the list of created BudgetLineItem objects.
+    """
+    items: list[BudgetLineItem] = []
+    for idx, label in enumerate(DEFAULT_LINE_ITEMS):
+        item = BudgetLineItem(
+            budget_line_id=line.id,
+            description=label,
+            amount=Decimal("0"),
+            display_order=idx,
+        )
+        db.add(item)
+        items.append(item)
+    return items
+
+
 # Whitelist of fields callers may set via bulk_update_lines.
 _LINE_EDITABLE_FIELDS = frozenset({
     "line_description",
@@ -148,6 +185,11 @@ def create_line(
         notes=notes,
     )
     db.add(line)
+    db.flush()
+
+    # R1.2: every new line ships with the 4 default items so the grid has
+    # rows to render and so item-level edits never start from empty.
+    _create_default_items(db, line)
     db.flush()
 
     # Recompute parent summary.

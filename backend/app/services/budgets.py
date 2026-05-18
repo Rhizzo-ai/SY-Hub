@@ -404,6 +404,10 @@ def create_from_appraisal(
         merge_map[key]["source_count"] += 1
 
     # Insert lines preserving the order they were first seen (stable).
+    # R1.2: every new line gets 4 default items injected post-flush so the
+    # newly-created budget is grid-renderable immediately.
+    from app.services.budget_lines import _create_default_items  # local to avoid import cycle
+    new_lines: list[BudgetLine] = []
     for display_order, (key, vals) in enumerate(merge_map.items()):
         line = BudgetLine(
             budget_id=budget.id,
@@ -417,6 +421,10 @@ def create_from_appraisal(
             display_order=display_order,
         )
         db.add(line)
+        new_lines.append(line)
+    db.flush()
+    for nl in new_lines:
+        _create_default_items(db, nl)
     db.flush()
 
     # Refresh lines for recompute (they were just added so collection is loaded).
