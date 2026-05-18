@@ -1,0 +1,300 @@
+# .github/workflows/ci.yml
+#
+# SY Hub CI pipeline. Anchor: Future_Tasks §3, open since Chat 14 (5 May 2026).
+# Shipped by Chat 21 (Build Pack v-final).
+#
+# Trigger model:
+#   - Every push to main (Emergent's auto-commits land here).
+#   - Manual via workflow_dispatch (operator can re-run after fixing infra).
+#
+# Gate model (operator decision Q2a, Chat 21):
+#   - Post-push, NOT pre-merge. Red CI surfaces via:
+#       (a) GitHub's default email-on-failure to repo owner (Rhys).
+#       (b) Status badge on README.md.
+#   - Operator decides whether to revert. CI cannot block a push because
+#     Emergent's Save-to-GitHub pushes direct to main as auto-commits.
+#
+# Scope v1 (operator decision Q3 a+b+c+d, Chat 21):
+#     backend job:  bootstrap smoke (anchor) + pytest
+#     frontend job: yarn build + bundle-size gate (I11) + yarn test (Jest)
+#
+# Out of v1 scope (deferred):
+#   - Playwright (Q3e — preview URL auth too fiddly for GHA).
+#   - Lint (Q3f — low value first iteration).
+#
+# Secrets required (set via repo Settings → Secrets and variables → Actions):
+#   CI_BOOTSTRAP_ADMIN_PASSWORD — test-only password for the seeded super_admin.
+#   CI_TEST_USER_PASSWORD       — test-only password for the seven test users.
+#                                 MUST be the literal "TestUser-Dev-2026!"
+#                                 because pytest fixtures hardcode the literal.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Cancel in-progress runs on the same ref when a newer commit lands.
+# Prevents CI queue pile-up when Emergent ships multiple auto-commits back-to-back.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+
+  # ---------------------------------------------------------------------------
+  # Backend job
+  # ---------------------------------------------------------------------------
+  # Bootstrap smoke is the anchor — see Future_Tasks §3 history.
+  # Postgres 16 service container provisions a clean DB per run.
+  # pgcrypto must be created before alembic upgrade (mig 0011/0012/0015/0019/0022).
+  # ---------------------------------------------------------------------------
+  backend:
+    name: backend (bootstrap + pytest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: syhomes
+          POSTGRES_PASSWORD: syhomes_dev
+          POSTGRES_DB: syhomes
+        ports:
+          - 5432:5432
+        # Wait for Postgres to be accepting connections before any step runs.
+        options: >-
+          --health-cmd "pg_isready -U syhomes -d syhomes"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+
+    env:
+      # Stable across all steps in this job. JWT_SECRET varies per run to defend
+      # against accidental test cross-talk; MFA_ENCRYPTION_KEY is omitted so
+      # bootstrap auto-generates one (per backend/README.md "Environment setup").
+      #
+      # POSTMARK_* required by tests/test_ai_capture.py (per its docstring:
+      # "POSTMARK_INBOUND_ENABLED=true MUST be set in backend/.env for these
+      # tests"). The secret value matches the test's fallback default so
+      # both backend and test agree on what to verify against.
+      #
+      # REACT_APP_BACKEND_URL is read by tests that hit BASE_URL via requests
+      # (e.g. test_audit_remediation_patch_2.py, test_ai_capture.py). Setting
+      # it explicitly is clearer than relying on the http://localhost:8001
+      # fallback inside each test module.
+      DATABASE_URL: postgresql://syhomes:syhomes_dev@localhost:5432/syhomes
+      BOOTSTRAP_ADMIN_EMAIL: ci-admin@example.test
+      BOOTSTRAP_ADMIN_PASSWORD: ${{ secrets.CI_BOOTSTRAP_ADMIN_PASSWORD }}
+      BOOTSTRAP_ADMIN_FIRST_NAME: CI
+      BOOTSTRAP_ADMIN_LAST_NAME: Admin
+      JWT_SECRET: ci-jwt-secret-${{ github.run_id }}-${{ github.run_attempt }}
+      TEST_USER_PASSWORD: ${{ secrets.CI_TEST_USER_PASSWORD }}
+      APP_ENV: test
+      SYHOMES_RATE_LIMIT_DISABLED: "1"
+      REACT_APP_BACKEND_URL: http://localhost:8001
+      POSTMARK_INBOUND_ENABLED: "true"
+      POSTMARK_INBOUND_SECRET: test-secret-do-not-use
+
+    steps:
+
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Validate secrets are configured
+        # Run BEFORE pip install so misconfigured runs fail in ~5s, not ~2 min.
+        run: |
+          if [ -z "${{ secrets.CI_BOOTSTRAP_ADMIN_PASSWORD }}" ]; then
+            echo "::error::Secret CI_BOOTSTRAP_ADMIN_PASSWORD is not set. See workflow comments."
+            exit 1
+          fi
+          if [ -z "${{ secrets.CI_TEST_USER_PASSWORD }}" ]; then
+            echo "::error::Secret CI_TEST_USER_PASSWORD is not set. See workflow comments."
+            exit 1
+          fi
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          # psql client used by the pgcrypto step below.
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends postgresql-client
+
+      - name: Create pgcrypto extension
+        # Required before alembic upgrade — migrations 0011/0012/0015/0019/0022
+        # use gen_random_uuid() server-defaults from pgcrypto.
+        env:
+          PGPASSWORD: syhomes_dev
+        run: |
+          psql -h localhost -U syhomes -d syhomes \
+            -c "CREATE EXTENSION IF NOT EXISTS pgcrypto;"
+
+      - name: Bootstrap smoke (anchor — Future_Tasks §3)
+        # python -m app.bootstrap is idempotent. Per backend/app/bootstrap.py,
+        # the orchestrator runs:
+        #   env-var precheck → wait_for_postgres → pg advisory lock →
+        #   detect_db_state → alembic upgrade head → seed (tenant+entities) →
+        #   seed_rbac → seed_system_config → seed_test_users (subprocess call
+        #   to scripts/seed_test_users.py) → verify_invariants → release lock.
+        # Exit code: 0 on success, non-zero on any step failure (see EXIT_*
+        # constants in bootstrap.py).
+        # Test users are seeded by bootstrap's seed_test_users step; do NOT
+        # re-invoke scripts/seed_test_users.py separately.
+        working-directory: backend
+        run: |
+          python -m app.bootstrap
+          echo "::notice::Bootstrap rc=0 — alembic upgraded, RBAC seeded, test users seeded, invariants verified."
+
+      - name: Print migration head + permission count + role count
+        # Informational. Failure here is non-fatal but surfaces drift.
+        # Permission count drift is also caught by the existing pytest
+        # test_auth_rbac.py assertions; this is for human-readable visibility.
+        env:
+          PGPASSWORD: syhomes_dev
+        continue-on-error: true
+        run: |
+          cd backend
+          HEAD=$(alembic current 2>&1 | tail -1)
+          PERMS=$(psql -h localhost -U syhomes -d syhomes -tAc "SELECT COUNT(*) FROM permissions;" | tr -d ' ')
+          ROLES=$(psql -h localhost -U syhomes -d syhomes -tAc "SELECT COUNT(*) FROM roles;" | tr -d ' ')
+          echo "::notice::Alembic head: $HEAD"
+          echo "::notice::Permissions: $PERMS"
+          echo "::notice::Roles: $ROLES"
+
+      - name: Start backend HTTP server (for HTTP-driven pytest tests)
+        # Many pytest tests hit BASE_URL via requests.post (e.g.
+        # tests/conftest::login_with_auto_enroll, test_audit_remediation_patch_2,
+        # test_ai_capture's Postmark webhook 401/422/202 tests). They require
+        # a running backend on http://localhost:8001.
+        #
+        # Operator's local sandbox satisfies this via supervisor; CI replicates
+        # with a backgrounded uvicorn. The runner VM is the same across steps
+        # in a job, so background processes persist (GHA does not container-
+        # boundary steps within a job).
+        #
+        # We log uvicorn output to /tmp/uvicorn.log so pytest output stays clean
+        # and the log is recoverable on failure.
+        working-directory: backend
+        run: |
+          python -m uvicorn server:app --host 0.0.0.0 --port 8001 \
+            > /tmp/uvicorn.log 2>&1 &
+          echo $! > /tmp/uvicorn.pid
+          echo "Backend started with PID $(cat /tmp/uvicorn.pid)"
+          # Wait up to 30s for /api/health to become responsive.
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:8001/api/health > /dev/null 2>&1; then
+              echo "Backend health-check OK after ${i}s"
+              break
+            fi
+            sleep 1
+          done
+          # Final health-check; fail fast with log dump if not up.
+          if ! curl -fsS http://localhost:8001/api/health; then
+            echo "::error::Backend failed to respond on /api/health after 30s"
+            echo "--- /tmp/uvicorn.log (last 50 lines) ---"
+            tail -50 /tmp/uvicorn.log
+            exit 1
+          fi
+          echo ""
+          echo "::notice::Backend ready on http://localhost:8001"
+
+      - name: Run backend tests
+        # python -m pytest is preferred in CI per backend/README.md "Running tests".
+        # The --ignore flag stays per Future_Tasks §4 (smoke test reclassification
+        # deferred; --ignore is NOT in scope for Chat 21).
+        working-directory: backend
+        run: |
+          python -m pytest --ignore=tests/test_c3_governance_smoke.py
+
+      - name: Dump uvicorn log on failure
+        # Only fires if a prior step failed. Helps diagnose backend-side
+        # exceptions raised during HTTP-driven tests.
+        if: failure()
+        run: |
+          echo "--- /tmp/uvicorn.log ---"
+          cat /tmp/uvicorn.log || echo "(no uvicorn log captured)"
+
+  # ---------------------------------------------------------------------------
+  # Frontend job
+  # ---------------------------------------------------------------------------
+  # Build CRA bundle, enforce the I11 437 kB hard cap on main.*.js
+  # gzipped, run Jest unit tests.
+  # ---------------------------------------------------------------------------
+  frontend:
+    name: frontend (build + bundle gate + jest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: yarn
+          cache-dependency-path: frontend/yarn.lock
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: yarn install --frozen-lockfile --non-interactive
+
+      - name: Build frontend (CRA via craco)
+        # CI=false: CRA treats warnings as errors when CI=true. The repo has
+        # pre-existing build warnings (acknowledged through chat-20 close).
+        # Failing on them is out of scope for v1 — lint pass is Future_Tasks.
+        # REACT_APP_BACKEND_URL is inlined at build time; placeholder is fine
+        # because the build itself doesn't call the backend.
+        working-directory: frontend
+        env:
+          CI: "false"
+          REACT_APP_BACKEND_URL: "http://localhost:8001"
+        run: yarn build
+
+      - name: Bundle-size gate (I11 hard cap 437 kB gzipped on main.*.js)
+        # gzip -c | wc -c is reproducible and doesn't depend on CRA's
+        # formatted summary output (which varies kB vs KB across versions).
+        # 437,000 bytes ≈ 437 kB decimal (matches the cap reported in
+        # chat-19c-closing §R8.3 STOP gate 2 and Engineering Invariants I11).
+        working-directory: frontend
+        run: |
+          MAIN=$(ls build/static/js/main.*.js 2>/dev/null | head -1)
+          if [ -z "$MAIN" ]; then
+            echo "::error::Main bundle not found at build/static/js/main.*.js"
+            ls -la build/static/js/ || true
+            exit 1
+          fi
+          SIZE_BYTES=$(gzip -c "$MAIN" | wc -c | tr -d ' ')
+          SIZE_KB=$(python3 -c "print(round($SIZE_BYTES / 1000, 2))")
+          CAP_BYTES=437000
+          echo "Main bundle:  $MAIN"
+          echo "Gzipped size: ${SIZE_KB} kB (${SIZE_BYTES} bytes)"
+          echo "Cap:          437.00 kB (${CAP_BYTES} bytes)"
+          if [ "$SIZE_BYTES" -gt "$CAP_BYTES" ]; then
+            echo "::error::Main bundle ${SIZE_KB} kB exceeds 437 kB hard cap (I11)"
+            exit 1
+          fi
+          HEADROOM=$((CAP_BYTES - SIZE_BYTES))
+          HEADROOM_KB=$(python3 -c "print(round($HEADROOM / 1000, 2))")
+          echo "::notice::Main bundle ${SIZE_KB} kB / 437 kB cap — ${HEADROOM_KB} kB headroom"
+
+      - name: Run Jest unit tests
+        # CI=true makes Jest exit after one run (equivalent to --watchAll=false
+        # in CRA's test runner). yarn test invokes `craco test` per package.json.
+        working-directory: frontend
+        env:
+          CI: "true"
+        run: yarn test --watchAll=false

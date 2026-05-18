@@ -113,7 +113,37 @@ The **gate for Prompt 2.4 (Budgets) is now cleared.** Pre-paste audit during Cha
 
 ---
 
-## 3. CI pipeline (anchor: bootstrap smoke test) — **P1**
+## 3. CI pipeline (anchor: bootstrap smoke test) — **RESOLVED (Chat 21, 2026-05-18)**
+
+**Resolution:** Shipped `.github/workflows/ci.yml` per Chat 21 Build Pack v-final.
+Two-job pipeline (backend + frontend) on every push to main. Backend job
+anchors on `python -m app.bootstrap` (Future_Tasks §3 anchor item).
+Frontend job enforces I11 bundle hard cap. See CHANGELOG Chat 21 entry
+and `docs/chat-summaries/chat-21-closing.md`.
+
+**Decisions locked at Chat 21 open** (operator answers, plain-English version of Q1–Q6):
+
+1. Runner: GitHub Actions (hosted).
+2. Gate model: post-push alert + status badge; operator decides revert.
+   Pre-merge gating not available without changing Emergent's auto-commit
+   workflow; that's a separate process change.
+3. Scope v1: bootstrap smoke + backend pytest + frontend build + bundle
+   gate + Jest. Playwright + lint deferred.
+4. Postgres: service container (postgres:16), not testcontainers-python.
+5. Secrets: GitHub Actions encrypted secrets, test-only values.
+6. Trigger: every push to main + workflow_dispatch.
+
+**Open follow-ups (not blocking v1):**
+- Playwright in CI — needs preview URL auth strategy. Logged separately.
+- Lint passes (ruff + eslint) — Future_Tasks polish pass.
+- PR-based gating — depends on Emergent supporting feature-branch workflow.
+- Codecov / coverage reporting — Future_Tasks polish pass.
+
+(Original entry retained below for historical context.)
+
+---
+
+## 3 (historical — pre-Chat 21). CI pipeline (anchor: bootstrap smoke test) — P1
 
 - **Surfaced in**: Chat 14 (5 May 2026) — proposed by the bootstrap-fix-p0 agent at session close; deferred from that PR to keep scope clean.
 - **Severity**: P1 — not currently gating any specific prompt, but Budgets (Prompt 2.4) will be the highest-stakes financial code in the platform to date. CI catches regressions before they reach Rhys; without it, the only quality gate is agent self-report (which has been shown to drift — see Chat 14's Future_Tasks sync gap).

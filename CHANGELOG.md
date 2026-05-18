@@ -12,6 +12,34 @@ Each entry: date, prompt reference (if applicable), change, rationale.
 ## Entries
 
 
+## Chat 21 — CI pipeline shipped (2026-05-18)
+
+**Anchor:** Future_Tasks §3 (open since Chat 14, 5 May 2026). RESOLVED.
+
+- New file: `.github/workflows/ci.yml`. Two jobs (backend, frontend) running
+  in parallel on every push to main + workflow_dispatch.
+- Backend job: Postgres 16 service container → pgcrypto extension →
+  `python -m app.bootstrap` (anchor smoke test; bootstrap runs alembic
+  upgrade + tenant/RBAC/system_config seeds + seed_test_users.py via
+  subprocess + verify_invariants) → start uvicorn for HTTP-driven tests
+  → `python -m pytest --ignore=tests/test_c3_governance_smoke.py`.
+- Frontend job: Node 20 + yarn 1.22 → `yarn install --frozen-lockfile` →
+  `yarn build` → bundle-size gate (≤437 kB gzipped on main.*.js per I11) →
+  `yarn test --watchAll=false` (Jest).
+- Gate model: post-push (Emergent ships direct to main as auto-commits, so
+  pre-merge gating is not available without a workflow change). Red CI
+  surfaces via GitHub's email-on-failure + README status badge.
+- Secrets required (set by operator in repo Settings):
+  CI_BOOTSTRAP_ADMIN_PASSWORD, CI_TEST_USER_PASSWORD. Workflow fails fast
+  with a named error if either is missing. CI_TEST_USER_PASSWORD MUST be
+  the literal `TestUser-Dev-2026!` (hardcoded in pytest fixtures).
+- README.md: status badge added as the first content line.
+- Future_Tasks §3: annotated RESOLVED with commit reference; original §3
+  content preserved as historical record.
+- No source code, migrations, permissions, tests, or seeds were modified
+  by this Build Pack. Infra-only.
+
+
 ## Chat 19C / Prompt 2.5C — AI Capture Review Surface — closed 2026-02-17
 
 **Frontend + minimal backend chat. Bundle delta: +4.27 kB gz (target ≤+14 / hard cap +17).** 8 of 9 STOP gates green at close (gate 9 = operator-side Playwright full-suite run, by policy). Reference: `docs/chat-summaries/chat-19c-closing.md`.
