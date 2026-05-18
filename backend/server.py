@@ -50,6 +50,7 @@ from app.routers.roles import roles_router, perms_router  # noqa: E402
 from app.routers.sessions import router as sessions_router  # noqa: E402
 from app.routers.system_config import router as system_config_router  # noqa: E402
 from app.routers.users import router as users_router  # noqa: E402
+from app.routers.user_preferences import router as user_preferences_router  # noqa: E402
 from app.seed import seed  # noqa: E402
 from app.seed_rbac import seed_rbac  # noqa: E402
 from app.seed_system_config import (  # noqa: E402
@@ -154,6 +155,7 @@ v1_router.include_router(budgets_router)
 v1_router.include_router(actuals_router)
 v1_router.include_router(ai_capture_router)
 v1_router.include_router(inbound_router)
+v1_router.include_router(user_preferences_router)
 api_router.include_router(v1_router)
 
 app.include_router(api_router)

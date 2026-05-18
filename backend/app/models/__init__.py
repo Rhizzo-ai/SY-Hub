@@ -80,6 +80,7 @@ from app.models.actuals import (
     ACTUAL_ATTACHMENT_SOURCES, TERMINAL_ACTUAL_STATUSES,
     VALID_TRANSITIONS, CHANGE_LOG_EVENT_TYPES,
 )
+from app.models.user_preferences import UserPreference
 
 __all__ = [
     "Tenant",

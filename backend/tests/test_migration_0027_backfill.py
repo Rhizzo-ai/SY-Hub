@@ -134,11 +134,16 @@ def synthetic_zero_item_line(engine):
 
 
 class TestMigration0027Schema:
-    def test_alembic_head_is_0027(self, engine):
+    def test_0027_is_in_applied_history(self, engine):
+        """Once Chat 23 R1.4 adds migration 0028, head advances. We just
+        need to assert 0027 is in the applied chain (i.e. alembic_version
+        is 0027 OR something downstream that depends on 0027)."""
         with engine.connect() as c:
             head = c.execute(text("SELECT version_num FROM alembic_version")).scalar()
-        assert head == "0027_default_line_items_backfill", (
-            f"expected 0027_default_line_items_backfill, got {head!r}"
+        # Acceptable heads: 0027 itself, or any later revision (0028+).
+        assert head is not None
+        assert head >= "0027_default_line_items_backfill", (
+            f"head {head!r} is older than 0027 — backfill not applied"
         )
 
     def test_migration_emitted_audit_row(self, engine):
