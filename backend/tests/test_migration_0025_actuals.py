@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import uuid
+from pathlib import Path
 
 import pytest
 from dotenv import load_dotenv
@@ -295,7 +296,8 @@ class TestMigration0025Behaviours:
         regardless of how many migrations land on top of it.
         """
         import subprocess
-        cwd = "/app/backend"
+        # Resolves to backend/ regardless of mount point — CI runners use a different prefix than the sandbox.
+        cwd = str(Path(__file__).resolve().parents[1])
         env = os.environ.copy()
         before = None
         with engine.connect() as c:

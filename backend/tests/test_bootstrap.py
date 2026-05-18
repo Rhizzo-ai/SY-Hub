@@ -28,6 +28,7 @@ import os
 import subprocess
 import sys
 import time
+from pathlib import Path
 from typing import Iterator
 
 import pytest
@@ -37,7 +38,8 @@ from sqlalchemy.pool import NullPool
 from app import bootstrap as B
 
 
-BACKEND_DIR = "/app/backend"
+# Resolves to backend/ regardless of mount point — CI runners use a different prefix than the sandbox.
+BACKEND_DIR = str(Path(__file__).resolve().parents[1])
 PYTHON_BIN = sys.executable
 
 # ----------------------------------------------------------------------

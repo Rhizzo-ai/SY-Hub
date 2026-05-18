@@ -248,4 +248,90 @@ and `docs/chat-summaries/chat-21-closing.md`.
 
 ---
 
-## 7. (placeholder — future entries appended here)
+## 7. Replace 19 cosmetic `load_dotenv("/app/backend/.env")` hardcodes — polish
+
+- **Surfaced in**: Chat 22 follow-up (CI run #5 diagnosis, 2026-05-18)
+- **Severity**: P3 (cosmetic — does not break CI; calls silently no-op when
+  the path is absent, and CI sets env vars via the workflow env block
+  anyway)
+- **Description**: 19 test files do `load_dotenv("/app/backend/.env")` at
+  module import. The literal `/app/backend` is sandbox-specific (Emergent
+  container layout) and won't resolve on any other host (GitHub Actions
+  runners use `/home/runner/work/SY-Hub/SY-Hub/backend`, fork previews
+  vary, real developers' laptops vary). The calls work in the sandbox by
+  coincidence and silently no-op everywhere else.
+
+  Affected files (from `grep -rln 'load_dotenv(.*/app' backend/tests/`):
+  `test_audit_log.py`, `test_audit_remediation.py`,
+  `test_audit_remediation_patch_2.py`, `test_entities_api.py`, `test_mfa.py`,
+  `test_notifications.py`, `test_password_complexity.py`,
+  `test_reference_data.py`, `test_retro_wires.py`, `test_scheduler_jobs.py`,
+  `test_sessions_history_reset.py`, `test_system_config.py`,
+  `test_user_edit.py`, plus ~6 more.
+
+  Chat 22 follow-up §B already migrated the two BREAKING hardcodes
+  (`BACKEND_DIR` in `test_bootstrap.py:40` and `cwd` in
+  `test_migration_0025_actuals.py:298`) to
+  `Path(__file__).resolve().parents[1]`. These 19 are the cosmetic
+  remainder — same pattern, same fix, no urgency.
+
+- **Proposed resolution**: Single sed-style pass across the 19 files
+  replacing:
+  ```python
+  load_dotenv("/app/backend/.env")
+  ```
+  with:
+  ```python
+  from pathlib import Path  # if not already imported
+  load_dotenv(Path(__file__).resolve().parents[1] / ".env")
+  ```
+  Touches only test files, no production code, no migrations, no
+  permissions, no seeds. Half-session work.
+
+- **Owner / Target prompt**: Open. Pull when next test-hygiene episode
+  surfaces.
+
+---
+
+## 8. Decide explicit `COLLATE` for entity name `ORDER BY` (production deployment)
+
+- **Surfaced in**: Chat 22 follow-up (CI run #5 diagnosis, 2026-05-18)
+- **Severity**: P3 (product decision, not a bug — deferred until production
+  deployment lands)
+- **Description**: `app/routers/entities.py:194` does
+  `.order_by(Entity.name.asc())` with no explicit `COLLATE` clause, so
+  the sort uses the Postgres cluster's default collation. The sandbox
+  cluster is on `C.UTF-8` (codepoint sort) and tests use Python's
+  `sorted()` as the oracle (also codepoint). CI was failing on
+  `postgres:16`'s glibc `en_US.utf8` (linguistic sort, treats parentheses
+  as low-weight tiebreakers) — Chat 22 follow-up §A fixed this by pinning
+  the CI postgres container to `C.UTF-8` via `POSTGRES_INITDB_ARGS`. That
+  keeps CI green and matches sandbox bit-for-bit, but the question of
+  what production should use was deliberately deferred.
+
+  The deferred question: when SY Homes' production Postgres is
+  provisioned (cloud-managed PG, self-hosted, etc.), should the entity
+  name ORDER BY be:
+  1. **Deterministic codepoint** (`.order_by(func.collate(Entity.name, "C").asc())`)
+     — same order everywhere regardless of cluster locale; matches test
+     expectations on any cluster; mildly unusual UX (parentheses sort
+     distinctly from spaces).
+  2. **Linguistic** (default; whatever the production cluster collation
+     is) — humans see locale-appropriate sort (e.g. en_GB.utf8 ignores
+     punctuation at primary level); tests would need to relax to a
+     subset-membership assertion rather than codepoint-equality, or the
+     production cluster would need to be initdb'd with `C.UTF-8` to
+     match (the CI approach extended to prod).
+
+- **Proposed resolution**: Discuss at deployment-planning time. If
+  option 1 is chosen: one-line source change in
+  `app/routers/entities.py:194` + drop the `POSTGRES_INITDB_ARGS` pin
+  from CI (no longer needed). If option 2 + match-prod-to-test: keep
+  the CI pin and document the production initdb args in a runbook.
+
+- **Owner / Target prompt**: Open. Triggered by first production
+  deployment work, not by ongoing CI/test polish.
+
+---
+
+## 9. (placeholder — future entries appended here)

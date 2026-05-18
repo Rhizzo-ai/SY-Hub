@@ -62,6 +62,14 @@ jobs:
           POSTGRES_USER: syhomes
           POSTGRES_PASSWORD: syhomes_dev
           POSTGRES_DB: syhomes
+          # Sandbox Postgres uses C.UTF-8 by default; postgres:16's Docker
+          # default is en_US.utf8 (glibc linguistic collation). Linguistic
+          # collation breaks tests that assert Python-sorted() (codepoint)
+          # order — pin CI to C.UTF-8 so it matches the sandbox bit-for-bit
+          # and keeps test oracles deterministic. Production cluster
+          # collation is a separate deployment-time decision (see
+          # docs/SY_Homes_Future_Tasks.md polish entry).
+          POSTGRES_INITDB_ARGS: "--lc-collate=C.UTF-8 --lc-ctype=C.UTF-8 --encoding=UTF8"
         ports:
           - 5432:5432
         # Wait for Postgres to be accepting connections before any step runs.
