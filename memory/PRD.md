@@ -17,6 +17,21 @@ Frontend / actuals / commitments / Xero are out of scope until later prompts.
 
 ## What's been implemented
 
+### 2026-05-18 — Chat 22 CI pipeline hardening ✓ CLOSED
+- **Anchor (Future_Tasks §3, open since Chat 14):** GitHub Actions CI pipeline (`.github/workflows/ci.yml`) iteratively hardened across 5 red runs to reach a 799/799 green state without depending on `backend/.env` or sandbox-specific absolute paths.
+- **Shipped fixes (cumulative):**
+  - `backend/requirements-ci.txt` excludes the private `emergentintegrations` package.
+  - `frontend/yarn.lock` regenerated + explicitly staged.
+  - 7 pre-existing test-drift assertions patched across 5 test files.
+  - CI env: `DATABASE_URL` → `postgresql+psycopg://` (psycopg3 driver), `CORS_ORIGINS`, `MFA_ENCRYPTION_KEY` inline (CI-only Fernet key).
+  - CI postgres service: `POSTGRES_INITDB_ARGS=--lc-collate=C.UTF-8 --lc-ctype=C.UTF-8 --encoding=UTF8` (Pattern A — pins CI sort order to match sandbox + Python codepoint oracle).
+  - `tests/test_bootstrap.py` + `tests/test_migration_0025_actuals.py`: replaced `/app/backend` hardcodes with `str(Path(__file__).resolve().parents[1])` (Pattern B).
+- **Final validation:** Full backend suite (`python -m pytest --ignore=tests/test_c3_governance_smoke.py`) runs **799 passed / 0 failed** (108.72s) under `env -i` with the exact 14-var ci.yml block and no `backend/.env`. The handoff's "3 failing tests" report was a misdiagnosis (non-policy-compliant password in prior agent's local replica). See `CHANGELOG.md` Follow-up 5.
+- **Backlog (P3, deferred to Future_Tasks polish):**
+  - Refactor 19 cosmetic `load_dotenv("/app/backend/.env")` hardcodes across test suite.
+  - Decide explicit `COLLATE` for entity `ORDER BY name` for production deployment.
+  - Rename 5 test functions still carrying stale literal numbers from drift patches.
+
 ### 2026-02-17 — Prompt 2.5C AI Capture Review Surface ✓
 - **Frontend + minimal backend chat.** Surface shipped: AI Capture inbox
   list page (`/ai-capture`) + capture-job detail page (`/ai-capture/:jobId`)
