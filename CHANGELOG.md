@@ -12,6 +12,31 @@ Each entry: date, prompt reference (if applicable), change, rationale.
 ## Entries
 
 
+## Chat 22 follow-up — psycopg3 driver URL fix + yarn.lock recommit (2026-05-18)
+
+CI run #2 (after the initial Chat 22 Save-to-GitHub, commit `ec8ffec`) failed
+with two new issues. Both fixed in-place; no new Build Pack.
+
+- **yarn.lock recommit.** Chat 22's regenerated `frontend/yarn.lock` (3 new
+  packages: `react-dropzone@14.4.1`, `file-selector@2.1.2`, `attr-accept@2.2.5`,
+  plus a `tslib` constraint widening) was validated locally but never landed
+  in commit `ec8ffec` — `git log -- frontend/yarn.lock` shows last touch
+  remained at Chat 18's `18289dd`. Re-ran `yarn install`, regenerated the
+  same +22/-1 line diff, explicitly `git add`-ed and re-committed.
+  `yarn install --frozen-lockfile` clean.
+- **psycopg3 driver URL.** Backend `wait_for_postgres` failed in CI with
+  `ModuleNotFoundError: No module named 'psycopg2'`. `requirements.txt`
+  pins only `psycopg==3.3.3` + `psycopg-binary==3.3.3` (psycopg3 line);
+  with a bare `postgresql://` URL, SQLAlchemy defaults to the psycopg2
+  dialect and import-fails. Fixed `.github/workflows/ci.yml`'s backend
+  job `env.DATABASE_URL` from `postgresql://syhomes:...` to
+  `postgresql+psycopg://syhomes:...` (matches `backend/.env`'s scheme).
+  YAML still parses; no `requirements.txt` / `requirements-ci.txt` /
+  source code changes.
+- Local validation: pytest 799 passed / 0 failed / 0 errors (157s);
+  `yarn install --frozen-lockfile` clean.
+
+
 ## Chat 22 — CI pipeline hardening (2026-05-18)
 
 **Anchor:** First Chat 21 CI run (commit `26822fb`, 2026-05-18) red after 27s.

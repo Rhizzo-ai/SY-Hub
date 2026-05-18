@@ -85,7 +85,13 @@ jobs:
       # (e.g. test_audit_remediation_patch_2.py, test_ai_capture.py). Setting
       # it explicitly is clearer than relying on the http://localhost:8001
       # fallback inside each test module.
-      DATABASE_URL: postgresql://syhomes:syhomes_dev@localhost:5432/syhomes
+      # DATABASE_URL uses the "postgresql+psycopg://" scheme (psycopg3 driver),
+      # NOT bare "postgresql://" which makes SQLAlchemy default to psycopg2.
+      # requirements.txt / requirements-ci.txt pin psycopg==3.3.3 +
+      # psycopg-binary==3.3.3 only — psycopg2 is not installed. The Emergent
+      # sandbox masks this because a transitive there pulls psycopg2 in;
+      # GitHub Actions doesn't, so the scheme must be explicit here.
+      DATABASE_URL: postgresql+psycopg://syhomes:syhomes_dev@localhost:5432/syhomes
       BOOTSTRAP_ADMIN_EMAIL: ci-admin@example.test
       BOOTSTRAP_ADMIN_PASSWORD: ${{ secrets.CI_BOOTSTRAP_ADMIN_PASSWORD }}
       BOOTSTRAP_ADMIN_FIRST_NAME: CI
