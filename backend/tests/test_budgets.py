@@ -2401,9 +2401,10 @@ class TestConcurrencyInvariant:
         from sqlalchemy.exc import IntegrityError
         admin_uid = None
         with db_engine.connect() as c:
+            admin_email = os.environ.get("BOOTSTRAP_ADMIN_EMAIL", "rhys@syhomes.co.uk")
             admin_uid = c.execute(text(
-                "SELECT id FROM users WHERE email='rhys@syhomes.co.uk'"
-            )).scalar()
+                "SELECT id FROM users WHERE email=:e"
+            ), {"e": admin_email}).scalar()
         with pytest.raises(IntegrityError):
             with db_engine.begin() as c:
                 c.execute(text("""
@@ -2654,9 +2655,10 @@ class TestDetailQueryBudget:
         from app.auth.permissions import compute_effective_permissions
         db = SessionLocal()
         try:
-            uid = db.scalar(text(
-                "SELECT id FROM users WHERE email='rhys@syhomes.co.uk'"
-            ))
+            admin_email = os.environ.get("BOOTSTRAP_ADMIN_EMAIL", "rhys@syhomes.co.uk")
+            uid = db.execute(
+                text("SELECT id FROM users WHERE email=:e"), {"e": admin_email}
+            ).scalar()
             u = db.get(User, uid)
             perms = compute_effective_permissions(db, u.id, u.tenant_id)
             queries: list[str] = []

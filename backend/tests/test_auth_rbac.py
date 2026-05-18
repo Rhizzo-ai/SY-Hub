@@ -19,8 +19,8 @@ if not BASE_URL:
 
 # Test credentials
 TEST_PASSWORD = "TestUser-Dev-2026!"
-SUPER_ADMIN_EMAIL = "rhys@syhomes.co.uk"
-SUPER_ADMIN_PASSWORD = "xupmaq-qykbah-gipMy5"
+SUPER_ADMIN_EMAIL = os.environ.get("BOOTSTRAP_ADMIN_EMAIL", "rhys@syhomes.co.uk")
+SUPER_ADMIN_PASSWORD = os.environ.get("BOOTSTRAP_ADMIN_PASSWORD", "xupmaq-qykbah-gipMy5")
 TEST_ADMIN_EMAIL = "test-admin@example.test"
 TEST_DIRECTOR_EMAIL = "test-director@example.test"
 TEST_PM_EMAIL = "test-pm@example.test"

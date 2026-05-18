@@ -334,4 +334,23 @@ and `docs/chat-summaries/chat-21-closing.md`.
 
 ---
 
-## 9. (placeholder — future entries appended here)
+## 9. P3 polish — dead `_admin_user` helper in `tests/test_budgets.py`
+
+- **Status**: Open (P3 cleanup)
+- **Anchor**: Chat 22 CI hardening Follow-up 6 (CHANGELOG `2026-05-18`).
+  When fixing 2 stale-literal lookups (lines 2404-2406, 2657-2660) we
+  noted `_admin_user(db)` at `tests/test_budgets.py:489-491` is never
+  called — `grep _admin_user(` across `tests/` returns zero matches
+  outside the def itself. Safe to delete (5 lines including the
+  function signature + the `from app.models.user import User` import
+  inside it).
+
+- **Why deferred**: out of scope for run-#6 CI hardening fix (strict
+  test-only-no-other-test-files rule). Bundle with the next polish
+  pass over `tests/test_budgets.py`.
+
+- **Owner / Target prompt**: Next time anyone touches the file.
+
+---
+
+## 10. (placeholder — future entries appended here)
