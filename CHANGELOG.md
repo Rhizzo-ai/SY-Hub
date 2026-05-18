@@ -12,6 +12,64 @@ Each entry: date, prompt reference (if applicable), change, rationale.
 ## Entries
 
 
+## Chat 22 — CI pipeline hardening (2026-05-18)
+
+**Anchor:** First Chat 21 CI run (commit `26822fb`, 2026-05-18) red after 27s.
+Two setup-step failures (neither reached pytest or yarn build proper) and 5
+pre-existing test-drift assertions surfaced by the stricter CI environment.
+
+- **New file: `/app/backend/requirements-ci.txt`** — `requirements.txt` minus
+  `emergentintegrations==0.1.0`, which is a private Emergent sandbox package
+  not available on public PyPI. 140 deps (11-line header comment + 140 lines).
+  Header documents the lockstep maintenance rule with `requirements.txt`.
+  Verified zero imports of `emergentintegrations` under `backend/app/`,
+  `backend/tests/`, or `backend/scripts/`, so option 3 (CI-only exclusion) is
+  the correct fix — no conditional-import refactor needed.
+- **Edited `.github/workflows/ci.yml`**: backend job now installs from
+  `requirements-ci.txt` instead of `requirements.txt`. One-line change in the
+  "Install backend dependencies" step plus a 3-line explanatory comment.
+- **Regenerated `frontend/yarn.lock`** — drift diagnosed as innocent. 3 packages
+  added (`react-dropzone@14.4.1`, `file-selector@2.1.2`, `attr-accept@2.2.5`)
+  to satisfy a `"react-dropzone": "14"` entry in `package.json` that landed in
+  Chat 18-prep but never had its lockfile entries committed. Plus a `tslib`
+  range constraint added (`^2.7.0`) on the existing entry. `yarn install
+  --frozen-lockfile` now clean.
+- **Test drift patches (7 literals across 5 files):**
+  - `tests/test_auth_rbac.py::test_me_super_admin_returns_87_permissions` —
+    assertion bumped `85` → `86`. Function name retained (renaming out of
+    scope; see Future_Tasks polish entry).
+  - `tests/test_auth_rbac.py::test_roles_returns_10_seeded_roles` —
+    `super_admin` bumped `85` → `86`, `director` bumped `81` → `82`.
+  - `tests/test_bootstrap.py::test_alembic_heads_helper_returns_single_head`
+    — head sentinel `head.startswith("0025_")` → `("0026_")`.
+  - `tests/test_migration_0025_actuals.py::test_alembic_head_is_0025_actuals`
+    — assertion `"0025_actuals"` → `"0026_ai_capture_costs_perm"`. Function
+    name retained.
+  - `tests/test_migration_0025_actuals.py::test_downgrade_upgrade_round_trip_preserves_schema`
+    — `alembic downgrade -1` → `alembic downgrade 0024_budgets`. With 0026
+    above 0025, a relative `-1` only walked back to 0025_actuals and left the
+    actuals table intact; targeting the explicit pre-0025 revision restores
+    round-trip semantics regardless of how many migrations land on top.
+  - `tests/test_patch_3.py::test_total_permission_count_is_81` — assertion
+    `85` → `86`. Function name retained.
+  - `tests/test_retro_wires.py::test_post_1_7_permission_baseline` —
+    assertion `85` → `86`. Trail comment extended with 2.5A + 2.5C
+    contributions.
+- Trail comments added above every changed assertion documenting the count
+  trail from each prompt that bumped it. Two of the seven cases
+  (`test_patch_3.py`, `test_retro_wires.py::test_post_1_7_permission_baseline`)
+  were not enumerated in the Build Pack §1 "Bonus scope" list but were
+  caught by §R5.1's "trust live failures over Build Pack paraphrase"
+  directive — same drift class as the rest.
+- No source code, migrations, permissions, seeds, or backend `app/` modules
+  modified. No new tests. Function-name renames deferred (out of scope per
+  Build Pack §2; polish entry added to Future_Tasks).
+- Local validation: pytest 799 passed / 0 failed / 0 errors; `yarn install
+  --frozen-lockfile` clean; `yarn build` clean; main bundle 425,218 bytes
+  gzipped (11,782-byte headroom under 437 kB I11 cap); Jest 151 passed /
+  33 suites; CI workflow YAML parses.
+
+
 ## Chat 21 — CI pipeline shipped (2026-05-18)
 
 **Anchor:** Future_Tasks §3 (open since Chat 14, 5 May 2026). RESOLVED.

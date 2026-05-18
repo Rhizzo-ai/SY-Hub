@@ -124,7 +124,12 @@ class TestMigration0025Schema:
     def test_alembic_head_is_0025_actuals(self, engine):
         with engine.connect() as c:
             head = c.execute(text("SELECT version_num FROM alembic_version")).scalar()
-        assert head == "0025_actuals", f"expected 0025_actuals, got {head!r}"
+        # Updated by Chat 22 (CI hardening): live head moved from
+        # "0025_actuals" to "0026_ai_capture_costs_perm" when migration
+        # 0026 landed in Chat 20. Function name retained — renaming is
+        # out of scope (see chat-22 §2 + Future_Tasks polish entry).
+        assert head == "0026_ai_capture_costs_perm", \
+            f"expected 0026_ai_capture_costs_perm, got {head!r}"
 
     def test_actuals_has_51_columns(self, engine):
         with engine.connect() as c:
@@ -281,7 +286,14 @@ class TestMigration0025Behaviours:
                                        "u": seed_refs["user_id"]})
 
     def test_downgrade_upgrade_round_trip_preserves_schema(self, engine):
-        """alembic downgrade -1; upgrade head — column count must round-trip."""
+        """alembic downgrade past 0025; upgrade head — column count must round-trip.
+
+        Chat 22 (CI hardening): live head moved to 0026_ai_capture_costs_perm,
+        so a relative `downgrade -1` only walks back to 0025_actuals and leaves
+        the actuals table in place. Target the explicit revision BEFORE 0025
+        (0024_budgets) so this test continues to validate the 0025 round-trip
+        regardless of how many migrations land on top of it.
+        """
         import subprocess
         cwd = "/app/backend"
         env = os.environ.copy()
@@ -291,13 +303,13 @@ class TestMigration0025Behaviours:
                 "SELECT COUNT(*) FROM information_schema.columns WHERE table_name='actuals'"
             )).scalar()
         assert before == 51
-        subprocess.run(["python", "-m", "alembic", "downgrade", "-1"],
+        subprocess.run(["python", "-m", "alembic", "downgrade", "0024_budgets"],
                        cwd=cwd, env=env, check=True, capture_output=True)
         with engine.connect() as c:
             mid = c.execute(text("""
                 SELECT COUNT(*) FROM information_schema.tables WHERE table_name='actuals'
             """)).scalar()
-        assert mid == 0, "actuals table should be gone after downgrade"
+        assert mid == 0, "actuals table should be gone after downgrade to 0024_budgets"
         subprocess.run(["python", "-m", "alembic", "upgrade", "head"],
                        cwd=cwd, env=env, check=True, capture_output=True)
         with engine.connect() as c:

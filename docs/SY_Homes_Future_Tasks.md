@@ -206,4 +206,46 @@ and `docs/chat-summaries/chat-21-closing.md`.
 
 ---
 
-## 6. (placeholder — future entries appended here)
+## 6. Test function names with stale literal numbers — polish
+
+- **Surfaced in**: Chat 22 (CI hardening, 2026-05-18)
+- **Severity**: P3 (cosmetic — assertions are correct; only the function
+  names are misleading)
+- **Description**: Three permission-count test function names carry literal
+  numbers that have drifted from their assertions:
+  - `tests/test_auth_rbac.py::TestAuthMe::test_me_super_admin_returns_87_permissions`
+    (asserts 86 as of Chat 22).
+  - `tests/test_auth_rbac.py::TestRoles::test_roles_returns_10_seeded_roles`
+    is fine (role count is stable at 10) — listed here only as the sibling
+    test class.
+  - `tests/test_migration_0025_actuals.py::TestMigration0025Schema::test_alembic_head_is_0025_actuals`
+    (asserts `0026_ai_capture_costs_perm` as of Chat 22).
+  - `tests/test_patch_3.py::TestPatch3Permissions::test_total_permission_count_is_81`
+    (asserts 86 as of Chat 22).
+
+  Chat 22 fixed every assertion but deliberately did not rename functions
+  (out of scope per Chat 22 Build Pack §2). Pytest discovers by file, not
+  by function name, so the divergence is purely cosmetic — but it makes the
+  test file harder to skim and future drift even harder to spot.
+
+- **Proposed resolution**: Single polish pass that does two things in
+  lockstep:
+  1. Rename each function to a count-agnostic style, e.g.
+     `test_me_super_admin_returns_seeded_permission_count`,
+     `test_total_permission_count_matches_catalogue`,
+     `test_alembic_head_is_current`.
+  2. Swap each hard-coded `assert total == 86` for
+     `assert total == len(PERMISSION_CATALOGUE)` (and analogous for the
+     alembic head, e.g. read from `alembic heads` via
+     `B._alembic_heads()`) so the assertions become self-updating and
+     don't drift again next time a migration or permission lands.
+
+  Touches no production code, no migrations, no seeds — only test files.
+  Single short prompt, half-session work.
+
+- **Owner / Target prompt**: Open. Pull when next test-drift episode
+  surfaces (cheap to absorb at the same time).
+
+---
+
+## 7. (placeholder — future entries appended here)

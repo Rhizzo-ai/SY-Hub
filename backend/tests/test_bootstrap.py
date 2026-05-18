@@ -213,7 +213,11 @@ def test_detect_db_state_unstamped(ephemeral_db: str):
 def test_alembic_heads_helper_returns_single_head():
     head = B._alembic_heads()
     assert head and "," not in head, f"expected single head, got {head!r}"
-    assert head.startswith("0025_"), f"unexpected head id: {head}"
+    # Head sentinel updated by Chat 22 (CI hardening): 0025_ → 0026_.
+    # Migration 0026_ai_capture_costs_perm landed in Chat 20.
+    # See chat-15-closing §3 — this sentinel is "part of any migration's
+    # bookkeeping" and must be bumped whenever the head moves.
+    assert head.startswith("0026_"), f"unexpected head id: {head}"
 
 
 # ----------------------------------------------------------------------

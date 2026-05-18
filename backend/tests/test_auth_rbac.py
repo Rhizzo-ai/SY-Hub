@@ -143,9 +143,15 @@ class TestAuthMe:
         assert response.status_code == 200
         data = response.json()
         assert data["is_super_admin"] is True
-        # 81 baseline + 2 from Prompt 2.2 (appraisals.submit + .view_financials)
-        # + 1 from Prompt 2.4A (budgets.admin) = 84.
-        assert len(data["permissions"]) == 85
+        # super_admin permission count history:
+        #   1.7 baseline:                                       81
+        #   + 2.2 (appraisals.submit, appraisals.view_financials): 83
+        #   + 2.4A (budgets.admin):                                84
+        #   + 2.5A (actuals.admin):                                85
+        #   + 2.5C (ai_capture.view_costs, mig 0026, chat-20):     86  ← current
+        # Function name retains "87" — renaming is out of scope (see
+        # chat-22 §2 + Future_Tasks polish entry).
+        assert len(data["permissions"]) == 86
         assert data["email"] == TEST_ADMIN_EMAIL
 
     def test_me_unauthenticated_returns_401(self):
@@ -187,16 +193,20 @@ class TestRoles:
         roles = response.json()
         assert len(roles) == 10
         role_perms = {r["code"]: r["permission_count"] for r in roles}
-        # Prompt 2.2: +2 new appraisal codes (submit + view_financials) → 83.
-        # Prompt 2.4A: +1 (budgets.admin) → 84.
-        # Prompt 2.5A: +1 (actuals.admin) → 85.
-        assert role_perms["super_admin"] == 85
-        # Patch #3: director loses 4 orphan grants (cost_codes.{create,edit,
-        # delete} + notifications.edit). notifications.view was already
-        # excluded by being ungranted. Prompt 2.2 adds 2 codes director gets.
-        # Prompt 2.4A: director gets budgets.admin (+1) → 80.
-        # Prompt 2.5A: director gets actuals.admin (+1) → 81.
-        assert role_perms["director"] == 81
+        # super_admin count history:
+        #   1.7 baseline:                                       81
+        #   + 2.2 (appraisals.submit, appraisals.view_financials): 83
+        #   + 2.4A (budgets.admin):                                84
+        #   + 2.5A (actuals.admin):                                85
+        #   + 2.5C (ai_capture.view_costs, mig 0026, chat-20):     86  ← current
+        assert role_perms["super_admin"] == 86
+        # director count history:
+        #   Patch #3 baseline (after losing 4 orphan grants):       77
+        #   + 2.2 (appraisals.submit, appraisals.view_financials):  79
+        #   + 2.4A (budgets.admin):                                 80
+        #   + 2.5A (actuals.admin):                                 81
+        #   + 2.5C (ai_capture.view_costs, mig 0026, chat-20):      82  ← current
+        assert role_perms["director"] == 82
         assert role_perms["project_manager"] >= 30
         assert role_perms["finance"] >= 25
         # 1.7: +system_config.view granted to all 10 roles.

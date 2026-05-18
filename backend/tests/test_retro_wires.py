@@ -318,6 +318,8 @@ class TestPermissionsCatalogue:
             # total was 81. Prompt 2.2 adds 2 new appraisal codes
             # (appraisals.submit + appraisals.view_financials) → 83.
             # Prompt 2.4A adds budgets.admin → 84.
-            assert total == 85
+            # Prompt 2.5A adds actuals.admin → 85.
+            # Prompt 2.5C / mig 0026 adds ai_capture.view_costs (chat-20) → 86.
+            assert total == 86
         finally:
             db.close()
