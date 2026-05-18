@@ -127,10 +127,11 @@ class TestMigration0025Schema:
             head = c.execute(text("SELECT version_num FROM alembic_version")).scalar()
         # Updated by Chat 22 (CI hardening): live head moved from
         # "0025_actuals" to "0026_ai_capture_costs_perm" when migration
-        # 0026 landed in Chat 20. Function name retained — renaming is
-        # out of scope (see chat-22 §2 + Future_Tasks polish entry).
-        assert head == "0026_ai_capture_costs_perm", \
-            f"expected 0026_ai_capture_costs_perm, got {head!r}"
+        # 0026 landed in Chat 20. Updated again by Chat 23 R1.3 when
+        # 0027 landed. Function name retained — renaming is out of
+        # scope (see chat-22 §2 + Future_Tasks polish entry).
+        assert head == "0027_default_line_items_backfill", \
+            f"expected 0027_default_line_items_backfill, got {head!r}"
 
     def test_actuals_has_51_columns(self, engine):
         with engine.connect() as c:
