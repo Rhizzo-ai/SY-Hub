@@ -17,6 +17,21 @@ Frontend / actuals / commitments / Xero are out of scope until later prompts.
 
 ## What's been implemented
 
+### 2026-05-18 — Chat 23 Build Pack A §R1 backend ✓ (STOP gate #2)
+- **R1.1 — Variance band update (commit `98ac673`).** `VARIANCE_AMBER_PCT` 5→0; `VARIANCE_RED_PCT` 15→10. `_classify_variance` operator flipped to use `>=` for Red. 6 new fence-post tests in `test_budgets_variance_bands.py` (-5/0/0.001/9.999/10/25 → Green/Green/Amber/Amber/Red/Red).
+- **R1.2 — Auto-create 4 default `budget_line_items` on every new `budget_line` (commit `d990bb3` initial + `ba25b65` fix).** `DEFAULT_LINE_ITEMS = ("Materials","Labour","Equipment","Subcontractor")` at `display_order` 0-3, `amount=0`. `_create_default_items` is idempotent (skips when line already has items). Wired into `create_line` (services/budget_lines.py) and `create_from_appraisal` (services/budgets.py). `new_version` intentionally does NOT call the helper — copies source items verbatim. 5 new tests in `test_budgets_default_items.py` covering constant, service-level create, idempotency, and new_version copy semantics.
+- **R1.3 — Migration `0027_default_line_items_backfill` (commit `2725bf1`).** Idempotent backfill: SELECT zero-item lines via LEFT JOIN; INSERT 4 defaults at amount=0. Emits a single `Seed_Run` audit row with `metadata.kind='data_backfill'` + row/item counters. Downgrade removes items matching the exact 4-label + amount=0 + display_order 0-3 shape. 4 tests in `test_migration_0027_backfill.py`. Build Pack §R1.3 spec slug was `0027_budget_line_items_backfill`; operator confirmed canonical name stays `0027_default_line_items_backfill` (one-char-class drift, no rename).
+- **R1.4 — `user_preferences` table + 6 endpoints (commit `09d3911`).** Migration `0028_user_preferences_table`: id/user_id/surface_key/name/payload JSONB/created_at/updated_at; FK users.id CASCADE; two partial unique indexes (`name IS NULL` slot = 1 current per user/surface; `name IS NOT NULL` slot = 1 named view per user/surface/name); `set_updated_at` trigger. Service `app/services/user_preferences.py` exposes get_current/set_current/list_views/get_view/create_view/update_view/delete_view with ConflictError/NotFoundError. Router `app/routers/user_preferences.py` mounts under `/api/v1/me/preferences/{surface_key}` with 6 endpoints: GET snapshot, PUT autosave (NOT audited), GET/POST/PUT/DELETE named views (audited Create/Update/Delete). 16 API tests + 3 migration smoke tests = 19 new passing.
+- **Test counts after R1 (sample):**
+  - `test_budgets.py` 76/76 passing
+  - `test_budgets_default_items.py` 5/5
+  - `test_budgets_variance_bands.py` 6/6
+  - `test_migration_0027_backfill.py` 4/4
+  - `test_migration_0028_user_preferences.py` 3/3
+  - `test_user_preferences_api.py` 16/16
+- **Alembic head:** `0028_user_preferences_table`.
+- **Currently at:** Build Pack STOP gate #2 — awaiting operator review before R2 (frontend code-split + TanStack Table install + Grid v2 build).
+
 ### 2026-05-18 — Chat 22 CI pipeline hardening ✓ CLOSED
 - **Anchor (Future_Tasks §3, open since Chat 14):** GitHub Actions CI pipeline (`.github/workflows/ci.yml`) iteratively hardened across 5 red runs to reach a 799/799 green state without depending on `backend/.env` or sandbox-specific absolute paths.
 - **Shipped fixes (cumulative):**
