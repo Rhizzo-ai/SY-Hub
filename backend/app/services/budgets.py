@@ -37,10 +37,13 @@ from app.services.budget_errors import (
 log = logging.getLogger(__name__)
 
 # ----------------------------------------------------------------------
-# B10: in-code variance thresholds. SystemConfig threshold columns deferred.
+# B10 / Chat 23 design Q2: in-code variance thresholds. SystemConfig
+# threshold columns deferred. Updated by Chat 23 Build Pack A R1.1
+# from the original 5/15 bands to 0/10 — any positive variance is
+# Amber; >=10% is Red.
 # ----------------------------------------------------------------------
-VARIANCE_AMBER_PCT = Decimal("5.000")     # > 5% over budget
-VARIANCE_RED_PCT = Decimal("15.000")      # > 15% over budget
+VARIANCE_AMBER_PCT = Decimal("0.000")     # > 0% over budget = amber
+VARIANCE_RED_PCT = Decimal("10.000")      # >= 10% over budget = red
 
 
 # ----------------------------------------------------------------------
@@ -153,13 +156,20 @@ def _load_budget_for_write(
 # Variance + summary recompute helpers
 # ----------------------------------------------------------------------
 def _classify_variance(variance_pct: Decimal) -> str:
-    """Map a positive-over-budget variance pct to Green/Amber/Red (B10).
+    """Classify a variance pct into Green/Amber/Red (design Q2, Chat 23).
 
-    Negative or zero variance (under or on budget) => Green.
+    Bands (Chat 23 Build Pack A R1.1):
+      - variance_pct <= 0  -> Green (on or under budget)
+      - variance_pct >= 10 -> Red
+      - otherwise (>0, <10) -> Amber
+
+    Lower-bound for Amber uses strict `>` so exactly 0 stays Green.
+    Upper-bound for Red uses `>=` so exactly 10 is Red. This makes the
+    bands unambiguous at fence-posts.
     """
     if variance_pct <= 0:
         return "Green"
-    if variance_pct > VARIANCE_RED_PCT:
+    if variance_pct >= VARIANCE_RED_PCT:
         return "Red"
     if variance_pct > VARIANCE_AMBER_PCT:
         return "Amber"

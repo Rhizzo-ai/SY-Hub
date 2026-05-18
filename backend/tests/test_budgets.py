@@ -632,16 +632,23 @@ class TestVarianceClassification:
         assert _classify_variance(Decimal("0")) == "Green"
 
     def test_below_amber_is_green(self):
+        # Chat 23 R1.1: bands flipped to 0/10. Anything strictly >0 is now
+        # at least Amber; only <=0 stays Green.
         from app.services.budgets import _classify_variance
-        assert _classify_variance(Decimal("4.5")) == "Green"
+        assert _classify_variance(Decimal("-0.001")) == "Green"
 
     def test_amber_band(self):
+        # Chat 23 R1.1: amber is now (0, 10). 14.999 used to be Amber under
+        # the old 5/15 bands and is now Red.
         from app.services.budgets import _classify_variance
+        assert _classify_variance(Decimal("4.5")) == "Amber"
         assert _classify_variance(Decimal("7")) == "Amber"
-        assert _classify_variance(Decimal("14.999")) == "Amber"
+        assert _classify_variance(Decimal("9.999")) == "Amber"
 
     def test_red_band(self):
+        # Chat 23 R1.1: red is >= 10 (was > 15).
         from app.services.budgets import _classify_variance
+        assert _classify_variance(Decimal("10")) == "Red"
         assert _classify_variance(Decimal("15.001")) == "Red"
         assert _classify_variance(Decimal("100")) == "Red"
 
