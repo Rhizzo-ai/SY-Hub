@@ -26,7 +26,7 @@ load_dotenv("/app/backend/.env")
 DATABASE_URL = os.environ["DATABASE_URL"]
 
 
-DEFAULT_LABELS = ("Materials", "Labour", "Plant & Subcontractors", "Other")
+DEFAULT_LABELS = ("Materials", "Labour", "Equipment", "Subcontractor")
 
 
 @pytest.fixture(scope="module")
@@ -152,6 +152,8 @@ class TestMigration0027Schema:
                 SELECT metadata_json
                 FROM audit_log
                 WHERE resource_type='migration' AND resource_id=:rid
+                ORDER BY created_at DESC
+                LIMIT 1
             """), {"rid": rid}).first()
         assert row is not None, "0027 audit row not found"
         meta = row.metadata_json

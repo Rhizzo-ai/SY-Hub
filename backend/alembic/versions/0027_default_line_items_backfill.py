@@ -4,11 +4,11 @@ Revision ID: 0027_default_line_items_backfill
 Revises: 0026_ai_capture_costs_perm
 
 Companion to Chat 23 Build Pack A R1.2: every NEW BudgetLine now ships
-with 4 default BudgetLineItems (Materials, Labour, Plant & Subcontractors,
-Other) at display_order 0..3 with amount=0.00. This migration backfills
-the SAME 4 defaults onto any pre-existing line that has zero items so
-the grid invariant ("every line renders 4+ rows") holds across the whole
-database, not just lines created after R1.2 landed.
+with 4 default BudgetLineItems (Materials, Labour, Equipment,
+Subcontractor) at display_order 0..3 with amount=0.00. This migration
+backfills the SAME 4 defaults onto any pre-existing line that has zero
+items so the grid invariant ("every line renders 4+ rows") holds across
+the whole database, not just lines created after R1.2 landed.
 
 Idempotent:
   - Lines that already have items are skipped wholesale.
@@ -50,8 +50,8 @@ MIGRATION_AUDIT_NAMESPACE = uuid.UUID("3a14a3e0-1f2c-4f8a-9c5d-bb1f6f3e0027")
 DEFAULT_LINE_ITEMS = (
     "Materials",
     "Labour",
-    "Plant & Subcontractors",
-    "Other",
+    "Equipment",
+    "Subcontractor",
 )
 
 
@@ -124,6 +124,6 @@ def downgrade() -> None:
         WHERE amount = 0
           AND display_order BETWEEN 0 AND 3
           AND description IN (
-              'Materials', 'Labour', 'Plant & Subcontractors', 'Other'
+              'Materials', 'Labour', 'Equipment', 'Subcontractor'
           )
     """)

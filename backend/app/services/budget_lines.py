@@ -36,7 +36,9 @@ log = logging.getLogger(__name__)
 
 # ----------------------------------------------------------------------
 # Chat 23 R1.2 — default 4 budget_line_items injected on every new line.
-# Order is stable: Materials, Labour, Plant & Subcontractors, Other.
+# Order is stable: Materials, Labour, Equipment, Subcontractor.
+# These are description-based conventions, NOT enforced types — users
+# can rename/delete/add freely after creation.
 # Amounts are 0.00 so the parent line's `original_budget` is the
 # accountant-set total and items are placeholders for breakdown entry.
 # Also consumed by:
@@ -46,18 +48,30 @@ log = logging.getLogger(__name__)
 DEFAULT_LINE_ITEMS: tuple[str, ...] = (
     "Materials",
     "Labour",
-    "Plant & Subcontractors",
-    "Other",
+    "Equipment",
+    "Subcontractor",
 )
 
 
 def _create_default_items(db: Session, line: BudgetLine) -> list[BudgetLineItem]:
     """Insert the 4 default items for a freshly-created line.
 
+    Idempotent guard: if the line already has ANY items, this is a no-op
+    and returns an empty list. This protects against double-creation
+    when callers re-flush or test fixtures re-seed.
+
     Caller is responsible for `db.flush()`. We do not flush here so the
     caller can batch flushes when seeding many lines (e.g. create_from_
-    appraisal). Returns the list of created BudgetLineItem objects.
+    appraisal). Returns the list of created BudgetLineItem objects (empty
+    on the idempotent-skip path).
     """
+    existing = db.scalar(
+        select(BudgetLineItem)
+        .where(BudgetLineItem.budget_line_id == line.id)
+        .limit(1)
+    )
+    if existing is not None:
+        return []
     items: list[BudgetLineItem] = []
     for idx, label in enumerate(DEFAULT_LINE_ITEMS):
         item = BudgetLineItem(

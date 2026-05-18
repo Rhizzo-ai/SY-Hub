@@ -1773,7 +1773,7 @@ class TestLineItems:
         reloaded = db.get(BudgetLine, line_id)
         assert reloaded is not None
         # Chat 23 R1.2: every new line auto-creates 4 default items
-        # (Materials, Labour, Plant & Subcontractors, Other). Our
+        # (Materials, Labour, Equipment, Subcontractor). Our
         # `create_item(... description="rel-test" ...)` adds a 5th.
         assert len(reloaded.items) == 5
         descs = [i.description for i in reloaded.items]
