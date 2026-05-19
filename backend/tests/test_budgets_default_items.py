@@ -327,8 +327,18 @@ class TestNewVersionPreservesSourceItems:
             f"got {copied} expected {source_items}"
         )
 
+        # Release the FOR UPDATE lock held by db_session BEFORE the
+        # synthetic_draft_budget teardown tries to DELETE FROM budgets —
+        # otherwise pytest fixture finalisers (LIFO order) deadlock the
+        # next test module.
+        db_session.rollback()
+
         # Cleanup: drop the new budget so the synthetic_draft_budget
-        # teardown can reclaim the chain.
+        # teardown can reclaim the chain. Note: rolling back db_session
+        # above ALSO undoes the new_version writes, so new_budget no
+        # longer exists in committed state. The DELETE below is
+        # defensive in case a future refactor commits the new version
+        # mid-test.
         with engine.begin() as c:
             c.execute(text("""
                 DELETE FROM budget_line_items

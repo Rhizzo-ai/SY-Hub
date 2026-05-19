@@ -219,9 +219,11 @@ def test_alembic_heads_helper_returns_single_head():
     # Migration 0026_ai_capture_costs_perm landed in Chat 20.
     # Bumped again by Chat 23 R1.3: 0026_ → 0027_ when the default-line-
     # items backfill migration landed.
+    # Bumped again by Chat 23 R1.4: 0027_ → 0028_ when the
+    # user_preferences table migration landed.
     # See chat-15-closing §3 — this sentinel is "part of any migration's
     # bookkeeping" and must be bumped whenever the head moves.
-    assert head.startswith("0027_"), f"unexpected head id: {head}"
+    assert head.startswith("0028_"), f"unexpected head id: {head}"
 
 
 # ----------------------------------------------------------------------

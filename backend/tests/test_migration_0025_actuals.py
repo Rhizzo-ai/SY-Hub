@@ -128,10 +128,11 @@ class TestMigration0025Schema:
         # Updated by Chat 22 (CI hardening): live head moved from
         # "0025_actuals" to "0026_ai_capture_costs_perm" when migration
         # 0026 landed in Chat 20. Updated again by Chat 23 R1.3 when
-        # 0027 landed. Function name retained — renaming is out of
-        # scope (see chat-22 §2 + Future_Tasks polish entry).
-        assert head == "0027_default_line_items_backfill", \
-            f"expected 0027_default_line_items_backfill, got {head!r}"
+        # 0027 landed, and again by Chat 23 R1.4 when 0028 landed.
+        # Function name retained — renaming is out of scope (see
+        # chat-22 §2 + Future_Tasks polish entry).
+        assert head == "0028_user_preferences_table", \
+            f"expected 0028_user_preferences_table, got {head!r}"
 
     def test_actuals_has_51_columns(self, engine):
         with engine.connect() as c:
