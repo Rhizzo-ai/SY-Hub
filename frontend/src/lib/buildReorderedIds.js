@@ -1,12 +1,14 @@
 /**
- * Pure handler — extracted from BudgetLinesGrid (§R6.3 H8 fix) so it
- * can be unit-tested with zero React / dnd-kit / shadcn imports.
+ * Pure handler — originally extracted from the v1 BudgetLinesGrid
+ * (§R6.3 H8 fix) so it could be unit-tested with zero
+ * React / dnd-kit / shadcn imports.
  *
  * Returns the new ordered id array from a dnd-kit-style DragEndEvent,
  * or `null` when nothing changed.
  *
- * Single source of truth — `BudgetLinesGrid.jsx` re-exports this for
- * back-compat and consumes it directly.
+ * Now consumed by `grid/BudgetGridV2Desktop.jsx::SortableLineRowBody`
+ * — the v1 grid was removed in Chat 23 §R10 G38, but this helper
+ * remains the single source of truth for the reorder transform.
  */
 import { arrayMove } from '@dnd-kit/sortable';
 

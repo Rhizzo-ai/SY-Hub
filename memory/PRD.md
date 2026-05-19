@@ -17,6 +17,29 @@ Frontend / actuals / commitments / Xero are out of scope until later prompts.
 
 ## What's been implemented
 
+### 2026-05-19 — Chat 23 Build Pack A CLOSED ✓ (R1–R10 complete · 38/39 acceptance gates · 1 documented partial)
+- **R9/R10 closure:** All R-sections shipped, full test suites green at close (backend **843**, Jest **250**), bundle main **395.1 kB** (cap 437 kB, headroom 41.9 kB), permissions=86, roles=10, alembic head `0028_user_preferences_table`.
+- **G38 partial:** v1 `BudgetLinesGrid.jsx` + `SortableLineRow.jsx` deleted; `LineItemsPanel.jsx` survives because it's still mounted by `LineDrawer.jsx` for the items-tab focus contract. Refactor deferred to Future_Tasks §13 (P2).
+- **G39:** `/app/docs/chat-summaries/chat-23-closing.md` written — full gate-by-gate accounting + deferral list.
+- **Operational debt picked up:** missing `/root/.emergent/on-restart.sh` reinstalled with Step-8 re-seed extension (eliminated the recycle-data-loss class of issue). MFA role-level enforcement documented in `test_credentials.md`. R7 seed pollution workflow documented.
+- **Deferred (out of Build Pack A):** Playwright E2E adaptation (Build Pack A-followup), mobile shell rework (Future_Tasks §12, P1), `LineItemsPanel.jsx` deletion (§13, P2), `/api` vs `/api/v1` audit closure (§11, P1).
+- **Currently:** Build Pack A is mergeable on operator signal.
+
+### 2026-05-19 — Chat 23 Build Pack A §R8 Mobile read-only card list ✓ (STOP gate #9 partial: functional ✓, shell-UX inadequate → Future_Tasks §12)
+- **R8.1 `BudgetGridMobileReadOnly`** (full replacement of R3 stub): stacked header tiles (new `stacked` prop on `BudgetGridHeaderTiles`) + search input (only mobile filter) + card list rendering code + description + current budget + variance badge. Empty-state for zero matches.
+- **R8.2 `MobileLineDetailDrawer`**: bottom-anchored `Sheet`, full-viewport. All line fields READ-ONLY (Original/Current/Approved changes/Actuals/Committed/FFC/FTC/Variance/Variance %), sensitive fields gated by `budgets.view_sensitive`. **Notes EDITABLE on mobile** (NotesCell reused with `canEdit = budgets.edit perm`). Per-line transaction drilldown reused (POs stub + Variations stub + Bills live).
+- **Explicit NON-features pinned by tests:** NO bulk actions on mobile · NO toolbar (column-visibility/saved-views/presets absent) · NO drilldown row-expand in the list (transactions only inside the drawer).
+- **Tests:** Jest 235 → **250** (+15: routing, structure, search, drawer flow, Notes editability gates, sensitive-field gating).
+- **Bundle:** main unchanged 395.1 kB · budgets chunk 22.54 → **23.89 kB gz** (+1.35 kB). 41.9 kB headroom.
+- **STOP gate #9 outcome:** functionally complete, but operator flagged the surrounding shell (sidebar dominates, no dismiss, content cramped) — logged as Future_Tasks §12, dedicated build pack sized after R10.
+
+### 2026-05-19 — Chat 23 Build Pack A §R7.5 Path-prefix drift audit ✓
+- **Fixed three silent-404 callers** that the §R7 spot-check exposed: `useCostCodes` (was `/v1/projects/.../cost-codes`), `useEntities` in `PromoteForm.jsx`, `useProjects` in `ProjectPicker.jsx`. All three correctly route to `/api/...` (no `/v1/`) — confirmed against backend mount table in `server.py:138-160`.
+- **`buildCostCodeMap` keyed by `cost_code_id`** (not `id`) so the FK in `budget_lines.cost_code_id` matches the lookup. Backward-compatible fallback to `id` for minimal test fixtures.
+- **CSV cost-code resolution** (regression caught by operator spot-check): `buildCsvText` takes `costCodeMap` and special-cases `cost_code` column (TanStack `accessorFn` form ≠ `accessorKey`, so the previous fall-through emitted blanks).
+- **Regression pins:** URL contract per fixed hook (positive + hard negative on `/v1/`), buildCostCodeMap key contract, CSV cost-code FK→code resolution, on-screen cell rendering pin (`BudgetGridV2-CostCodeRender.test.jsx`).
+- **Future_Tasks §11** logged with full audit survey (P1 — silent 404 with empty-fallback is highest-risk bug class).
+
 ### 2026-05-19 — Chat 23 Build Pack A §R7 Bulk delete + CSV export ✓ (STOP gate #8)
 - **R7.1 — Row selection** already line-only (groups + items not selectable) per the R3 `enableRowSelection` predicate. Confirmed no group/item rows render the select checkbox.
 - **R7.2 — `BulkActionsBar.jsx`** new file. Renders between header tiles and toolbar when ≥1 line selected. Shows count + Export CSV + Delete selected + Clear. Auto-hides Delete when `canEdit=false` OR `editable=false` (Locked/Closed/Superseded). Over-cap warning + disabled Delete when >100 selected.

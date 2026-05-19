@@ -379,4 +379,32 @@ and `docs/chat-summaries/chat-21-closing.md`.
 - **Severity.** P1. This bug class produces silent 404s with empty-fallback semantics — exactly the kind of failure that ships to operator without triggering a test failure. The audit MUST land before R8 to avoid another spot-check derailment.
 - **Surfaced in.** Chat 23 §R7 operator spot-check (this session).
 
-## 12. (placeholder — future entries appended here)
+## 12. Mobile shell rework — full navigation pass (Phase 2 backlog, **P1**, dedicated build pack)
+
+- **Scope.** This is NOT a Chat 23 fix. R8 (mobile read-only budget card list + drawer) is **functionally complete** — stacked tiles, card list, drawer, editable Notes, sensitive-field gating, search-only filter — all pinned by 15 Jest tests and verified on real device. But the surrounding *shell* makes the surface unusable on mobile in practice:
+  - Sidebar dominates the viewport with no collapse / off-canvas affordance.
+  - No dismiss control for the sidebar on mobile — content area gets ~30% of viewport width.
+  - Top nav + sidebar + header tiles + search + card list stack to >100vh before the first line is reachable.
+  - Other surfaces (Projects list, Cost Codes, Appraisals, System Config, etc.) inherit the same shell — fixing in any one screen is wasted work.
+- **What lands in this build pack.**
+  - Collapsible / off-canvas sidebar (Sheet pattern on mobile, persistent on desktop).
+  - Mobile-first top-nav: hamburger, tenant chip compresses to icon, user menu collapses.
+  - Viewport audit across every authenticated surface: Projects, Cost Codes, Appraisals list/detail, Budgets list/detail (mobile + desktop), System Config, SDLT, Appraisal Defaults, Users, Roles, Permissions.
+  - Touch-target sweep — ensure every interactive control is ≥44px (current admin tables are dense).
+  - Responsive table fallback strategy — adopt the §R8 card-list pattern as a reusable primitive (`<ResponsiveListOrTable>` or similar).
+  - Keyboard / focus-trap behaviour on Sheet-style drawers (already correct for the §R8 line drawer; needs audit elsewhere).
+- **Why dedicated.**
+  - Chat 23's Build Pack scoped Budgets surface only. Mobile-shell is cross-cutting.
+  - Sizing this in Chat 23 R9/R10 would compromise the audit checklist of those gates AND defer Chat 23 closure indefinitely.
+  - The shell is owned by `App.jsx` + the top-level layout, NOT by `BudgetGridV2`. Different code, different review focus, different testing strategy (visual regression / Percy-style snapshots rather than DOM assertions).
+- **Sizing.** Estimated 2-3 day build pack (~1 day shell rework, 1 day per-surface audit, 0.5 day touch-target sweep). Schedule **after R10 of Chat 23 closes**.
+- **Surfaced in.** Chat 23 STOP gate #9 operator spot-check — "Functional bits work… mobile experience as a whole is poor — sidebar dominates, can't dismiss it, content cramped."
+
+## 13. LineDrawer → LineItemsBreakdown swap (Chat 23 G38 partial closure)
+
+- **What.** Chat 23 §R10 acceptance gate G38 required deletion of three v1 files: `BudgetLinesGrid.jsx`, `SortableLineRow.jsx`, `LineItemsPanel.jsx`. The first two are gone (clean — only `lib/buildReorderedIds.js` referenced them in a doc comment, updated). **`LineItemsPanel.jsx` survives** because it's still actively mounted by `components/budgets/LineDrawer.jsx:436` (the line-field edit drawer that opens from the row-actions menu on desktop).
+- **Why deferred.** A swap is mechanically simple — replace the `<LineItemsPanel>` mount with `<LineItemsBreakdown line={line} budget={budget} canEdit={canEdit} />` — but the existing LineItemsPanel carries an `initialFocus` prop used by LineDrawer to scroll/focus the items section when opened via `focus='items'`. LineItemsBreakdown doesn't expose an equivalent. Adding it touches dnd-kit ordering + scroll-into-view logic + a few tests, which falls outside Chat 23 closing scope (per operator: "Don't fix it piecemeal inside this Build Pack" — original guidance was about mobile shell but the principle applies to ANY scope creep at closing).
+- **Sizing.** ~2 hours: add `initialFocus` to LineItemsBreakdown, swap the mount in LineDrawer, run BudgetLineDrawer test suite, delete LineItemsPanel.jsx, confirm bundle unchanged. **P2** — purely a hygiene task; no functional gap, no user-visible behaviour change.
+- **Surfaced in.** Chat 23 §R10 G38 acceptance review.
+
+## 14. (placeholder — future entries appended here)

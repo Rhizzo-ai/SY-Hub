@@ -1,5 +1,5 @@
 /**
- * Pure-fn tests — components/budgets/BudgetLinesGrid.buildReorderedIds
+ * Pure-fn tests — lib/buildReorderedIds
  * (Build Pack §R8.4 TestReorder + H8 fix).
  *
  * Tests the pure handler extracted in §R6.3 — no DOM-level drag,
