@@ -18,12 +18,14 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 
 async function fetchCostCodes(projectId, signal) {
-  const { data } = await api.get(`/v1/projects/${projectId}/cost-codes`, {
+  // Backend: cost_codes_router is mounted directly under /api (NOT /api/v1).
+  // The list endpoint returns `ProjectCostCodeRead` rows whose `id` is
+  // the project_cost_codes mapping id — the FK on budget_lines is
+  // `cost_code_id`, which is a separate field on this payload.
+  const { data } = await api.get(`/projects/${projectId}/cost-codes`, {
     signal,
   });
-  // Backend returns a bare array (verified against
-  // backend/app/routers/cost_codes.py — list endpoint produces []
-  // not {items:[]}). Defensive double-shape.
+  // Defensive double-shape (bare array vs {items: []}).
   if (Array.isArray(data)) return data;
   return data?.items ?? [];
 }
@@ -38,13 +40,19 @@ export function useCostCodes(projectId) {
 }
 
 /**
- * Helper: build a `Map<id, costCode>` for O(1) label lookups in
- * grids. Memoised at call-site (see §R6 grid header).
+ * Helper: build a `Map<cost_code_id, costCodeRow>` for O(1) label
+ * lookups in grids. Keyed by `cost_code_id` (NOT row.id) because the
+ * `ProjectCostCodeRead` payload's `id` is the project_cost_codes
+ * mapping row id, while `BudgetLine.cost_code_id` references the
+ * underlying `cost_codes.id`. Memoised at call-site (see §R6 grid).
  */
 export function buildCostCodeMap(rows) {
   const m = new Map();
   for (const row of rows ?? []) {
-    if (row && row.id) m.set(row.id, row);
+    // Test fixtures pass minimal `{ id, code, name }` shapes (no
+    // cost_code_id) — fall back to `id` so existing tests still pass.
+    const key = row?.cost_code_id ?? row?.id;
+    if (key) m.set(key, row);
   }
   return m;
 }
