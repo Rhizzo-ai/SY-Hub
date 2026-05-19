@@ -17,6 +17,32 @@ Frontend / actuals / commitments / Xero are out of scope until later prompts.
 
 ## What's been implemented
 
+### 2026-05-19 — Chat 23 Build Pack A §R3 BudgetGridV2 ✓ (STOP gate #4)
+- **R3.9b backend** (`app/routers/budgets.py`): `_attach_provisional_allocation(db, budget, include_sensitive)` computes per-line `appraisal.gdv_total / len(lines)` 2dp; emitted as `_allocated_sale_price_provisional` on every line ONLY when `budgets.view_sensitive`. Underscore-prefix = "computed, not stored". Source field = `gdv_total` (no literal `sale_price` column exists). 4 new tests passing.
+- **R3.1 component tree** — 12 new files under `frontend/src/components/budgets/grid/`:
+  - `BudgetGridV2.jsx` — top-level (mobile/desktop chooser).
+  - `BudgetGridV2Desktop.jsx` — TanStack Table + filter→group→sort pipeline + drag-reorder (sort-gated).
+  - `BudgetGridMobileReadOnly.jsx` — R8 stub (card list).
+  - `BudgetGridToolbar.jsx` — 5 filters (search, categories, variance band, only-actuals, only-variance) + views menu + column toggle.
+  - `BudgetGridHeaderTiles.jsx` — 5 totals (3 hide for non-sensitive).
+  - `BudgetGridColumns.jsx` — 12 cols, 6 default-visible; Profit/Margin conditional on `view_sensitive`.
+  - `VarianceCell.jsx`, `MoneyCell.jsx`, `NotesCell.jsx`.
+  - `ViewPresetsDropdown.jsx` — Quick/Standard/Full/Profit (Profit hidden if not sensitive).
+  - `ColumnVisibilityMenu.jsx`.
+  - `SORT_KEY_MAP.js` — id→backend translation + `computedLineValue` for 3 synthetic columns. Dev-mode `console.warn` on miss.
+- **R3.5 grouping** — new `lib/budgetCategoryGroup.js` with 9-prefix `CATEGORY_BY_PREFIX`.
+- **R3.6 default expansion** — categories open on first render; items closed.
+- **R3.4 heat-map** — emerald/amber/rose semantic colours; brand `sy-teal`/`sy-orange` NOT used for variance (operator brand-convention check ✓).
+- **R3.8 sort + drag-reorder** — TanStack sort applied via `SORT_KEY_MAP`; drag-reorder kept from v1 and disabled when `sorting.length > 0`.
+- **R3.9 gating** — `_allocated_sale_price_provisional` stripped from non-sensitive responses; Profit/Margin columns aren't even created for those users.
+- **Inline edit** — Notes ONLY (Q7). All other field edits route through the kept-from-v1 `LineDrawer`.
+- **Wiring** — `pages/projects/BudgetDetail.jsx` swaps `BudgetLinesGrid` → `BudgetGridV2`.
+- **Bundle:** main 394.97 kB gz (+0.17 over R2), budgets chunk 16.97 kB gz (+4.68). Cap 437 kB. Headroom **42 kB** preserved.
+- **Tests:**
+  - Backend 833 → **837** (+4 R3.9b cases).
+  - Frontend Jest 151 → **172** (+21: VarianceCell 5 / budgetCategoryGroup 7 / SORT_KEY_MAP 8 + the original 1).
+- **Currently at:** STOP gate #4 — awaiting operator review before R4 (per-line drilldown: BillsSection live, POs/Variations stubs).
+
 ### 2026-05-19 — Chat 23 Build Pack A §R2 frontend code-split ✓ (STOP gate #3)
 - **Pre-flight verified:**
   - Full backend pytest run: **833 passed / 0 failed / 0 errors / 122.86s** (post fresh bootstrap; the prior session's ~93 errors were stale-state artifacts from a broken prior bootstrap, not real regressions).
