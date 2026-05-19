@@ -265,4 +265,21 @@ else
     log "skipping supervisorctl start backend (bootstrap rc=${rc})"
 fi
 
+# 8. Re-seed development demo data (Chat 23 §R7 spot-check fixture).
+#    Idempotent: seed_r7_spotcheck.sh wipes its own project's prior state
+#    and re-creates from scratch. Runs ONLY when bootstrap succeeded AND
+#    the script is present (production-side this directory wouldn't ship
+#    a demo seeder, so the check keeps prod-safe behaviour). Failures
+#    here log a warning but do NOT change rc — demo data going missing
+#    must NOT block the backend serving traffic.
+if [[ "${rc}" -eq 0 ]] && [[ -x /app/scripts/seed_r7_spotcheck.sh ]]; then
+    log "step=seed_r7_spotcheck running /app/scripts/seed_r7_spotcheck.sh"
+    if sudo bash /app/scripts/seed_r7_spotcheck.sh > /tmp/seed_r7.log 2>&1; then
+        log "step=seed_r7_spotcheck result=ok"
+    else
+        log "step=seed_r7_spotcheck result=WARN seed failed (rc=$?) — see /tmp/seed_r7.log"
+        log "(continuing — demo data is not a release-blocker)"
+    fi
+fi
+
 exit "${rc}"
