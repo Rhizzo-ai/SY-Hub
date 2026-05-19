@@ -1,19 +1,18 @@
 /**
- * ViewPresetsDropdown — Chat 23 R3.3.
+ * ViewPresetsDropdown — Chat 23 R3.3 + R6.4 (saved views CRUD).
  *
- * 4 starter presets (Quick / Standard / Full / Profit). Saved-views
- * CRUD lands in R6 — for R3 this dropdown only exposes the 4 starters
- * plus a placeholder "Saved views — coming in R6" footer row.
- *
- * The Profit preset is hidden from the menu when the user lacks
- * `budgets.view_sensitive` because the profit/margin columns don't
- * exist for them.
+ * Renders:
+ *   - 4 starter presets (Quick / Standard / Full / Profit)
+ *     Profit hidden when !canViewSensitive.
+ *   - User's saved views (R6) — each can be applied; "Save current
+ *     view…" footer opens SaveViewDialog; "Manage saved views…"
+ *     opens ManageViewsDialog.
  */
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem,
   DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { ChevronDown } from 'lucide-react';
+import { ChevronDown, Plus, Settings2 } from 'lucide-react';
 import { INITIAL_COLUMN_VISIBILITY } from './BudgetGridColumns';
 
 export const VIEW_PRESETS = {
@@ -64,7 +63,10 @@ export const VIEW_PRESETS = {
   },
 };
 
-export function ViewPresetsDropdown({ canViewSensitive, onApplyPreset }) {
+export function ViewPresetsDropdown({
+  canViewSensitive, onApplyPreset,
+  savedViews = [], onApplyView, onOpenSaveView, onOpenManageViews,
+}) {
   const presetNames = ['Quick', 'Standard', 'Full'];
   if (canViewSensitive) presetNames.push('Profit');
 
@@ -87,10 +89,42 @@ export function ViewPresetsDropdown({ canViewSensitive, onApplyPreset }) {
             {name}
           </DropdownMenuItem>
         ))}
+
         <DropdownMenuSeparator />
-        <DropdownMenuLabel className="text-xs text-slate-400">
-          Saved views — R6
-        </DropdownMenuLabel>
+        <DropdownMenuLabel>Saved views</DropdownMenuLabel>
+        {savedViews.length === 0 ? (
+          <DropdownMenuItem
+            disabled
+            className="text-xs text-slate-400"
+            data-testid="bg2-saved-views-empty"
+          >
+            (none yet)
+          </DropdownMenuItem>
+        ) : (
+          savedViews.map((view) => (
+            <DropdownMenuItem
+              key={view.id}
+              onClick={() => onApplyView?.(view)}
+              data-testid={`bg2-saved-view-${view.name}`}
+            >
+              {view.name}
+            </DropdownMenuItem>
+          ))
+        )}
+
+        <DropdownMenuSeparator />
+        <DropdownMenuItem
+          onClick={() => onOpenSaveView?.()}
+          data-testid="bg2-open-save-view"
+        >
+          <Plus size={14} className="mr-2" /> Save current view…
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          onClick={() => onOpenManageViews?.()}
+          data-testid="bg2-open-manage-views"
+        >
+          <Settings2 size={14} className="mr-2" /> Manage saved views…
+        </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
   );

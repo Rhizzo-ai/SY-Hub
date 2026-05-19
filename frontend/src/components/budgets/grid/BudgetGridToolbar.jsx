@@ -32,6 +32,7 @@ const BAND_CLASS = {
 export function BudgetGridToolbar({
   filters, onFiltersChange, table,
   canViewSensitive, onApplyPreset,
+  savedViews, onApplyView, onOpenSaveView, onOpenManageViews,
 }) {
   // Debounce only the search box (200ms). Other filters apply
   // immediately because they're click-driven, not type-driven.
@@ -156,6 +157,10 @@ export function BudgetGridToolbar({
         <ViewPresetsDropdown
           canViewSensitive={canViewSensitive}
           onApplyPreset={onApplyPreset}
+          savedViews={savedViews}
+          onApplyView={onApplyView}
+          onOpenSaveView={onOpenSaveView}
+          onOpenManageViews={onOpenManageViews}
         />
         {table && <ColumnVisibilityMenu table={table} />}
       </div>

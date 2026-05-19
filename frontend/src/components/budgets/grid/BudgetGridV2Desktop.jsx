@@ -12,7 +12,7 @@
  *
  * Mobile users get BudgetGridMobileReadOnly instead (R8).
  */
-import { useMemo, useState, Fragment } from 'react';
+import { useMemo, useState, useEffect, useRef, Fragment } from 'react';
 import {
   flexRender, getCoreRowModel, getExpandedRowModel,
   getSortedRowModel, useReactTable,
@@ -42,10 +42,18 @@ import { LineDrawer } from '../LineDrawer';
 import { BudgetGridToolbar } from './BudgetGridToolbar';
 import { BudgetGridHeaderTiles } from './BudgetGridHeaderTiles';
 import { BudgetGridDrilldown } from './BudgetGridDrilldown';
+import { SaveViewDialog } from './SaveViewDialog';
+import { ManageViewsDialog } from './ManageViewsDialog';
 import {
   makeColumns, INITIAL_COLUMN_VISIBILITY,
 } from './BudgetGridColumns';
 import { SORT_KEY_MAP, computedLineValue } from './SORT_KEY_MAP';
+import {
+  useUserPreferences, useSetCurrentPreference,
+} from '@/hooks/userPreferences';
+
+const SURFACE_KEY = 'budgets.grid.v2';
+const AUTOSAVE_DEBOUNCE_MS = 500;
 
 function applyFilters(lines, filters, costCodeMap) {
   return lines.filter((line) => {
@@ -188,6 +196,78 @@ export function BudgetGridV2Desktop({ budget, projectId }) {
   const [columnOrder, setColumnOrder] = useState([]);
   const [rowSelection, setRowSelection] = useState({});
 
+  // ----- R6: user_preferences hydration + autosave ---------------------
+  // Hydration policy: on first snapshot fetch, if `current.payload`
+  // is non-empty, apply it (column visibility / order / sorting /
+  // filters). Otherwise keep the Standard preset defaults.
+  // Hydration runs ONCE per mount — a refetch must not clobber the
+  // user's in-flight edits.
+  const prefsQuery = useUserPreferences(SURFACE_KEY);
+  const setCurrentMut = useSetCurrentPreference(SURFACE_KEY);
+  const hydratedRef = useRef(false);
+  const autosaveTimer = useRef(null);
+
+  useEffect(() => {
+    if (hydratedRef.current) return;
+    if (prefsQuery.isLoading) return;
+    hydratedRef.current = true;
+    const payload = prefsQuery.data?.current;
+    if (payload && typeof payload === 'object'
+        && Object.keys(payload).length > 0) {
+      if (payload.columnVisibility) {
+        setColumnVisibility({
+          ...INITIAL_COLUMN_VISIBILITY, ...payload.columnVisibility,
+        });
+      }
+      if (Array.isArray(payload.columnOrder)) {
+        setColumnOrder(payload.columnOrder);
+      }
+      if (Array.isArray(payload.sorting)) setSorting(payload.sorting);
+      if (payload.filters) {
+        setFilters((f) => ({ ...f, ...payload.filters }));
+      }
+    }
+    // We deliberately depend on the loading flag so the effect re-runs
+    // exactly once when the snapshot lands. After that hydratedRef
+    // gates further runs.
+  }, [prefsQuery.isLoading, prefsQuery.data]);
+
+  // Autosave: any change to visibility / order / sorting / filters
+  // schedules a debounced PUT. Rapid changes collapse to one call.
+  useEffect(() => {
+    if (!hydratedRef.current) return; // don't fire during initial hydration
+    clearTimeout(autosaveTimer.current);
+    autosaveTimer.current = setTimeout(() => {
+      setCurrentMut.mutate({
+        columnVisibility, columnOrder, sorting, filters,
+      });
+    }, AUTOSAVE_DEBOUNCE_MS);
+    return () => clearTimeout(autosaveTimer.current);
+    // setCurrentMut is stable across renders.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [columnVisibility, columnOrder, sorting, filters]);
+
+  // ----- R6: saved-view dialogs ----------------------------------------
+  const [saveOpen, setSaveOpen] = useState(false);
+  const [manageOpen, setManageOpen] = useState(false);
+  const savedViews = prefsQuery.data?.views ?? [];
+
+  function applySavedView(view) {
+    const p = view.payload ?? {};
+    setColumnVisibility(
+      p.columnVisibility
+        ? { ...INITIAL_COLUMN_VISIBILITY, ...p.columnVisibility }
+        : INITIAL_COLUMN_VISIBILITY,
+    );
+    setColumnOrder(Array.isArray(p.columnOrder) ? p.columnOrder : []);
+    setSorting(Array.isArray(p.sorting) ? p.sorting : []);
+    setFilters({
+      search: '', categories: [], varianceBand: null,
+      onlyWithActuals: false, onlyWithVariance: false,
+      ...(p.filters ?? {}),
+    });
+  }
+
   // ----- Pipeline: filter → group → sort -----
   const rawLines = budget.lines ?? [];
   const filteredLines = useMemo(
@@ -291,6 +371,10 @@ export function BudgetGridV2Desktop({ budget, projectId }) {
             ...(preset.filters ?? {}),
           });
         }}
+        savedViews={savedViews}
+        onApplyView={applySavedView}
+        onOpenSaveView={() => setSaveOpen(true)}
+        onOpenManageViews={() => setManageOpen(true)}
       />
 
       {reorderMut.isError && (
@@ -430,6 +514,16 @@ export function BudgetGridV2Desktop({ budget, projectId }) {
         lineId={openLineId}
         focus={drawerFocus}
         onClose={() => { setOpenLineId(null); setDrawerFocus(null); }}
+      />
+
+      <SaveViewDialog
+        open={saveOpen}
+        onOpenChange={setSaveOpen}
+        payload={{ columnVisibility, columnOrder, sorting, filters }}
+      />
+      <ManageViewsDialog
+        open={manageOpen}
+        onOpenChange={setManageOpen}
       />
     </div>
   );
