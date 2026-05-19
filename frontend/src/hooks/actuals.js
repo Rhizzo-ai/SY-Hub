@@ -20,6 +20,8 @@ export const actualsKeys = {
   list: (params) => ['actuals', 'list', params ?? {}],
   projectList: (projectId, params) =>
     ['actuals', 'project', projectId, params ?? {}],
+  byBudgetLine: (budgetLineId, projectId) =>
+    ['actuals', 'by-budget-line', budgetLineId, projectId],
   detail: (actualId) => ['actual', actualId],
   changeLog: (actualId) => ['actual-change-log', actualId],
   attachments: (actualId) => ['actual-attachments', actualId],
@@ -40,6 +42,32 @@ export function useProjectActuals(projectId, { params, enabled = true } = {}) {
     queryFn: ({ signal }) =>
       actualsApi.listProjectActuals(projectId, { signal, params }),
     enabled: enabled && !!projectId,
+  });
+}
+
+/**
+ * Chat 23 R4.4 — actuals (bills) attached to a single budget line.
+ * Uses the existing /api/v1/actuals listing with the `budget_line_id`
+ * query parameter (confirmed in routers/actuals.py:65).
+ *
+ * Mounted by BillsSection inside BudgetGridDrilldown when a line row
+ * is expanded. staleTime: 30s — pops new bills into the drilldown
+ * relatively quickly without thrashing during keyboard-driven row
+ * navigation.
+ */
+export function useActualsForBudgetLine(budgetLineId, projectId, { enabled = true } = {}) {
+  return useQuery({
+    queryKey: actualsKeys.byBudgetLine(budgetLineId, projectId),
+    queryFn: ({ signal }) => actualsApi.listActuals({
+      signal,
+      params: {
+        budget_line_id: budgetLineId,
+        project_id: projectId,
+        limit: 50,
+      },
+    }),
+    enabled: enabled && !!budgetLineId,
+    staleTime: 30_000,
   });
 }
 

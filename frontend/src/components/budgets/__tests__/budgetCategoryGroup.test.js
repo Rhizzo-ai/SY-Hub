@@ -49,11 +49,15 @@ describe('groupLinesByCategory', () => {
   });
 
   test('items become subRows of their parent line with isItem=true', () => {
+    // Chat 23 R4.5 — items no longer attached as TanStack subRows.
+    // The drilldown panel renders items separately. This test now
+    // asserts the lack of nested subRows on the line so a future
+    // refactor that re-introduces them surfaces in CI.
     const out = groupLinesByCategory(lines, ccMap);
     const firstLine = out[0].subRows[0];
-    expect(firstLine.subRows).toHaveLength(1);
-    expect(firstLine.subRows[0].isItem).toBe(true);
-    expect(firstLine.subRows[0].description).toBe('Materials');
+    expect(firstLine.subRows).toBeUndefined();
+    // The raw `items` array is still carried — drilldown reads it.
+    expect(firstLine.items?.[0]?.description).toBe('Materials');
   });
 
   test('empty lines produce no groups', () => {

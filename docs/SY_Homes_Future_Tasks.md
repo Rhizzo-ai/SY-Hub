@@ -353,4 +353,12 @@ and `docs/chat-summaries/chat-21-closing.md`.
 
 ---
 
-## 10. (placeholder — future entries appended here)
+## 10. MFA-on-test-users runbook is operational debt — **P2 (debt)**
+
+- **What.** Synthetic test users (`test-*@example.test`) have MFA enforced by their role-permission policy. Live-browser smoke testing (Playwright / preview env walkthroughs) currently requires a manual SQL `UPDATE` to clear `mfa_enabled`/`mfa_secret_encrypted` etc. — runbook recorded in `/app/memory/test_credentials.md`.
+- **Why this exists.** `conftest.py::engine` already disables MFA for the pytest fixtures, but the FastAPI 2FA-enforcement middleware checks `users.mfa_enabled` on every request regardless of the role's `requires_mfa` flag, so the browser path can't reach `/projects/*` without TOTP enrolment.
+- **Why it's debt.** Production MFA enforcement shouldn't depend on a per-environment workaround. The right fix is either (a) a `--test-fixture` flag on the auth middleware that scope-skips MFA for `*@example.test` emails when `ENV != production`, or (b) a `dev_mode_skip_mfa` setting that the bootstrap runner toggles for synthetic users only.
+- **Severity.** P2. Doesn't block any agent work — runbook keeps Chat 23 / 24 unblocked. But the divergence between pytest-OK and live-browser-OK is a footgun for the next agent who doesn't read `test_credentials.md` carefully.
+- **Where.** `backend/app/middleware/mfa_enforcement.py` (or wherever the enforcement gate lives) + `backend/app/bootstrap.py::seed_test_users`.
+
+## 11. (placeholder — future entries appended here)

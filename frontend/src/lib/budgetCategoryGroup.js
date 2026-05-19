@@ -58,11 +58,12 @@ export function groupLinesByCategory(lines, costCodeMap) {
     groupLabel: bucket.label,
     totals: computeTotals(bucket.lines),
     // The `subRows` shape feeds TanStack Table's expanding-rows API.
-    // Each line carries its 4 default items as its own subRows.
-    subRows: bucket.lines.map((line) => ({
-      ...line,
-      subRows: (line.items ?? []).map((it) => ({ ...it, isItem: true })),
-    })),
+    // Chat 23 R4.5: lines do NOT carry items as flat sub-rows any
+    // more. Items are rendered by BudgetGridDrilldown via a colspan
+    // expansion row sitting directly under the parent line. This
+    // keeps the drilldown panel (incl. Bills/POs/Variations) bound
+    // to the same expand toggle as the breakdown.
+    subRows: bucket.lines.map((line) => ({ ...line })),
   }));
 }
 

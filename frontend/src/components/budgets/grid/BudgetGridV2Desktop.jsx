@@ -12,7 +12,7 @@
  *
  * Mobile users get BudgetGridMobileReadOnly instead (R8).
  */
-import { useMemo, useState } from 'react';
+import { useMemo, useState, Fragment } from 'react';
 import {
   flexRender, getCoreRowModel, getExpandedRowModel,
   getSortedRowModel, useReactTable,
@@ -41,6 +41,7 @@ import { groupLinesByCategory } from '@/lib/budgetCategoryGroup';
 import { LineDrawer } from '../LineDrawer';
 import { BudgetGridToolbar } from './BudgetGridToolbar';
 import { BudgetGridHeaderTiles } from './BudgetGridHeaderTiles';
+import { BudgetGridDrilldown } from './BudgetGridDrilldown';
 import {
   makeColumns, INITIAL_COLUMN_VISIBILITY,
 } from './BudgetGridColumns';
@@ -233,6 +234,11 @@ export function BudgetGridV2Desktop({ budget, projectId }) {
     getExpandedRowModel: getExpandedRowModel(),
     getSortedRowModel: getSortedRowModel(),
     getSubRows: (row) => row.subRows,
+    // Allow group rows AND line rows to be expandable. Line rows have
+    // no subRows themselves — their "expansion" renders the drilldown
+    // panel as an injected colspan row directly under the line.
+    getRowCanExpand: (row) =>
+      row.original.isGroup || (!row.original.isItem && !!row.original.id),
     getRowId: (row, index, parent) => {
       // Group rows use groupKey; line + item rows use their UUID id.
       if (row.isGroup) return `g:${row.groupKey}`;
@@ -355,47 +361,49 @@ export function BudgetGridV2Desktop({ budget, projectId }) {
                       </tr>
                     );
                   }
-                  // Item sub-row (4-default breakdown placeholder — R4
-                  // adds full editor)
-                  if (orig.isItem) {
-                    return (
-                      <tr
-                        key={row.id}
-                        className="bg-slate-50/50 text-xs text-slate-600"
-                        data-testid={`bg2-item-${orig.id}`}
+                  // Line row — sortable wrapper for drag-reorder.
+                  const expanded = row.getIsExpanded();
+                  return (
+                    <Fragment key={row.id}>
+                      <SortableLineRowBody
+                        row={row}
+                        lineId={orig.id}
+                        dragDisabled={dragDisabled}
                       >
-                        <td className="w-8" />
+                        <td className="w-8 px-2">
+                          <LineDragHandle
+                            lineId={orig.id}
+                            disabled={dragDisabled}
+                          />
+                        </td>
                         {row.getVisibleCells().map((cell) => (
-                          <td key={cell.id} className="px-3 py-1">
+                          <td
+                            key={cell.id}
+                            className="px-3 py-2"
+                          >
                             {flexRender(cell.column.columnDef.cell, cell.getContext())}
                           </td>
                         ))}
-                      </tr>
-                    );
-                  }
-                  // Line row — sortable wrapper for drag-reorder.
-                  return (
-                    <SortableLineRowBody
-                      key={row.id}
-                      row={row}
-                      lineId={orig.id}
-                      dragDisabled={dragDisabled}
-                    >
-                      <td className="w-8 px-2">
-                        <LineDragHandle
-                          lineId={orig.id}
-                          disabled={dragDisabled}
-                        />
-                      </td>
-                      {row.getVisibleCells().map((cell) => (
-                        <td
-                          key={cell.id}
-                          className="px-3 py-2"
+                      </SortableLineRowBody>
+                      {expanded && (
+                        <tr
+                          className="bg-slate-50"
+                          data-testid={`bg2-drilldown-row-${orig.id}`}
                         >
-                          {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                        </td>
-                      ))}
-                    </SortableLineRowBody>
+                          <td
+                            colSpan={row.getVisibleCells().length + 1}
+                            className="p-0"
+                          >
+                            <BudgetGridDrilldown
+                              line={orig}
+                              budget={budget}
+                              projectId={projectId}
+                              canEdit={canEdit}
+                            />
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
                   );
                 })}
                 {sortedGrouped.length === 0 && (

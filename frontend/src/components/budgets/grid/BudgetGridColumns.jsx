@@ -54,19 +54,30 @@ export function makeColumns({
     ch.display({
       id: 'expand',
       header: '',
-      cell: ({ row }) => row.getCanExpand() ? (
-        <button
-          type="button"
-          onClick={row.getToggleExpandedHandler()}
-          aria-label={row.getIsExpanded() ? 'Collapse' : 'Expand'}
-          className="text-slate-500 hover:text-slate-700"
-          data-testid={`bg2-expand-${row.original.groupKey ?? row.original.id}`}
-        >
-          {row.getIsExpanded()
-            ? <ChevronDown size={14} />
-            : <ChevronRight size={14} />}
-        </button>
-      ) : null,
+      cell: ({ row }) => {
+        // Group rows expand via TanStack's subRows. Line rows expand
+        // into the BudgetGridDrilldown panel (Chat 23 R4.5) — that
+        // toggle is mounted directly on the row's expanded state, not
+        // via subRows. Item rows never expand.
+        const orig = row.original;
+        if (orig.isItem) return null;
+        const isLine = !orig.isGroup;
+        const canExpand = row.getCanExpand() || isLine;
+        if (!canExpand) return null;
+        return (
+          <button
+            type="button"
+            onClick={() => row.toggleExpanded()}
+            aria-label={row.getIsExpanded() ? 'Collapse' : 'Expand'}
+            className="text-slate-500 hover:text-slate-700"
+            data-testid={`bg2-expand-${orig.groupKey ?? orig.id}`}
+          >
+            {row.getIsExpanded()
+              ? <ChevronDown size={14} />
+              : <ChevronRight size={14} />}
+          </button>
+        );
+      },
       enableHiding: false,
       enableSorting: false,
       size: 24,
