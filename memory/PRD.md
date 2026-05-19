@@ -17,6 +17,20 @@ Frontend / actuals / commitments / Xero are out of scope until later prompts.
 
 ## What's been implemented
 
+### 2026-05-19 — Chat 23 Build Pack A §R4 BudgetGridDrilldown ✓ (STOP gate #5)
+- **R4.1 LineItemsBreakdown** (editable 4-type item editor; description/amount/notes inline + `+ Add item` + delete-with-confirmation using `bg-sy-orange` for the destructive confirm).
+- **R4.2 / R4.3** PO + Variations empty-state stubs pointing to Prompts 2.5 / 2.6.
+- **R4.4 BillsSection LIVE** (6-col table fed by `useActualsForBudgetLine`). Confirmed param name `budget_line_id` (NOT `line_id`) against `routers/actuals.py:65` before wiring. New `BillStatusBadge` with 5-state semantic colour map (Draft/Posted/Paid/Disputed/Void → slate/sky/emerald/rose/zinc).
+- **R4.5 BudgetGridDrilldown** wrapper. Mounted via colspan row directly under each expanded line in `BudgetGridV2Desktop` (items no longer attached as flat TanStack sub-rows).
+- **3 confirms answered (operator R4 questions)**:
+  1. `appraisal.gdv_total` IS the aggregate development revenue (Σ unit.qty × price_per_unit per `app/services/appraisal_calc.py:144-148`). Not per-unit. ✓
+  2. `LineDrawer.jsx` retained (482 lines, unchanged). Actions menu still routes non-Notes edits to it. ✓
+  3. Test rename: `PM_EMAIL` → `NON_SENSITIVE_EMAIL = test-readonly@example.test`. PM has `view_sensitive`; only `test-readonly` does not. No production rename, just fixture targeting. ✓
+- **Future_Tasks §10** logged: MFA-on-test-users runbook is operational debt (P2). Need a `--test-fixture` middleware bypass for `*@example.test` in non-prod envs.
+- **Tests:** Jest 172 → **184** (+12: BillsSection 3, Drilldown stubs + BillStatusBadge 7, budgetCategoryGroup regression-guard updated). Backend unchanged (no backend changes in R4).
+- **Bundle:** main 395.05 kB gz (+0.08 from R3), budgets chunk 18.58 kB gz (+1.61). Cap 437. Headroom 41.95 kB.
+- **Currently at:** STOP gate #5 — awaiting operator review before R5 (Notes inline-edit upgrade: debounce + audit).
+
 ### 2026-05-19 — Chat 23 Build Pack A §R3 BudgetGridV2 ✓ (STOP gate #4)
 - **R3.9b backend** (`app/routers/budgets.py`): `_attach_provisional_allocation(db, budget, include_sensitive)` computes per-line `appraisal.gdv_total / len(lines)` 2dp; emitted as `_allocated_sale_price_provisional` on every line ONLY when `budgets.view_sensitive`. Underscore-prefix = "computed, not stored". Source field = `gdv_total` (no literal `sale_price` column exists). 4 new tests passing.
 - **R3.1 component tree** — 12 new files under `frontend/src/components/budgets/grid/`:
