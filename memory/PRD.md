@@ -17,6 +17,23 @@ Frontend / actuals / commitments / Xero are out of scope until later prompts.
 
 ## What's been implemented
 
+### 2026-05-19 — Chat 23 Build Pack A §R2 frontend code-split ✓ (STOP gate #3)
+- **Pre-flight verified:**
+  - Full backend pytest run: **833 passed / 0 failed / 0 errors / 122.86s** (post fresh bootstrap; the prior session's ~93 errors were stale-state artifacts from a broken prior bootstrap, not real regressions).
+  - G33 permissions=86 ✓ (unchanged); G34 roles=10 ✓ (unchanged).
+  - `git status` clean — no auto-URL changes to ride along.
+- **R0.3 / R2.1** — `@tanstack/react-table@^8.20.0` already present in `frontend/package.json`. No install needed.
+- **R2.2** — `frontend/src/App.js`: `BudgetsList` + `BudgetDetail` converted from eager imports to `React.lazy` with the shared `webpackChunkName: "budgets"` magic comment; route elements wrapped in `<React.Suspense fallback={…Loading…}>` mirroring the existing AICapture pattern. (commit `c8acbb4`)
+- **Bundle deltas after R2.2:**
+  - `main.js`: **424.17 → 394.80 kB gz** (-29.37 kB — 3× the G11 ≥10 kB target)
+  - New chunks: `budgets.a76cfc20.chunk.js` 12.29 kB + `981.chunk.js` 18.20 kB
+  - Headroom against the 437 kB cap: **42.20 kB** before §R3 ships Grid v2.
+- **Jest:** 151/151 passing (33 suites, 23.8s) — no test changes needed.
+- **Fix-ups landed alongside (commit `f0c14a0`):**
+  - `test_bootstrap.py::test_alembic_heads_helper_returns_single_head` — sentinel `0027_` → `0028_` per the chat-15 §3 convention now that R1.4 advanced the head.
+  - `test_migration_0025_actuals.py::test_alembic_head_is_0025_actuals` — same one-character-class head bump.
+  - `test_budgets_default_items.py::test_new_version_copies_items_verbatim_no_autocreate` — explicit `db_session.rollback()` before raw-SQL cleanup so the LIFO-order fixture finaliser doesn't deadlock on the FOR-UPDATE lock the test acquired via `new_version`.
+
 ### 2026-05-18 — Chat 23 Build Pack A §R1 backend ✓ (STOP gate #2)
 - **R1.1 — Variance band update (commit `98ac673`).** `VARIANCE_AMBER_PCT` 5→0; `VARIANCE_RED_PCT` 15→10. `_classify_variance` operator flipped to use `>=` for Red. 6 new fence-post tests in `test_budgets_variance_bands.py` (-5/0/0.001/9.999/10/25 → Green/Green/Amber/Amber/Red/Red).
 - **R1.2 — Auto-create 4 default `budget_line_items` on every new `budget_line` (commit `d990bb3` initial + `ba25b65` fix).** `DEFAULT_LINE_ITEMS = ("Materials","Labour","Equipment","Subcontractor")` at `display_order` 0-3, `amount=0`. `_create_default_items` is idempotent (skips when line already has items). Wired into `create_line` (services/budget_lines.py) and `create_from_appraisal` (services/budgets.py). `new_version` intentionally does NOT call the helper — copies source items verbatim. 5 new tests in `test_budgets_default_items.py` covering constant, service-level create, idempotency, and new_version copy semantics.
