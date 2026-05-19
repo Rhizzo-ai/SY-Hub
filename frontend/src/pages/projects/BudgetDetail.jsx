@@ -1,10 +1,10 @@
 /**
- * BudgetDetail — Prompt 2.4B-i §R5.7.
+ * BudgetDetail — Prompt 2.4B-i §R5.7 + Chat 23 §R3 (BudgetGridV2).
  *
  * Shell for the per-budget detail page. Renders:
  *   - breadcrumb + header (BudgetHeader)
  *   - SensitiveBanner when user lacks budgets.view_sensitive
- *   - Placeholder for BudgetLinesGrid (§R6 — lands next pause cycle)
+ *   - BudgetGridV2 (Chat 23 R3 replacement for v1's BudgetLinesGrid)
  *
  * Hooks-first ordering preserved (Rules of Hooks).
  */
@@ -13,7 +13,7 @@ import { useAuth } from '@/context/AuthContext';
 import { useBudget } from '@/hooks/budgets';
 import { BudgetHeader } from '@/components/budgets/BudgetHeader';
 import { SensitiveBanner } from '@/components/budgets/SensitiveBanner';
-import { BudgetLinesGrid } from '@/components/budgets/BudgetLinesGrid';
+import { BudgetGridV2 } from '@/components/budgets/grid/BudgetGridV2';
 
 export default function BudgetDetail() {
   const { projectId, budgetId } = useParams();
@@ -77,7 +77,7 @@ export default function BudgetDetail() {
         <>
           <BudgetHeader budget={budget} projectId={projectId} />
           <SensitiveBanner />
-          <BudgetLinesGrid budget={budget} projectId={projectId} />
+          <BudgetGridV2 budget={budget} projectId={projectId} />
         </>
       ) : null}
     </div>

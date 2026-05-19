@@ -49,6 +49,7 @@ from sqlalchemy.orm import Session
 from app.auth.deps import get_current_user, require_permission
 from app.auth.permissions import UserPermissions
 from app.db import get_db
+from app.models.appraisals import Appraisal
 from app.models.budgets import Budget, BudgetLine, BudgetLineItem
 from app.models.user import User
 from app.schemas.budgets import (
@@ -102,8 +103,43 @@ def _serialise_item(i: BudgetLineItem) -> dict:
     }
 
 
+def _attach_provisional_allocation(
+    db: Session, budget: Budget, include_sensitive: bool,
+) -> dict[uuid.UUID, str]:
+    """Chat 23 R3.9b — compute the per-line provisional sale-price slice.
+
+    Returns a {line_id -> string-decimal} map. Empty when the user lacks
+    `budgets.view_sensitive`, the source appraisal has no GDV, or the
+    budget has zero lines. Callers stamp the value onto the serialised
+    line as `_allocated_sale_price_provisional` (leading underscore =
+    "computed, not stored").
+
+    Allocation = `appraisal.gdv_total / len(lines)` (equal split). The
+    Build Pack §R3.9b labels this as the v1 provisional model; a
+    Future_Tasks entry tracks the proper weighted-by-current_budget
+    implementation. We use `gdv_total` because the Appraisal schema
+    expresses sale revenue as Gross Development Value — there is no
+    column literally named `sale_price` or `revenue`.
+    """
+    from decimal import Decimal
+    if not include_sensitive:
+        return {}
+    lines = budget.lines or []
+    if not lines:
+        return {}
+    appraisal = db.get(Appraisal, budget.source_appraisal_id)
+    if appraisal is None:
+        return {}
+    gdv = getattr(appraisal, "gdv_total", None)
+    if gdv is None or Decimal(gdv) <= 0:
+        return {}
+    per_line = (Decimal(gdv) / Decimal(len(lines))).quantize(Decimal("0.01"))
+    return {line.id: str(per_line) for line in lines}
+
+
 def _serialise_line(l: BudgetLine, *, include_sensitive: bool,
-                    include_items: bool = False) -> dict:
+                    include_items: bool = False,
+                    allocations: dict[uuid.UUID, str] | None = None) -> dict:
     d: dict[str, Any] = {
         "id": str(l.id),
         "budget_id": str(l.budget_id),
@@ -142,6 +178,11 @@ def _serialise_line(l: BudgetLine, *, include_sensitive: bool,
             "variance_value": str(l.variance_value),
             "variance_pct": str(l.variance_pct),
         })
+        if allocations is not None and l.id in allocations:
+            # Chat 23 R3.9b: provisional sale-price slice for the
+            # Forecast profit / margin % columns in BudgetGridV2.
+            # Underscore prefix = computed (not a stored column).
+            d["_allocated_sale_price_provisional"] = allocations[l.id]
     if include_items:
         d["items"] = [_serialise_item(it) for it in (l.items or [])]
     return d
@@ -175,8 +216,12 @@ def _serialise_budget_summary(b: Budget, *, include_sensitive: bool) -> dict:
     return base
 
 
-def _serialise_budget_detail(b: Budget, *, include_sensitive: bool) -> dict:
+def _serialise_budget_detail(b: Budget, *, include_sensitive: bool,
+                             db: Session | None = None) -> dict:
     d = _serialise_budget_summary(b, include_sensitive=include_sensitive)
+    allocations: dict[uuid.UUID, str] = {}
+    if db is not None:
+        allocations = _attach_provisional_allocation(db, b, include_sensitive)
     d.update({
         "notes": b.notes,
         "locked_at": b.locked_at.isoformat() if b.locked_at else None,
@@ -190,7 +235,7 @@ def _serialise_budget_detail(b: Budget, *, include_sensitive: bool) -> dict:
         "created_by_user_id": str(b.created_by_user_id),
         "lines": [
             _serialise_line(l, include_sensitive=include_sensitive,
-                            include_items=True)
+                            include_items=True, allocations=allocations)
             for l in sorted(b.lines or [], key=lambda x: x.display_order)
         ],
     })
@@ -241,7 +286,7 @@ def get_budget(
     except BudgetNotFoundError:
         raise HTTPException(404, "Budget not found")
     include_sensitive = perms.has("budgets.view_sensitive") or perms.is_super_admin
-    return _serialise_budget_detail(b, include_sensitive=include_sensitive)
+    return _serialise_budget_detail(b, include_sensitive=include_sensitive, db=db)
 
 
 # ---------------------------------------------------------------------
@@ -285,7 +330,7 @@ def create_from_appraisal(
     db.commit()
     db.refresh(b)
     include_sensitive = perms.has("budgets.view_sensitive") or perms.is_super_admin
-    return _serialise_budget_detail(b, include_sensitive=include_sensitive)
+    return _serialise_budget_detail(b, include_sensitive=include_sensitive, db=db)
 
 
 # ---------------------------------------------------------------------
@@ -318,7 +363,7 @@ def _state_change(
     db.commit()
     db.refresh(b)
     include_sensitive = perms.has("budgets.view_sensitive") or perms.is_super_admin
-    return _serialise_budget_detail(b, include_sensitive=include_sensitive)
+    return _serialise_budget_detail(b, include_sensitive=include_sensitive, db=db)
 
 
 @router.post("/budgets/{budget_id}/activate")
@@ -412,7 +457,7 @@ def new_version(
     db.commit()
     db.refresh(new)
     include_sensitive = perms.has("budgets.view_sensitive") or perms.is_super_admin
-    return _serialise_budget_detail(new, include_sensitive=include_sensitive)
+    return _serialise_budget_detail(new, include_sensitive=include_sensitive, db=db)
 
 
 # ---------------------------------------------------------------------
@@ -518,7 +563,7 @@ def reorder_lines(
     db.commit()
     db.refresh(b)
     include_sensitive = perms.has("budgets.view_sensitive") or perms.is_super_admin
-    return _serialise_budget_detail(b, include_sensitive=include_sensitive)
+    return _serialise_budget_detail(b, include_sensitive=include_sensitive, db=db)
 
 
 
