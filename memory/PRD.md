@@ -17,6 +17,15 @@ Frontend / actuals / commitments / Xero are out of scope until later prompts.
 
 ## What's been implemented
 
+### 2026-05-19 — Chat 23 Build Pack A §R5 NotesCell upgrade ✓ (STOP gate #6)
+- **`NotesCell.jsx` rewrite**: 600ms debounce; rapid typing coalesces to a single PATCH; **Enter** commits immediately, **Shift+Enter** = newline, **Escape** reverts + cancels pending debounce, **Blur** commits immediately; same-value no-op guard; empty string → `notes: null`; **maxLength=500** enforced via textarea attribute; soft counter appears at ≥450 chars.
+- **Optimistic + rollback**: leverages existing `usePatchBudgetLine.onMutate/onError`; NotesCell additionally restores its own `committedRef` so the next entry into edit mode shows the pre-failed value. **`sonner.toast.error`** fires on network failure with the server message.
+- **Grid wiring**: `BudgetGridColumns.makeColumns` no longer takes `onUpdateNotes` — it forwards `lineId + budgetId` so the cell owns its own mutation. `BudgetGridV2Desktop` dropped the wrapper closure + the redundant `usePatchBudgetLine` import.
+- **Tests:** Jest 184 → **196** (+12 NotesCell cases pinning the entire R5 contract — keystroke debounce, Enter/Shift+Enter/Escape/Blur, null-on-empty, no-op guard, counter, maxLength attr, network-failure rollback + toast).
+- **Bundle**: main 395.05 kB unchanged; budgets chunk 18.58 → 18.77 kB (+194 B). Cap 437. Headroom **41.76 kB**.
+- **Mobile note**: NotesCell IS mobile-editable per Build Pack §R5; the current mobile stub doesn't yet surface it. Reusing this same NotesCell unchanged in the R8 mobile card list.
+- **Currently at:** STOP gate #6 — awaiting operator review before R6 (Saved Views CRUD UI + autosave wiring against the R1.4 backend).
+
 ### 2026-05-19 — Chat 23 Build Pack A §R4 BudgetGridDrilldown ✓ (STOP gate #5)
 - **R4.1 LineItemsBreakdown** (editable 4-type item editor; description/amount/notes inline + `+ Add item` + delete-with-confirmation using `bg-sy-orange` for the destructive confirm).
 - **R4.2 / R4.3** PO + Variations empty-state stubs pointing to Prompts 2.5 / 2.6.
