@@ -31,14 +31,16 @@ function Tile({ label, value, testid }) {
   );
 }
 
-export function BudgetGridHeaderTiles({ budget, canViewSensitive }) {
+export function BudgetGridHeaderTiles({ budget, canViewSensitive, stacked = false }) {
   // `total_budget` is always returned. The other 4 totals only land
   // when the response includes the sensitive sub-block (R3.9 gating).
+  // On mobile (`stacked`) we force a single-column layout to give each
+  // tile the full width per Build Pack §R8.1.
+  const gridClass = stacked
+    ? 'grid grid-cols-1 gap-3'
+    : 'grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5';
   return (
-    <div
-      className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5"
-      data-testid="bg2-header-tiles"
-    >
+    <div className={gridClass} data-testid="bg2-header-tiles">
       <Tile
         label="Original budget"
         value={budget?.total_budget}
