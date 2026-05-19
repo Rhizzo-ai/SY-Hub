@@ -31,7 +31,7 @@ import { GripVertical } from 'lucide-react';
 
 import { useAuth } from '@/context/AuthContext';
 import {
-  useReorderBudgetLines, usePatchBudgetLine,
+  useReorderBudgetLines,
 } from '@/hooks/budgets';
 import { useCostCodes, buildCostCodeMap } from '@/hooks/costCodes';
 import { isBudgetEditable, canEditLines } from '@/lib/budgetCapability';
@@ -171,9 +171,9 @@ export function BudgetGridV2Desktop({ budget, projectId }) {
 
   // ----- Mutations -----
   const reorderMut = useReorderBudgetLines(budget.id, projectId);
-  const patchMut = usePatchBudgetLine(budget.id);
-  const onUpdateNotes = (lineId, value) =>
-    patchMut.mutate({ lineId, body: { notes: value } });
+  // NotesCell owns the notes mutation itself (Chat 23 R5 — debounced
+  // PATCH with optimistic update + error rollback live inside the
+  // cell). The grid no longer wires onUpdateNotes.
 
   // ----- Filter state -----
   const [filters, setFilters] = useState({
@@ -212,10 +212,11 @@ export function BudgetGridV2Desktop({ budget, projectId }) {
   const columns = useMemo(
     () => makeColumns({
       costCodeMap, canEdit, canViewSensitive,
-      onOpenDrawer: openDrawer, onUpdateNotes,
+      budgetId: budget.id,
+      onOpenDrawer: openDrawer,
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [costCodeMap, canEdit, canViewSensitive],
+    [costCodeMap, canEdit, canViewSensitive, budget.id],
   );
 
   // ----- TanStack Table instance -----

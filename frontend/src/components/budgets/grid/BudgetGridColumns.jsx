@@ -23,8 +23,8 @@ export function makeColumns({
   costCodeMap,
   canEdit,
   canViewSensitive,
+  budgetId,
   onOpenDrawer,
-  onUpdateNotes,
 }) {
   const cols = [
     ch.display({
@@ -287,7 +287,8 @@ export function makeColumns({
           <NotesCell
             value={getValue()}
             canEdit={canEdit}
-            onSave={(v) => onUpdateNotes?.(row.original.id, v)}
+            lineId={row.original.id}
+            budgetId={budgetId}
           />
         );
       },
