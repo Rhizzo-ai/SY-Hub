@@ -17,6 +17,24 @@ Frontend / actuals / commitments / Xero are out of scope until later prompts.
 
 ## What's been implemented
 
+### 2026-05-19 — Chat 23 Build Pack A §R6 Saved Views + autosave ✓ (STOP gate #7)
+- **R6.1 hooks** (`hooks/userPreferences.js`) — 5 hooks against `/api/v1/me/preferences/{surface}`:
+  - `useUserPreferences` — GET snapshot, no refetch-on-focus, `staleTime=Infinity` so initial column-resize drafts aren't clobbered.
+  - `useSetCurrentPreference` — PUT autosave, NO cache write (C2 audit fix preserved; signature is `(_data, _variables)`, NOT `arguments[0]`).
+  - `useCreateSavedView` — POST + prepend to cached views.
+  - `useUpdateSavedView` — PUT + replace in cached views.
+  - `useDeleteSavedView` — DELETE + filter from cached views.
+- **R6.2 autosave** — 500ms debounced `useEffect` in `BudgetGridV2Desktop` that fires `setCurrentMut` on any change to `{columnVisibility, columnOrder, sorting, filters}`. Initial hydration gated by `hydratedRef` so it does NOT trigger autosave (load-storm guard).
+- **R6.3 `SaveViewDialog`** — name validated 1-128 chars; 409 conflict → "Name already in use" toast (dialog stays open); success → success toast + dialog closes.
+- **R6.4 `ManageViewsDialog`** — list + rename + delete. Rename = delete-then-create with rollback recreate on half-failure (recovery toast if recreate ALSO fails). Delete fires directly because the dialog is itself a confirmation surface.
+- **R6.5 hydration** — first snapshot fetch applies `current.payload.{columnVisibility,columnOrder,sorting,filters}` if non-empty; otherwise keeps `INITIAL_COLUMN_VISIBILITY`. Re-runs gated by `hydratedRef.current` so a refetch never clobbers in-flight user edits.
+- **`ViewPresetsDropdown`** extended: 4 starter presets (Profit hidden when `!canViewSensitive`) → divider → saved views (one item per `prefs.views[i].name`) → divider → "Save current view…" + "Manage saved views…" footer.
+- **API client** new file `lib/api/userPreferences.js` — 6 typed wrappers (getSnapshot / putCurrent / create / update / delete).
+- **Scoped deviations log** — new `docs/chat-summaries/chat-23-closing.md` tracking 3 documented deviations: R3.9b source field (gdv_total ↔ "sale_price"), R5.1 textarea↔input, R6.2 debounce 500ms confirmed as per-Build-Pack.
+- **Tests:** Jest 196 → **204** (+8). Hook contracts 6 + grid R6 wiring 2.
+- **Bundle:** main 395.07 kB (+22 B); budgets chunk 20.95 kB (+2.18 kB). Headroom 41.93 kB.
+- **Currently at:** STOP gate #7 — awaiting operator review before R7 (Bulk delete + CSV export).
+
 ### 2026-05-19 — Chat 23 Build Pack A §R5 NotesCell upgrade ✓ (STOP gate #6)
 - **`NotesCell.jsx` rewrite**: 600ms debounce; rapid typing coalesces to a single PATCH; **Enter** commits immediately, **Shift+Enter** = newline, **Escape** reverts + cancels pending debounce, **Blur** commits immediately; same-value no-op guard; empty string → `notes: null`; **maxLength=500** enforced via textarea attribute; soft counter appears at ≥450 chars.
 - **Optimistic + rollback**: leverages existing `usePatchBudgetLine.onMutate/onError`; NotesCell additionally restores its own `committedRef` so the next entry into edit mode shows the pre-failed value. **`sonner.toast.error`** fires on network failure with the server message.
