@@ -63,8 +63,6 @@ import SdltRatesPage from "@/pages/SdltRatesPage";
 import AppraisalDefaultsPage from "@/pages/AppraisalDefaultsPage";
 import AppraisalsList from "@/pages/AppraisalsList";
 import AppraisalPage from "@/pages/AppraisalPage";
-import BudgetsList from "@/pages/projects/BudgetsList";
-import BudgetDetail from "@/pages/projects/BudgetDetail";
 import ActualsList from "@/pages/projects/ActualsList";
 import ActualNew from "@/pages/projects/ActualNew";
 import ActualDetail from "@/pages/projects/ActualDetail";
@@ -83,6 +81,16 @@ const CaptureJobDetail = React.lazy(() => import("@/pages/CaptureJobDetail"));
 const AICaptureCosts = React.lazy(() =>
     import(/* webpackChunkName: "ai-capture-costs" */ "@/pages/AICaptureCosts")
 );
+// Chat 23 §R2.2 — lazy-load the budgets pages so BudgetGrid v2's
+// TanStack Table + dnd-kit footprint lands in its own chunk. Buys
+// headroom against the 437 kB main-bundle cap before Grid v2 ships
+// in §R3.
+const BudgetsList = React.lazy(() =>
+    import(/* webpackChunkName: "budgets" */ "@/pages/projects/BudgetsList")
+);
+const BudgetDetail = React.lazy(() =>
+    import(/* webpackChunkName: "budgets" */ "@/pages/projects/BudgetDetail")
+);
 
 function ShellRoutes() {
     return (
@@ -98,8 +106,22 @@ function ShellRoutes() {
                 <Route path="/projects/:id" element={<ProjectDetail />} />
                 <Route path="/projects/:id/cost-codes" element={<ProjectCostCodes />} />
                 <Route path="/projects/:id/appraisals" element={<AppraisalsList />} />
-                <Route path="/projects/:projectId/budgets" element={<BudgetsList />} />
-                <Route path="/projects/:projectId/budgets/:budgetId" element={<BudgetDetail />} />
+                <Route
+                    path="/projects/:projectId/budgets"
+                    element={
+                        <React.Suspense fallback={<div className="p-6 text-sm text-slate-500">Loading…</div>}>
+                            <BudgetsList />
+                        </React.Suspense>
+                    }
+                />
+                <Route
+                    path="/projects/:projectId/budgets/:budgetId"
+                    element={
+                        <React.Suspense fallback={<div className="p-6 text-sm text-slate-500">Loading…</div>}>
+                            <BudgetDetail />
+                        </React.Suspense>
+                    }
+                />
                 {/* Chat 19B §R2.1 — Actuals (flat siblings; ProjectDetail is NOT an Outlet) */}
                 <Route path="/projects/:projectId/actuals" element={<ActualsList />} />
                 <Route path="/projects/:projectId/actuals/new" element={<ActualNew />} />
