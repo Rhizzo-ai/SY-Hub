@@ -361,4 +361,22 @@ and `docs/chat-summaries/chat-21-closing.md`.
 - **Severity.** P2. Doesn't block any agent work — runbook keeps Chat 23 / 24 unblocked. But the divergence between pytest-OK and live-browser-OK is a footgun for the next agent who doesn't read `test_credentials.md` carefully.
 - **Where.** `backend/app/middleware/mfa_enforcement.py` (or wherever the enforcement gate lives) + `backend/app/bootstrap.py::seed_test_users`.
 
-## 11. (placeholder — future entries appended here)
+## 11. `/api` vs `/api/v1` path-prefix drift audit — **P1 (silent-correctness risk)**
+
+- **What.** During the §R7 spot-check, the operator hit "every line rendered as Uncategorised" against a freshly-seeded budget. Root cause: `frontend/src/hooks/costCodes.js::fetchCostCodes` was calling `/v1/projects/${projectId}/cost-codes` but `cost_codes_router` is mounted under `api_router` (server.py:140), NOT `v1_router` (server.py:148-158). The hook silently 404'd, returned an empty array, the cost-code Map was empty, and `groupLinesByCategory` collapsed everything to `— Uncategorised —`. **The bug shipped with §R3 (Chat 23) and was undetected through R3/R4/R5/R6 + 223 Jest tests because every component test either mocks `useCostCodes` directly or routes through an MSW handler that normalises the path.**
+- **Why this exists.** The backend has two parallel mount conventions:
+  - `api_router` directly under `/api/...` — auth, users, roles, perms, sessions, projects, entities, **cost-codes**, meta, audit, login_history.
+  - `v1_router` under `/api/v1/...` — appraisals, appraisal_governance, budgets, actuals, ai_capture, inbound, notifications, reference_data, system_config, user_preferences.
+  Frontend axios `baseURL = ${REACT_APP_BACKEND_URL}/api`, so callers must explicitly include `/v1/` for the v1 mount and explicitly omit it for the `/api`-only mount. There's no compile-time check, no runtime route table — a typo silently 404s.
+- **Fixes landed Chat 23 §R7.5 (this entry).**
+  - `hooks/costCodes.js`: corrected path to `/projects/${projectId}/cost-codes` AND fixed `buildCostCodeMap` to key by `cost_code_id` (FK) instead of `id` (join-table PK). The keying bug would have masked any future correct path fix until both were addressed together.
+  - `hooks/__tests__/costCodes.test.jsx` — 4 regression pins: path assertion (positive + hard negative on `/v1/`), FK-keyed map lookups, fallback to `id` for minimal test fixtures, defensive skip for malformed rows.
+- **What still needs auditing (P1, before next agent ships).** Sweep every `api.*(/...)` call in `frontend/src/` against the backend mount table. Pass criteria: each path either matches an `api_router.include_router(...)` mount (no `/v1/` prefix on the call) OR matches a `v1_router.include_router(...)` mount (`/v1/` prefix on the call). Initial survey already done:
+  - Confirmed correct under `/v1/`: `actuals.js`, `aiCapture.js`, `budgets.js`, `NotificationBell.jsx`, `NotificationsPage.jsx`, `SdltRatesPage.jsx`, `ConfigPage.jsx`, `AppraisalDefaultsPage.jsx`, `PromoteForm.jsx::useEntities` (matches `/api/v1/entities` from reference_data), `ProjectPicker.jsx::useProjects` (NB: `/v1/projects` collides with `/projects` — needs explicit verification).
+  - Confirmed correct under `/api` (no v1): `AuthContext.jsx::/auth/*`, `RoleAssignmentModal.jsx::/roles + /entities`, `MfaEnrollDialog.jsx::/auth/mfa/*`, `useTenant.js::/meta/*`, `UsersList.jsx::/users`, `RolesAndPermissions.jsx::/roles + /permissions`, `ProjectsList.jsx::/projects`, `ProjectNew.jsx`, `ProjectDetail.jsx`, `CostCodesList.jsx`, `CostCodeDetail.jsx::/cost-code-sections`.
+  - **Inconsistencies to verify**: `PromoteForm.jsx:36` uses `/v1/entities` while `CreateActualSheet.jsx:38` uses `/entities`. One of these must be wrong — same as the cost-codes bug, just less visible because the entities list is short and most rendered data comes from a different field. Audit + reconcile before R8.
+- **Proposed permanent resolution.** Introduce a typed API client surface (`lib/api/{module}.js` per existing pattern) where the route literal lives ONCE per endpoint and is exercised by a dedicated `__tests__/{module}.url-contract.test.js` pin per endpoint. Bonus: a backend smoke endpoint `/api/internal/route-table` returning the canonical mount table that a once-per-CI Jest test cross-checks against. Cost ~1 day, eliminates the entire class of bug.
+- **Severity.** P1. This bug class produces silent 404s with empty-fallback semantics — exactly the kind of failure that ships to operator without triggering a test failure. The audit MUST land before R8 to avoid another spot-check derailment.
+- **Surfaced in.** Chat 23 §R7 operator spot-check (this session).
+
+## 12. (placeholder — future entries appended here)
