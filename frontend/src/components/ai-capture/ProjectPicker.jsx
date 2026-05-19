@@ -14,8 +14,11 @@ function useProjects() {
   return useQuery({
     queryKey: ['projects-for-capture'],
     queryFn: async () =>
-      // PASS-2 C3: /v1/ prefix per lib/api.js baseURL convention
-      (await api.get('/v1/projects', { params: { page_size: 200 } })).data?.items ?? [],
+      // Backend: `projects_router` is mounted under `api_router` directly
+      // (server.py:139 — NO `/v1/` prefix). Resolved URL:
+      // `${REACT_APP_BACKEND_URL}/api/projects`. The previous `/v1/projects`
+      // path 404'd silently — see Future_Tasks §11 audit.
+      (await api.get('/projects', { params: { page_size: 200 } })).data?.items ?? [],
     staleTime: 60_000,
   });
 }

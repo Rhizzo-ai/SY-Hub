@@ -53,10 +53,16 @@ jest.mock('@/components/actuals/BudgetLinePicker', () => ({
 
 function renderForm(job, onPromoted = jest.fn()) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  // §R6.5 H9: mock URLs must match `/v1/` prefix (lib/api.js baseURL=/api convention)
+  // Mock URLs must match the CORRECTED paths landed alongside §R7.5
+  // (Future_Tasks §11): `entities_router` and `projects_router` are
+  // mounted under `/api` directly — NOT `/api/v1/`. The previous
+  // mocks matched `/v1/entities` + `/v1/projects` which silently
+  // masked the production bug (hook called the wrong path, the
+  // matcher accepted the wrong path, dropdowns rendered empty arrays
+  // via `?? []` fallback, no test failed).
   api.get.mockImplementation((url) => {
-    if (url.startsWith('/v1/entities')) return Promise.resolve({ data: { items: [{ id: ENTITY_UUID, name: 'SY Parent' }] } });
-    if (url.startsWith('/v1/projects')) return Promise.resolve({ data: { items: [{ id: PROJECT_UUID, name: 'Demo Project' }] } });
+    if (url.startsWith('/entities')) return Promise.resolve({ data: { items: [{ id: ENTITY_UUID, name: 'SY Parent' }] } });
+    if (url.startsWith('/projects')) return Promise.resolve({ data: { items: [{ id: PROJECT_UUID, name: 'Demo Project' }] } });
     return Promise.resolve({ data: {} });
   });
   return {
@@ -201,5 +207,21 @@ describe('PromoteForm', () => {
         }),
       );
     });
+  });
+
+  // §R7.5 / Future_Tasks §11 — URL-contract regression pin.
+  // `useEntities` MUST call `/entities` (under api_router) — NOT
+  // `/v1/entities` (which 404s and silently returns []).
+  test('useEntities calls /entities (NOT /v1/entities) — regression pin', async () => {
+    const job = makeAwaitingReviewJob({});
+    renderForm(job);
+    await waitFor(() => screen.getByTestId('promote-form'));
+
+    const urls = api.get.mock.calls.map((c) => c[0]);
+    expect(urls).toContain('/entities');
+    // Hard negative: ban the buggy prefix outright.
+    for (const u of urls) {
+      expect(u).not.toMatch(/^\/v1\/entities/);
+    }
   });
 });

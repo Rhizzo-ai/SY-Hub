@@ -32,8 +32,13 @@ import { api } from '@/lib/api';
 function useEntities() {
   return useQuery({
     queryKey: ['entities'],
-    // PASS-3 H7: /v1/ prefix per lib/api.js baseURL convention (C3)
-    queryFn: async () => (await api.get('/v1/entities')).data?.items ?? [],
+    // Backend: `entities_router` is mounted under `api_router` directly
+    // (server.py:138 — NO `/v1/` prefix). Axios baseURL already resolves
+    // to `${REACT_APP_BACKEND_URL}/api`, so the call becomes
+    // `${REACT_APP_BACKEND_URL}/api/entities`. The previous `/v1/entities`
+    // path 404'd silently (caught by the `?? []` fallback) → see
+    // Future_Tasks §11 audit.
+    queryFn: async () => (await api.get('/entities')).data?.items ?? [],
     staleTime: 60_000,
   });
 }
