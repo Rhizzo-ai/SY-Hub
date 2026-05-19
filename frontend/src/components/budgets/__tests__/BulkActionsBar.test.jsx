@@ -170,7 +170,7 @@ describe('CSV export — sensitive-field gating (R7.4 + R3.9)', () => {
     const table = makeFakeTable({ lines, canViewSensitive: false });
     // Toggle profit columns visible only if they exist — but they
     // shouldn't because makeColumns omits them for non-sensitive users.
-    const csv = bulkInternals.buildCsvText(table, lines);
+    const csv = bulkInternals.buildCsvText(table, lines, COST_CODE_MAP);
     expect(csv).not.toMatch(/Forecast profit/);
     expect(csv).not.toMatch(/Forecast margin/);
   });
@@ -186,7 +186,7 @@ describe('CSV export — sensitive-field gating (R7.4 + R3.9)', () => {
         forecast_margin_pct: true,
       });
     });
-    const csv = bulkInternals.buildCsvText(table, lines);
+    const csv = bulkInternals.buildCsvText(table, lines, COST_CODE_MAP);
     expect(csv).toMatch(/Forecast profit/);
     expect(csv).toMatch(/Forecast margin/);
   });
@@ -194,8 +194,57 @@ describe('CSV export — sensitive-field gating (R7.4 + R3.9)', () => {
   test('CSV applies RFC-4180 quoting to a description with comma', () => {
     const lines = [LINE({ line_description: 'Line, with comma' })];
     const table = makeFakeTable({ lines, canViewSensitive: true });
-    const csv = bulkInternals.buildCsvText(table, lines);
+    const csv = bulkInternals.buildCsvText(table, lines, COST_CODE_MAP);
     expect(csv).toMatch(/"Line, with comma"/);
+  });
+
+  // §R7.5 — regression pin from operator spot-check.
+  // The `cost_code` column uses TanStack's `accessorFn` form
+  // (`ch.accessor(fn, opts)`) rather than `accessorKey: 'cost_code_id'`,
+  // so `columnDef.accessorKey` is undefined. The CSV builder
+  // previously fell through every special case and emitted an empty
+  // string in the Cost code column of every exported row. Fix: pass
+  // `costCodeMap` into buildCsvText and resolve the FK to the
+  // human-readable code (mirrors the on-screen renderer at
+  // BudgetGridColumns.jsx::cell for `cost_code`).
+  test('CSV resolves cost_code FK to the human-readable code', () => {
+    const lines = [
+      LINE({ cost_code_id: 'cc-1', line_description: 'Land purchase' }),
+      LINE({ cost_code_id: 'cc-ext', line_description: 'Drainage' }),
+      LINE({ cost_code_id: 'cc-unknown', line_description: 'Mystery line' }),
+    ];
+    const map = new Map([
+      ['cc-1',   { id: 'cc-1',   code: 'ACQ-01', name: 'Land' }],
+      ['cc-ext', { id: 'cc-ext', code: 'EXT-01', name: 'Drainage' }],
+      // 'cc-unknown' deliberately not in map → cell falls back to ''.
+    ]);
+    const table = makeFakeTable({ lines, canViewSensitive: true });
+
+    const csv = bulkInternals.buildCsvText(table, lines, map);
+    const rows = csv.split('\r\n');
+    expect(rows).toHaveLength(4); // header + 3 lines
+
+    // Header includes "Cost code" — confirm it's column index 0.
+    const header = rows[0].split(',');
+    expect(header[0]).toBe('Cost code');
+
+    // Row body: cost code resolved to the short code (e.g. "ACQ-01").
+    expect(rows[1].split(',')[0]).toBe('ACQ-01');
+    expect(rows[2].split(',')[0]).toBe('EXT-01');
+    // Unknown FK: empty (NOT the raw UUID, NOT the placeholder dash).
+    expect(rows[3].split(',')[0]).toBe('');
+
+    // Hard negative: the raw FK UUID must NOT appear anywhere in the CSV.
+    expect(csv).not.toMatch(/cc-1/);
+    expect(csv).not.toMatch(/cc-ext/);
+  });
+
+  test('CSV emits empty cost code when costCodeMap is omitted (graceful degrade)', () => {
+    const lines = [LINE({ cost_code_id: 'cc-1' })];
+    const table = makeFakeTable({ lines, canViewSensitive: true });
+    const csv = bulkInternals.buildCsvText(table, lines /* no map */);
+    const dataRow = csv.split('\r\n')[1];
+    expect(dataRow.split(',')[0]).toBe('');
   });
 });
 

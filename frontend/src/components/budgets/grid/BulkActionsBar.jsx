@@ -28,7 +28,7 @@ import { BulkDeleteConfirmDialog } from './BulkDeleteConfirmDialog';
 
 export const BULK_DELETE_MAX = 100;
 
-function buildCsvText(table, selectedLines) {
+function buildCsvText(table, selectedLines, costCodeMap) {
   // Visible leaf columns drive both header and body. We deliberately
   // drop columns whose value is purely UI (select, expand, actions)
   // because they don't carry data the user would want in a spreadsheet.
@@ -43,6 +43,17 @@ function buildCsvText(table, selectedLines) {
   });
 
   const rows = selectedLines.map((line) => cols.map((c) => {
+    // The `cost_code` column uses `ch.accessor(fn, {...})` (accessorFn
+    // form) rather than the string `accessorKey` form, so `accessorKey`
+    // is undefined. The on-screen cell looks the FK up in costCodeMap
+    // and renders the short `code` (e.g. "ACQ-01"). The CSV must do
+    // the same resolution; without this the column lands as a blank
+    // in every exported row. Regression pin: see
+    // BulkActionsBar.test.jsx::"CSV resolves cost_code FK to the
+    // human-readable code (regression pin from §R7 spot-check)".
+    if (c.id === 'cost_code') {
+      return costCodeMap?.get(line.cost_code_id)?.code ?? '';
+    }
     // Prefer the raw accessor value where present; for `display` columns
     // (variance_to_forecast, forecast_profit, forecast_margin_pct) we
     // fall back to a sensible field-level read so the CSV captures the
@@ -76,6 +87,7 @@ export function BulkActionsBar({
   selectedLines,
   table,
   budget,
+  costCodeMap,
   canEdit,
   editable,
   onClear,
@@ -96,7 +108,7 @@ export function BulkActionsBar({
 
   function handleExport() {
     try {
-      const csv = buildCsvText(table, selectedLines);
+      const csv = buildCsvText(table, selectedLines, costCodeMap);
       const stamp = new Date().toISOString().slice(0, 10);
       const name = `budget-${budget?.id?.slice(0, 8) ?? 'lines'}-${stamp}.csv`;
       downloadCsv(csv, name);

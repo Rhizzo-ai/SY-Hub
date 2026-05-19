@@ -371,6 +371,7 @@ export function BudgetGridV2Desktop({ budget, projectId }) {
           })()}
           table={table}
           budget={budget}
+          costCodeMap={costCodeMap}
           canEdit={canEdit}
           editable={editable}
           onClear={() => setRowSelection({})}
