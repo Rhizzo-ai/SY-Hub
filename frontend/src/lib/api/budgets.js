@@ -114,6 +114,16 @@ export async function patchBudgetLine(lineId, body) {
 }
 
 // ──────────────────────────────────────────────────────────────────────
+// Endpoint 9c — delete a single budget line (Chat 23 §R7.3)
+// Flat path: DELETE /budget-lines/:lineId. Backend returns 204 (no body).
+// The R7 bulk-delete fan-out calls this sequentially up to 100 times.
+// There is NO bulk endpoint by design — one audit row per line deleted.
+// ──────────────────────────────────────────────────────────────────────
+export async function deleteBudgetLine(lineId) {
+  await api.delete(`/v1/budget-lines/${lineId}`);
+}
+
+// ──────────────────────────────────────────────────────────────────────
 // Endpoint 9b (2.4A.1) — bulk reorder lines
 // Flat path: POST /budget-lines/reorder. Returns refreshed budget detail.
 // ──────────────────────────────────────────────────────────────────────

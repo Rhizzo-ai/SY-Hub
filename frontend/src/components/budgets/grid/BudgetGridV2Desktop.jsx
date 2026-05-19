@@ -42,6 +42,7 @@ import { LineDrawer } from '../LineDrawer';
 import { BudgetGridToolbar } from './BudgetGridToolbar';
 import { BudgetGridHeaderTiles } from './BudgetGridHeaderTiles';
 import { BudgetGridDrilldown } from './BudgetGridDrilldown';
+import { BulkActionsBar } from './BulkActionsBar';
 import { SaveViewDialog } from './SaveViewDialog';
 import { ManageViewsDialog } from './ManageViewsDialog';
 import {
@@ -355,6 +356,26 @@ export function BudgetGridV2Desktop({ budget, projectId }) {
         budget={budget}
         canViewSensitive={canViewSensitive}
       />
+
+      {Object.keys(rowSelection).length > 0 && (
+        <BulkActionsBar
+          selectedLines={(() => {
+            // Map TanStack selection state back to the underlying line
+            // objects. Row IDs are constructed by getRowId as
+            // `g:<groupKey>:<lineId>` for line rows; we filter the
+            // selected ids to those that match a real line in `rawLines`.
+            const selectedIds = new Set(
+              Object.keys(rowSelection).map((rid) => rid.split(':').pop()),
+            );
+            return rawLines.filter((l) => selectedIds.has(l.id));
+          })()}
+          table={table}
+          budget={budget}
+          canEdit={canEdit}
+          editable={editable}
+          onClear={() => setRowSelection({})}
+        />
+      )}
 
       <BudgetGridToolbar
         filters={filters}

@@ -16,6 +16,7 @@ Mounts under /api/v1. 15 endpoints:
 
   Lines:
     PATCH  /budget-lines/{line_id}                              edit a single line
+    DELETE /budget-lines/{line_id}                              delete a single line (Chat 23 R7.3)
     POST   /budget-lines/reorder                                bulk reorder (2.4A.1)
 
   Items (line-scoped + standalone):
@@ -509,6 +510,59 @@ def update_line(
     include_sensitive = perms.has("budgets.view_sensitive") or perms.is_super_admin
     return _serialise_line(line, include_sensitive=include_sensitive,
                            include_items=True)
+
+
+# ---------------------------------------------------------------------
+# Endpoint 9c: delete a single budget line (Chat 23 R7.3)
+# ---------------------------------------------------------------------
+
+@router.delete("/budget-lines/{line_id}", status_code=204)
+def delete_budget_line(
+    line_id: uuid.UUID,
+    request: Request,
+    current: User = Depends(get_current_user),
+    perms: UserPermissions = Depends(require_permission("budgets.edit")),
+    db: Session = Depends(get_db),
+):
+    """Delete a single budget line.
+
+    Used by the R7.3 bulk-delete fan-out (frontend loops sequential
+    DELETEs, capped at 100). Per Build Pack A locked decision: NO bulk
+    endpoint. One audit row per delete.
+
+    Error map:
+      - 403  caller lacks `budgets.edit`
+      - 404  line unknown or cross-tenant
+      - 409  budget is Locked / Closed / Superseded
+    """
+    line = db.get(BudgetLine, line_id)
+    if line is None:
+        raise HTTPException(404, "Budget line not found")
+    budget_id = line.budget_id
+    project_id = db.scalar(select(Budget.project_id).where(Budget.id == budget_id))
+    line_description = line.line_description or ""
+    cost_code_id = str(line.cost_code_id) if line.cost_code_id else None
+    try:
+        line_svc.delete_line(
+            db, budget_id=budget_id, line_id=line_id,
+            user=current, perms=perms,
+        )
+    except (BudgetStateError, BudgetNotFoundError) as exc:
+        raise _map(exc)
+    record_audit(
+        db, action="Delete", resource_type="budget_lines",
+        resource_id=line_id, actor_user_id=current.id,
+        project_id=project_id, field_changes=[],
+        metadata={
+            "budget_id": str(budget_id),
+            "kind": "line_delete",
+            "line_description": line_description,
+            "cost_code_id": cost_code_id,
+        },
+        request=request,
+    )
+    db.commit()
+    return None
 
 
 # ---------------------------------------------------------------------

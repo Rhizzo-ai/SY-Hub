@@ -17,6 +17,18 @@ Frontend / actuals / commitments / Xero are out of scope until later prompts.
 
 ## What's been implemented
 
+### 2026-05-19 — Chat 23 Build Pack A §R7 Bulk delete + CSV export ✓ (STOP gate #8)
+- **R7.1 — Row selection** already line-only (groups + items not selectable) per the R3 `enableRowSelection` predicate. Confirmed no group/item rows render the select checkbox.
+- **R7.2 — `BulkActionsBar.jsx`** new file. Renders between header tiles and toolbar when ≥1 line selected. Shows count + Export CSV + Delete selected + Clear. Auto-hides Delete when `canEdit=false` OR `editable=false` (Locked/Closed/Superseded). Over-cap warning + disabled Delete when >100 selected.
+- **R7.3 — Bulk delete fan-out.** New backend endpoint `DELETE /api/v1/budget-lines/{line_id}` (singular; NO bulk endpoint per locked decision). Frontend loops sequential `deleteBudgetLine(id)` calls capped at 100; **live progress bar** swaps in while running showing "Deleted X of N…" (and "(K failed)" suffix on errors). One audit row per delete (metadata.kind=`line_delete`). Cache invalidation fires ONCE at the end. Partial-failure toast distinguishes total-fail vs partial-fail vs success.
+- **R7.3 confirm dialog** — controlled `BulkDeleteConfirmDialog.jsx` wrapping shadcn `AlertDialog` directly (existing `ConfirmDialog` is uncontrolled — wrong shape for imperative open). sy-orange destructive class preserved.
+- **R7.4 — Inline RFC-4180 CSV** at `lib/csv.js`: exactly the 5-line `toCsv` from the Build Pack + a `downloadCsv(text, name)` helper using Blob + ephemeral object URL. **NO papaparse**. The export-button reads `table.getVisibleLeafColumns()` and drops `select`/`expand`/`actions` columns. Display columns (variance_to_forecast, forecast_profit, forecast_margin_pct) compute their numeric value inline so the CSV captures the signal instead of JSX.
+- **Sensitive-field gating in CSV** verified by Jest: `forecast_profit` + `forecast_margin_pct` columns are not even created for users without `budgets.view_sensitive` (R3.2 contract), so they cannot land in the CSV even if a future bug forced them visible. Pinned by `BulkActionsBar.test.jsx::"non-sensitive user CSV excludes forecast_profit and forecast_margin_pct"`.
+- **Backend tests:** 837 → **843** (+6: 204/404/403/409/audit/total-recompute).
+- **Frontend tests:** 204 → **223** (+19: 10 RFC-4180 csv unit + 9 BulkActionsBar render/gating/fan-out).
+- **Bundle:** main 395.07 → **395.09 kB gz** (+22 B); budgets chunk 20.95 → **22.54 kB gz** (+1.58 kB). Headroom against 437 kB cap: **41.91 kB**.
+- **Currently at:** STOP gate #8 — awaiting operator review before R8 (mobile card list + Notes-editable).
+
 ### 2026-05-19 — Chat 23 Build Pack A §R6 Saved Views + autosave ✓ (STOP gate #7)
 - **R6.1 hooks** (`hooks/userPreferences.js`) — 5 hooks against `/api/v1/me/preferences/{surface}`:
   - `useUserPreferences` — GET snapshot, no refetch-on-focus, `staleTime=Infinity` so initial column-resize drafts aren't clobbered.
