@@ -1,7 +1,7 @@
 /**
  * LineDrawer — Prompt 2.4B-i §R7.
  *
- * shadcn Sheet with rhf+Zod form on top + LineItemsPanel below.
+ * shadcn Sheet with rhf+Zod form on top + LineItemsBreakdown below.
  *
  * Erratas applied to spec:
  *   - E7  : `description` → `line_description`; `ftc_value` does NOT
@@ -15,7 +15,14 @@
  *           "Reload" banner. Save success bumps loadedAt so we don't
  *           false-trigger after our own write.
  *   - Auth: `@/context/AuthContext` (singular `context`).
- *   - Items field rename: `unit_cost` → `rate` (E11, see LineItemsPanel).
+ *   - Items field rename: `unit_cost` → `rate` (E11).
+ *
+ * Chat 24 R0: LineItemsPanel removed (Future_Tasks §13). Items section
+ * now uses the existing LineItemsBreakdown component from the grid
+ * drilldown, which accepts a `canEdit` prop computed at the drawer level
+ * (replacing LineItemsPanel's internal `isBudgetEditable + isDesktop`
+ * derivation). `initialFocus` semantics preserved via a passive
+ * `data-initial-focus` attribute on the breakdown root.
  *
  * Spec-locked behaviour preserved:
  *   - dirtyFields-only patch body
@@ -48,7 +55,7 @@ import {
 import { useAuth } from '@/context/AuthContext';
 import { useIsDesktop } from '@/lib/useIsDesktop';
 import { usePatchBudgetLine } from '@/hooks/budgets';
-import { LineItemsPanel } from './LineItemsPanel';
+import { LineItemsBreakdown } from './grid/PerLineTransactionDrilldown/LineItemsBreakdown';
 import { CostCodePicker } from './CostCodePicker';
 import { isBudgetEditable, isCostCodeMutable } from '@/lib/budgetCapability';
 
@@ -433,9 +440,10 @@ export function LineDrawer({ budget, projectId, lineId, focus, onClose }) {
           </form>
 
           <div className="border-t border-slate-200 pt-6">
-            <LineItemsPanel
+            <LineItemsBreakdown
               budget={budget}
               line={line}
+              canEdit={editable}
               initialFocus={focus === 'items'}
             />
           </div>

@@ -116,7 +116,7 @@ function ItemRow({ item, lineId, budgetId, canEdit }) {
   );
 }
 
-export function LineItemsBreakdown({ line, budget, canEdit }) {
+export function LineItemsBreakdown({ line, budget, canEdit, initialFocus }) {
   const items = line?.items ?? [];
   const createMut = useCreateLineItem(line.id, budget.id);
 
@@ -129,7 +129,10 @@ export function LineItemsBreakdown({ line, budget, canEdit }) {
   }
 
   return (
-    <div data-testid={`bg2-breakdown-${line.id}`}>
+    <div
+      data-testid={`bg2-breakdown-${line.id}`}
+      data-initial-focus={initialFocus ? 'items' : ''}
+    >
       <table className="w-full text-sm">
         <thead className="text-xs uppercase tracking-wide text-slate-500">
           <tr>
