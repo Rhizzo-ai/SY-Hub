@@ -160,9 +160,12 @@ def _validate_budget(
         raise ValueError(
             f"Budget {budget_id} not found for project {project_id}"
         )
-    if b.status in ("Superseded", "Closed"):
+    # Build pack G2.5 (D7): POs must be raised against an Active budget.
+    # Draft / Locked / Superseded / Closed all reject.
+    if b.status != "Active":
         raise ValueError(
-            f"Cannot create a PO against a {b.status} budget"
+            f"Cannot create a PO against a {b.status} budget — "
+            f"only Active budgets accept new POs (po/budget-not-active)"
         )
     return b
 

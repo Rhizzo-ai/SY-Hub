@@ -32,6 +32,9 @@ class TransitionError(ValueError):
 
 
 # Allowed transition map. Source-of-truth for the R2 state machine.
+# `closed` and `voided` are TERMINAL per build pack §2.4 — reopen-from-
+# closed is deliberately NOT in scope for Prompt 2.5 (logged to
+# SY_Homes_Future_Tasks.md §15).
 ALLOWED_TRANSITIONS: dict[str, set[str]] = {
     "draft":                {"pending_approval", "issued", "voided"},
     "pending_approval":     {"approved", "draft", "voided"},      # R3 does the work
@@ -40,8 +43,7 @@ ALLOWED_TRANSITIONS: dict[str, set[str]] = {
                              "voided", "closed"},
     "partially_receipted":  {"receipted", "closed"},
     "receipted":            {"closed"},
-    "closed":               {"approved", "issued",
-                             "partially_receipted", "receipted"},  # R4 reopen
+    "closed":               set(),                                  # terminal
     "voided":               set(),                                  # terminal
 }
 

@@ -115,14 +115,15 @@ PERMISSION_CATALOGUE += _perms_for(
     sensitive={"view_sensitive", "archive"},
 )
 # Chat 24 §R2 (Prompt 2.5) — purchase orders.
-# sensitive: view_sensitive (pricing), delete, void, reopen.
+# Spec §2.3: exactly 11 pos.* permissions. Sensitive: view_sensitive
+# (pricing), delete, void.
 PERMISSION_CATALOGUE += _perms_for(
     "pos",
     include=[
         "view", "view_sensitive", "create", "edit", "edit_issued",
-        "delete", "submit", "approve", "void", "close", "reopen", "receipt",
+        "delete", "issue", "approve", "void", "close", "receipt",
     ],
-    sensitive={"view_sensitive", "delete", "void", "reopen"},
+    sensitive={"view_sensitive", "delete", "void"},
 )
 PERMISSION_CATALOGUE += _perms_for(
     "commitments",
@@ -259,9 +260,10 @@ ROLE_PERMISSIONS["project_manager"] = {
     "entities.view",
     # Chat 24 §R1 (Prompt 2.5) — suppliers
     "suppliers.view", "suppliers.create", "suppliers.edit",
-    # Chat 24 §R2 (Prompt 2.5) — purchase orders
+    # Chat 24 §R2 (Prompt 2.5) — purchase orders (contracts_manager
+    # role per build pack §9.2 — PM raises POs, issues, receipts, voids)
     "pos.view", "pos.create", "pos.edit",
-    "pos.submit", "pos.void", "pos.receipt",
+    "pos.issue", "pos.void", "pos.receipt",
 }
 
 # finance
@@ -285,10 +287,10 @@ ROLE_PERMISSIONS["finance"] = {
     # Chat 24 §R1 (Prompt 2.5) — suppliers (full incl. sensitive + archive)
     "suppliers.view", "suppliers.view_sensitive",
     "suppliers.create", "suppliers.edit", "suppliers.archive",
-    # Chat 24 §R2 (Prompt 2.5) — purchase orders
-    "pos.view", "pos.view_sensitive",
-    "pos.create", "pos.edit", "pos.edit_issued",
-    "pos.approve", "pos.void", "pos.close", "pos.receipt",
+    # Chat 24 §R2 (Prompt 2.5) — purchase orders (finance_director per
+    # build pack §9.2 — finance APPROVES and SEES money but does NOT
+    # raise/issue/receipt POs).
+    "pos.view", "pos.view_sensitive", "pos.approve",
 }
 
 # site_manager

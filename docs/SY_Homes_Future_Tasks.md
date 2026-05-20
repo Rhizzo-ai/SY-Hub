@@ -481,4 +481,19 @@ and `docs/chat-summaries/chat-21-closing.md`.
 - **Sizing.** ~2 days. **P2** — schedule after Track 2 (Cost) hits Phase 3.
 - **Surfaced in.** Chat 24 build pack §11 REFUSE SCOPE CREEP list.
 
-## 17. (placeholder — future entries appended here)
+## 17. PO reopen-from-closed (Chat 24 §R2 deferred)
+
+- **What.** Build pack §2.4 status machine treats `closed` as TERMINAL.
+  Reopening a closed PO (closed → approved / issued / partially_receipted
+  / receipted) was briefly declared in `ALLOWED_TRANSITIONS` during R2
+  draft but removed before R2 ship to keep the state machine within
+  spec. No driver / endpoint exists.
+- **Why deferred.** Reopen-from-closed is not in the Prompt 2.5 brief.
+  It belongs to a future "PO admin override" track alongside cross-prompt
+  invariants (e.g. allowing super_admin to reopen for finance-end-of-month
+  closeout corrections).
+- **Sizing.** ~0.5 day backend + ~0.5 day frontend confirm-dialog.
+  **P2** — schedule when the operations team flags concrete need.
+- **Surfaced in.** Chat 24 R2 operator audit, 2026-05-20.
+
+## 18. (placeholder — future entries appended here)

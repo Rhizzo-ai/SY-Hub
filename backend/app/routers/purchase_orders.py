@@ -285,7 +285,7 @@ def submit_endpoint(
     db: Session = Depends(get_db),
 ):
     principal, perms = pair
-    _require(perms, "pos.submit")
+    _require(perms, "pos.issue")
     return _run_transition(
         db, svc.submit_po,
         principal=principal, perms=perms,
@@ -302,9 +302,10 @@ def issue_endpoint(
     db: Session = Depends(get_db),
 ):
     principal, perms = pair
-    # Issuing after approval is also gated by pos.submit (the same
-    # operational persona): a finance/director may issue.
-    _require(perms, "pos.submit")
+    # Both /submit (draft → issued auto path) and /issue (approved → issued)
+    # gate against pos.issue per build pack §2.3 (one permission code,
+    # two transition surfaces).
+    _require(perms, "pos.issue")
     return _run_transition(
         db, svc.issue_po,
         principal=principal, perms=perms,

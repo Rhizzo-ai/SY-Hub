@@ -136,20 +136,32 @@ def _seed_budget_and_lines(engine, admin, project_id: str) -> tuple[str, str]:
             WHERE status = 'Active' ORDER BY code LIMIT 1
         """)).first()
         assert cc_row is not None, "need at least one Active cost_code seeded"
-        # Find an appraisal in this project, falling back to NULL is no good
-        # — source_appraisal_id is NOT NULL. We need one. The seed_test_users
-        # fixture is expected to provide one; if not, this test must skip.
-        app_id = c.execute(text("""
-            SELECT id FROM appraisals
-            WHERE project_id = :pid LIMIT 1
-        """), {"pid": project_id}).scalar()
-        if app_id is None:
-            pytest.skip("No appraisal seeded for this project — operator must "
-                        "seed an appraisal or build the budget via API first")
         # Find creator user_id.
         admin_id = c.execute(text("""
             SELECT id FROM users WHERE email = :em
         """), {"em": ADMIN_EMAIL}).scalar()
+        # Insert a minimal Approved appraisal for the budget FK. The
+        # source_appraisal_id on `budgets` is NOT NULL and the budgets
+        # service requires Approved status — we satisfy both with a
+        # direct INSERT (build pack §M2 hardens this against skips so
+        # G2.* gates always execute).
+        app_id = c.execute(text("""
+            INSERT INTO appraisals (
+                project_id, version_number, name, reference_date,
+                status, created_by_user_id,
+                land_purchase_price, sdlt_category, developer_relief,
+                contingency_pct, target_profit_on_cost_pct,
+                target_profit_on_gdv_pct, project_duration_months,
+                appraisal_group_id, is_current, scenario
+            ) VALUES (
+                :pid, 1, 'R2 test appraisal', CURRENT_DATE,
+                'Approved', :uid,
+                0, 'Residential_Standard', false,
+                5, 20, 17, 18,
+                gen_random_uuid(), true, 'Base'
+            )
+            RETURNING id
+        """), {"pid": project_id, "uid": admin_id}).scalar()
 
         budget_id = c.execute(text("""
             INSERT INTO budgets (
@@ -190,6 +202,8 @@ def project_setup(admin, engine):
         c.execute(text("DELETE FROM purchase_orders WHERE project_id = :pid"),
                   {"pid": project_id})
         c.execute(text("DELETE FROM budgets WHERE project_id = :pid"),
+                  {"pid": project_id})
+        c.execute(text("DELETE FROM appraisals WHERE project_id = :pid"),
                   {"pid": project_id})
         c.execute(text("DELETE FROM projects WHERE id = :pid"),
                   {"pid": project_id})
@@ -488,3 +502,99 @@ class TestTransitions:
         assert bad.status_code == 403, bad.text
         detail = bad.json()["detail"]
         assert "supplier_id" in detail["disallowed_fields"]
+
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Budget-active guard (D7 / G2.5)
+# ─────────────────────────────────────────────────────────────────────────
+
+class TestBudgetActiveGuard:
+    def test_non_active_budget_rejects_po_create_with_422(
+        self, admin, project_setup, engine,
+    ):
+        # Flip the seeded Active budget to Draft → POST must 422.
+        with engine.begin() as c:
+            c.execute(text("""
+                UPDATE budgets SET status = 'Draft' WHERE id = :bid
+            """), {"bid": project_setup["budget_id"]})
+        r = admin.post(
+            f"{BASE_URL}/api/v1/projects/{project_setup['project_id']}/purchase-orders",
+            json=_po_create_body(project_setup),
+        )
+        assert r.status_code == 422, r.text
+        detail = r.json()["detail"].lower()
+        assert "active" in detail or "budget-not-active" in detail, detail
+
+    def test_superseded_budget_rejects_po_create(
+        self, admin, project_setup, engine,
+    ):
+        with engine.begin() as c:
+            c.execute(text("""
+                UPDATE budgets SET status = 'Superseded' WHERE id = :bid
+            """), {"bid": project_setup["budget_id"]})
+        r = admin.post(
+            f"{BASE_URL}/api/v1/projects/{project_setup['project_id']}/purchase-orders",
+            json=_po_create_body(project_setup),
+        )
+        assert r.status_code == 422, r.text
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Concurrency — G2.7 (OPERATOR-VERIFICATION-PENDING, pytest-xdist required)
+# ─────────────────────────────────────────────────────────────────────────
+
+class TestConcurrentNumbering:
+    """G2.7: concurrent PO create from the same prefix must yield
+    sequential numbers with no duplicates and no unique-constraint
+    violations.
+
+    Run mode:
+      pytest -n 4 backend/tests/test_purchase_orders_api.py::TestConcurrentNumbering
+
+    Inside the worker the test uses a Python `ThreadPoolExecutor` to
+    fan out 8 concurrent POST calls against the SAME default prefix.
+    The DB-level SELECT FOR UPDATE on the prefix row serialises the
+    allocations, and the `ux_po_tenant_number` unique constraint will
+    catch any collision regression.
+    """
+
+    def test_concurrent_creates_yield_sequential_numbers_no_dupes(
+        self, admin, project_setup,
+    ):
+        import concurrent.futures
+        url = (
+            f"{BASE_URL}/api/v1/projects/"
+            f"{project_setup['project_id']}/purchase-orders"
+        )
+        body = _po_create_body(project_setup)
+        N = 8
+
+        # Each thread re-uses the admin requests.Session — cookie jar is
+        # shared (httpx-style sessions are not thread-safe in general, but
+        # requests.Session is documented as safe for read-only cookies +
+        # concurrent POSTs).
+        def _post():
+            return admin.post(url, json=body)
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=N) as ex:
+            futures = [ex.submit(_post) for _ in range(N)]
+            results = [f.result() for f in futures]
+
+        # Every call must succeed (no unique-constraint violation).
+        statuses = [r.status_code for r in results]
+        assert all(s == 201 for s in statuses), (
+            f"expected all 201, got {statuses} (bodies: "
+            f"{[r.text[:200] for r in results]})"
+        )
+
+        po_numbers = sorted(r.json()["po_number"] for r in results)
+        assert len(set(po_numbers)) == N, (
+            f"duplicate po_numbers in concurrent allocation: {po_numbers}"
+        )
+        # Sequential 0001..0008.
+        expected = [f"PO-{i:04d}" for i in range(1, N + 1)]
+        assert po_numbers == expected, (
+            f"concurrent allocation produced gaps or reordering — "
+            f"got {po_numbers}, expected {expected}"
+        )

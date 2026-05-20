@@ -67,6 +67,14 @@ class TestTransitionAssertion:
         with pytest.raises(po_transitions.TransitionError):
             po_transitions.assert_transition("voided", "approved")
 
+    def test_closed_is_terminal(self):
+        # Build pack §2.4 — `closed` has no outgoing transitions in
+        # Prompt 2.5. Reopen-from-closed deferred to Future_Tasks §17.
+        for tgt in ("approved", "issued", "partially_receipted", "receipted",
+                    "voided", "draft"):
+            with pytest.raises(po_transitions.TransitionError):
+                po_transitions.assert_transition("closed", tgt)
+
     def test_unknown_status_raises(self):
         with pytest.raises(po_transitions.TransitionError):
             po_transitions.assert_transition("bogus", "draft")
@@ -74,11 +82,6 @@ class TestTransitionAssertion:
     def test_issued_to_partially_or_fully_receipted_or_closed_or_voided(self):
         for tgt in ("partially_receipted", "receipted", "closed", "voided"):
             po_transitions.assert_transition("issued", tgt)
-
-    def test_closed_can_reopen_to_active_states(self):
-        # R4 path — declared in the map even though R2 doesn't drive it.
-        for tgt in ("approved", "issued", "partially_receipted", "receipted"):
-            po_transitions.assert_transition("closed", tgt)
 
     def test_receipted_can_only_close(self):
         po_transitions.assert_transition("receipted", "closed")

@@ -46,6 +46,7 @@ def upgrade() -> None:
     # ─── 1. Enum extensions ──────────────────────────────────────────────────
     _add_enum_value_if_missing("permission_resource", "pos")
     _add_enum_value_if_missing("permission_action", "edit_issued")
+    _add_enum_value_if_missing("permission_action", "issue")
     _add_enum_value_if_missing("permission_action", "void")
     _add_enum_value_if_missing("permission_action", "close")
     _add_enum_value_if_missing("permission_action", "receipt")
@@ -53,6 +54,9 @@ def upgrade() -> None:
     _add_enum_value_if_missing("audit_action", "Issue")
 
     # ─── 2. Permission catalogue rows ───────────────────────────────────────
+    # Build pack §2.3 — exactly 11 pos.* rows. Combined with R1's 5
+    # suppliers.* rows (migration 0029), this brings the catalogue
+    # from 86 → 102 permissions (G2.8 gate).
     op.execute("""
         INSERT INTO permissions (code, resource, action, description, sensitive)
         VALUES
@@ -81,11 +85,12 @@ def upgrade() -> None:
              'pos'::permission_resource,
              'delete'::permission_action,
              'Delete draft purchase orders only.', TRUE),
-            ('pos.submit',
+            ('pos.issue',
              'pos'::permission_resource,
-             'submit'::permission_action,
-             'Submit a draft PO for approval, or issue when '
-             'approval_required is false.', FALSE),
+             'issue'::permission_action,
+             'Move a PO into the issued state — either via submit '
+             '(no approval required) or via issue after approval.',
+             FALSE),
             ('pos.approve',
              'pos'::permission_resource,
              'approve'::permission_action,
@@ -98,10 +103,6 @@ def upgrade() -> None:
              'pos'::permission_resource,
              'close'::permission_action,
              'Close a partially-receipted or receipted PO.', FALSE),
-            ('pos.reopen',
-             'pos'::permission_resource,
-             'reopen'::permission_action,
-             'Reopen a closed PO back to its prior status.', TRUE),
             ('pos.receipt',
              'pos'::permission_resource,
              'receipt'::permission_action,
@@ -110,6 +111,27 @@ def upgrade() -> None:
     """)
 
     # ─── 3. Role grants ─────────────────────────────────────────────────────
+    # Build pack §9.2 maps role intent to the in-repo role catalogue:
+    #
+    #   spec name           in-repo code      relationship
+    #   --------------------------------------------------
+    #   super_admin         super_admin       1:1
+    #   admin               (none)            director (one step below)
+    #                                         already has all-but-admin.
+    #   director            director          1:1
+    #   finance_director    finance           1:1 (renamed)
+    #   contracts_manager   project_manager   1:1 (renamed)
+    #   site_manager        site_manager      1:1
+    #   designer            (none)            no equivalent in this repo;
+    #                                         deliberate no-op for now.
+    #
+    # Grant matrix (role × code):
+    #   super_admin / director: ALL 11
+    #   finance:                view, view_sensitive, approve
+    #                           (finance APPROVES + SEES money; does NOT
+    #                            raise/issue/receipt POs — build pack §9.2)
+    #   project_manager:        view, create, edit, issue, void, receipt
+    #   site_manager:           view, receipt
     op.execute("""
         INSERT INTO role_permissions (role_id, permission_id)
         SELECT r.id, p.id
@@ -118,20 +140,18 @@ def upgrade() -> None:
                 WHEN 'super_admin' THEN ARRAY[
                     'pos.view','pos.view_sensitive',
                     'pos.create','pos.edit','pos.edit_issued',
-                    'pos.delete','pos.submit','pos.approve',
-                    'pos.void','pos.close','pos.reopen','pos.receipt']
+                    'pos.delete','pos.issue','pos.approve',
+                    'pos.void','pos.close','pos.receipt']
                 WHEN 'director' THEN ARRAY[
                     'pos.view','pos.view_sensitive',
                     'pos.create','pos.edit','pos.edit_issued',
-                    'pos.delete','pos.submit','pos.approve',
-                    'pos.void','pos.close','pos.reopen','pos.receipt']
+                    'pos.delete','pos.issue','pos.approve',
+                    'pos.void','pos.close','pos.receipt']
                 WHEN 'finance' THEN ARRAY[
-                    'pos.view','pos.view_sensitive',
-                    'pos.create','pos.edit','pos.edit_issued',
-                    'pos.approve','pos.void','pos.close','pos.receipt']
+                    'pos.view','pos.view_sensitive','pos.approve']
                 WHEN 'project_manager' THEN ARRAY[
                     'pos.view','pos.create','pos.edit',
-                    'pos.submit','pos.void','pos.receipt']
+                    'pos.issue','pos.void','pos.receipt']
                 WHEN 'site_manager' THEN ARRAY[
                     'pos.view','pos.receipt']
                 ELSE ARRAY[]::text[]
