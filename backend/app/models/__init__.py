@@ -91,6 +91,9 @@ from app.models.purchase_orders import (
 from app.models.po_approvals import (
     PurchaseOrderApproval, PO_APPROVAL_RESOLUTIONS,
 )
+from app.models.po_receipts import (
+    PurchaseOrderReceipt, PurchaseOrderReceiptLine, PurchaseOrderReceiptPhoto,
+)
 
 __all__ = [
     "Tenant",

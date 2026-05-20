@@ -32,10 +32,10 @@ class TestMigration0028Schema:
             head = c.execute(
                 text("SELECT version_num FROM alembic_version")
             ).scalar()
-        # Live head bumped again by Chat 24 R1/R2/R3 (Prompt 2.5).
+        # Live head bumped again by Chat 24 R1/R2/R3/R4 (Prompt 2.5).
         # Function name retained per Future_Tasks polish entry.
-        assert head == "0032_po_approvals", (
-            f"expected 0032_po_approvals, got {head!r}"
+        assert head == "0033_po_receipts", (
+            f"expected 0033_po_receipts, got {head!r}"
         )
 
     def test_table_and_partial_unique_indexes_present(self, engine):

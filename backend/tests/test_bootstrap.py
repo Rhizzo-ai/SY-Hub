@@ -198,7 +198,7 @@ def test_detect_db_state_at_head():
     current = B.detect_db_state(ctx)
     head = B._alembic_heads()
     assert current == head
-    assert current.startswith("0032_") or current == head
+    assert current.startswith("0033_") or current == head
 
 
 def test_detect_db_state_unstamped(ephemeral_db: str):
@@ -223,9 +223,11 @@ def test_alembic_heads_helper_returns_single_head():
     # user_preferences table migration landed.
     # Bumped again by Chat 24 R1/R2/R3 (Prompt 2.5): 0028_ → 0032_
     # when suppliers / prefixes / purchase_orders / po_approvals landed.
+    # Bumped again by Chat 24 R4 (Prompt 2.5): 0032_ → 0033_ when
+    # purchase_order_receipts landed.
     # See chat-15-closing §3 — this sentinel is "part of any migration's
     # bookkeeping" and must be bumped whenever the head moves.
-    assert head.startswith("0032_"), f"unexpected head id: {head}"
+    assert head.startswith("0033_"), f"unexpected head id: {head}"
 
 
 # ----------------------------------------------------------------------

@@ -129,11 +129,11 @@ class TestMigration0025Schema:
         # "0025_actuals" to "0026_ai_capture_costs_perm" when migration
         # 0026 landed in Chat 20. Updated again by Chat 23 R1.3 when
         # 0027 landed, by Chat 23 R1.4 when 0028 landed, and by
-        # Chat 24 R1/R2/R3 (Prompt 2.5) when 0029/0030/0031/0032 landed.
+        # Chat 24 R1/R2/R3/R4 (Prompt 2.5) when 0029/0030/0031/0032/0033 landed.
         # Function name retained — renaming is out of scope (see
         # chat-22 §2 + Future_Tasks polish entry).
-        assert head == "0032_po_approvals", \
-            f"expected 0032_po_approvals, got {head!r}"
+        assert head == "0033_po_receipts", \
+            f"expected 0033_po_receipts, got {head!r}"
 
     def test_actuals_has_51_columns(self, engine):
         with engine.connect() as c:

@@ -543,3 +543,169 @@ def list_all_pending_approvals(
         db, user=principal.user, perms=perms,
     )
     return {"items": items, "total": len(items)}
+
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Receipts (Chat 24 §R4)
+# ─────────────────────────────────────────────────────────────────────────
+
+class ReceiptLineInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    po_line_id: uuid.UUID
+    quantity_received: float = Field(..., gt=0)
+
+
+class ReceiptPhotoInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    file_path: str = Field(..., min_length=1, max_length=4000)
+    file_type: Optional[str] = Field("application/octet-stream", max_length=100)
+    file_size_bytes: int = Field(..., gt=0)
+    original_filename: str = Field(..., min_length=1, max_length=500)
+    caption: Optional[str] = Field(None, max_length=500)
+
+
+class ReceiptCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    received_date: date
+    delivery_note_reference: Optional[str] = Field(None, max_length=100)
+    notes: Optional[str] = Field(None)
+    lines: List[ReceiptLineInput] = Field(..., min_length=1)
+    photos: List[ReceiptPhotoInput] = Field(default_factory=list)
+
+
+class ReceiptUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    received_date: Optional[date] = None
+    delivery_note_reference: Optional[str] = Field(None, max_length=100)
+    notes: Optional[str] = None
+
+
+def _map_receipt_error(e: Exception) -> HTTPException:
+    """Translate a ReceiptError into the right HTTP status."""
+    from app.services.po_receipts import ReceiptError
+    if isinstance(e, ReceiptError):
+        code = (e.code or "")
+        if code == "po/receipt-wrong-status":
+            return HTTPException(status_code=409, detail={"code": code, "message": str(e)})
+        if code in (
+            "po/receipt-edit-forbidden", "po/receipt-delete-forbidden",
+            "po/receipt-backdate-forbidden",
+        ):
+            return HTTPException(status_code=403, detail={"code": code, "message": str(e)})
+        return HTTPException(status_code=422, detail={"code": code, "message": str(e)})
+    return HTTPException(status_code=422, detail=str(e))
+
+
+@router.get("/purchase-orders/{po_id}/receipts")
+def list_receipts_endpoint(
+    po_id: uuid.UUID,
+    pair: tuple[Principal, UserPermissions] = Depends(_perm_dep),
+    db: Session = Depends(get_db),
+):
+    principal, perms = pair
+    _require(perms, "pos.view")
+    from app.services import po_receipts as rsvc
+    try:
+        rows = rsvc.list_receipts(
+            db, user=principal.user, perms=perms, po_id=po_id,
+        )
+    except PoNotFound:
+        raise HTTPException(status_code=404, detail="Purchase order not found")
+    return {"items": [rsvc.serialise(r) for r in rows], "total": len(rows)}
+
+
+@router.post("/purchase-orders/{po_id}/receipts", status_code=201)
+def create_receipt_endpoint(
+    po_id: uuid.UUID,
+    body: ReceiptCreate,
+    request: Request,
+    pair: tuple[Principal, UserPermissions] = Depends(_perm_dep),
+    db: Session = Depends(get_db),
+):
+    principal, perms = pair
+    _require(perms, "pos.receipt")
+    from app.services import po_receipts as rsvc
+    payload = body.model_dump(mode="python", exclude_unset=False)
+    try:
+        receipt = rsvc.create_receipt(
+            db, user=principal.user, perms=perms,
+            po_id=po_id, payload=payload, request=request,
+        )
+    except PoNotFound:
+        raise HTTPException(status_code=404, detail="Purchase order not found")
+    except rsvc.ReceiptError as e:
+        raise _map_receipt_error(e)
+    db.commit()
+    db.refresh(receipt)
+    return rsvc.serialise(receipt)
+    db.commit()
+    db.refresh(receipt)
+    return rsvc.serialise(receipt)
+
+
+@router.get("/receipts/{receipt_id}")
+def get_receipt_endpoint(
+    receipt_id: uuid.UUID,
+    pair: tuple[Principal, UserPermissions] = Depends(_perm_dep),
+    db: Session = Depends(get_db),
+):
+    principal, perms = pair
+    _require(perms, "pos.view")
+    from app.services import po_receipts as rsvc
+    try:
+        receipt = rsvc.get_receipt(
+            db, user=principal.user, perms=perms, receipt_id=receipt_id,
+        )
+    except PoNotFound:
+        raise HTTPException(status_code=404, detail="Receipt not found")
+    return rsvc.serialise(receipt)
+
+
+@router.patch("/receipts/{receipt_id}")
+def patch_receipt_endpoint(
+    receipt_id: uuid.UUID,
+    body: ReceiptUpdate,
+    request: Request,
+    pair: tuple[Principal, UserPermissions] = Depends(_perm_dep),
+    db: Session = Depends(get_db),
+):
+    principal, perms = pair
+    _require(perms, "pos.view")  # base read access
+    from app.services import po_receipts as rsvc
+    payload = body.model_dump(mode="python", exclude_unset=True)
+    try:
+        receipt = rsvc.update_receipt(
+            db, user=principal.user, perms=perms,
+            receipt_id=receipt_id, payload=payload, request=request,
+        )
+    except PoNotFound:
+        raise HTTPException(status_code=404, detail="Receipt not found")
+    except rsvc.ReceiptError as e:
+        raise _map_receipt_error(e)
+    db.commit()
+    db.refresh(receipt)
+    return rsvc.serialise(receipt)
+
+
+@router.delete("/receipts/{receipt_id}")
+def delete_receipt_endpoint(
+    receipt_id: uuid.UUID,
+    request: Request,
+    pair: tuple[Principal, UserPermissions] = Depends(_perm_dep),
+    db: Session = Depends(get_db),
+):
+    principal, perms = pair
+    _require(perms, "pos.view")  # base read access
+    from app.services import po_receipts as rsvc
+    try:
+        result = rsvc.delete_receipt(
+            db, user=principal.user, perms=perms,
+            receipt_id=receipt_id, request=request,
+        )
+    except PoNotFound:
+        raise HTTPException(status_code=404, detail="Receipt not found")
+    except rsvc.ReceiptError as e:
+        raise _map_receipt_error(e)
+    db.commit()
+    return result

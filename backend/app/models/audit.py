@@ -35,6 +35,9 @@ AUDIT_ACTIONS = (
     # Chat 24 §R1 (Prompt 2.5) — supplier directory lifecycle.
     # Enum values added in /app/backend/alembic/versions/0029_suppliers_prefixes.py.
     "Archive", "Restore",
+    # Chat 24 §R4 (Prompt 2.5) — PO physical-delivery capture.
+    # Enum value added in /app/backend/alembic/versions/0033_po_receipts.py.
+    "Receipt",
 )
 
 
