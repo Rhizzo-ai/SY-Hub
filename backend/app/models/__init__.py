@@ -88,6 +88,9 @@ from app.models.purchase_orders import (
     PO_STATUSES, TERMINAL_PO_STATUSES,
     ISSUED_OR_BEYOND_STATUSES, HEADER_ANNOTATION_FIELDS,
 )
+from app.models.po_approvals import (
+    PurchaseOrderApproval, PO_APPROVAL_RESOLUTIONS,
+)
 
 __all__ = [
     "Tenant",
@@ -125,4 +128,7 @@ __all__ = [
     "TERMINAL_PO_STATUSES",
     "ISSUED_OR_BEYOND_STATUSES",
     "HEADER_ANNOTATION_FIELDS",
+    # Chat 24 §R3 (Prompt 2.5) additions
+    "PurchaseOrderApproval",
+    "PO_APPROVAL_RESOLUTIONS",
 ]

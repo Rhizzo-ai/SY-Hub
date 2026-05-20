@@ -18,6 +18,59 @@ Frontend / actuals / commitments / Xero are out of scope until later prompts.
 
 ## What's been implemented
 
+### 2026-05-20 — Chat 24 R3 ✓ PO Approvals + commitment recompute (Prompt 2.5) — OPERATOR-VERIFICATION-PENDING
+- **Migration `0032_po_approvals.py`:**
+  * po_approval_resolution ENUM (approved, rejected)
+  * `purchase_order_approvals` table with budget_snapshot jsonb,
+    resolution_consistency CHECK, reject-requires-notes CHECK, and
+    partial unique idx ux_poa_one_open_per_po (at most one open
+    approval row per PO)
+  * `fn_budget_line_recompute_commitments(uuid)` — canonical
+    commitment-recompute SQL function
+  * Trigger `trg_po_status_commitments` AFTER UPDATE OF status on
+    purchase_orders → recomputes commitments on every linked line
+  * Trigger `trg_pol_commitments_on_change` AFTER INSERT/UPDATE/DELETE
+    on purchase_order_lines → handles line reassignment (OLD + NEW)
+- **Model `PurchaseOrderApproval`** with PO_APPROVAL_RESOLUTIONS.
+- **Services:**
+  * `po_commitments.py` — over-budget gate (`evaluate_budget_overrun`),
+    snapshot builder (`build_budget_snapshot`). Uses LIVE column names
+    confirmed against `BudgetLine` model: current_budget,
+    committed_value, actuals_to_date.
+  * `po_approvals.py` — submit_po_with_budget_gate (3 branches:
+    within-budget+!approval=auto-issue, within-budget+approval=
+    auto-approved row, over-budget=pending_approval+row), approve_po,
+    reject_po (notes required), unlock_po (approved→draft +
+    notify prior approver), list_pending_approvals (with
+    self-submitter hide). SELF-APPROVAL GUARD enforced — submitter
+    cannot approve OR reject own PO (403 `po/self-approval-forbidden`).
+- **Router:** 6 new endpoints under `/api/v1/`:
+  * POST /purchase-orders/{id}/approve  → pos.approve
+  * POST /purchase-orders/{id}/reject   → pos.approve
+  * POST /purchase-orders/{id}/unlock   → pos.edit
+  * GET  /purchase-orders/{id}/approvals → pos.view
+  * GET  /projects/{id}/approvals/pending → pos.approve
+  * GET  /approvals/pending → pos.approve
+  * Also: existing POST /purchase-orders/{id}/submit replaced with
+    budget-gated implementation. Total PO+approval routes mounted: 15.
+- **Notifications:** Approval_Requested broadcast to all tenant
+  approvers (except submitter) on over-budget submit;
+  Approval_Decision to submitter on approve/reject; to prior approver
+  on unlock.
+- **Docs:** `docs/engineering-invariants.md` updated with the
+  commitment contract (§R3) and self-approval guard rule.
+- **Tests (25 total):**
+  * `test_po_approvals_unit.py` — 8 unit tests verified PASSING
+    in-container (budget gate math + snapshot aggregation + exception
+    types).
+  * `test_po_approvals_api.py` — 17 integration tests
+    OPERATOR-VERIFICATION-PENDING (5 budget gate G3.1-G3.5,
+    4 approve/reject/unlock G3.6-G3.9, 2 self-approval,
+    5 commitment matrix, 1 pending list visibility).
+- **Scope honoured:** Receipts → R4. Frontend → R5/R6. Approval-amount
+  thresholds → future tracks (logged §15).
+- **Commit:** TBD.
+
 ### 2026-05-20 — Chat 24 R2 ✓ Purchase Orders core (Prompt 2.5) — OPERATOR-VERIFICATION-PENDING
 - **Migrations:**
   * `0030_purchase_orders.py` — po_status enum (8 states), purchase_orders +

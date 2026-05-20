@@ -97,6 +97,26 @@ class POCloseBody(BaseModel):
     reason: Optional[str] = Field(None, max_length=2000)
 
 
+class POSubmitBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    submission_reason: Optional[str] = Field(None, max_length=2000)
+
+
+class POApproveBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    notes: Optional[str] = Field(None, max_length=2000)
+
+
+class PORejectBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    notes: str = Field(..., min_length=1, max_length=2000)
+
+
+class POUnlockBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    reason: str = Field(..., min_length=1, max_length=2000)
+
+
 # ─────────────────────────────────────────────────────────────────────────
 # Auth helpers
 # ─────────────────────────────────────────────────────────────────────────
@@ -280,7 +300,8 @@ def _run_transition(
 @router.post("/purchase-orders/{po_id}/submit")
 def submit_endpoint(
     po_id: uuid.UUID,
-    request: Request,
+    body: POSubmitBody | None = None,
+    request: Request = None,
     pair: tuple[Principal, UserPermissions] = Depends(_perm_dep),
     db: Session = Depends(get_db),
 ):
@@ -289,12 +310,27 @@ def submit_endpoint(
     # persona triggers submit). The /issue endpoint (post-approval)
     # is gated by pos.issue.
     _require(perms, "pos.create")
-    return _run_transition(
-        db, svc.submit_po,
-        principal=principal, perms=perms,
-        include_sensitive=perms.has("pos.view_sensitive"),
-        po_id=po_id, request=request,
+    include_sensitive = perms.has("pos.view_sensitive")
+    from app.services import po_approvals as approvals_svc
+    try:
+        po, approval = approvals_svc.submit_po_with_budget_gate(
+            db, user=principal.user, perms=perms, po_id=po_id,
+            submission_reason=(body.submission_reason if body else None),
+            request=request,
+        )
+    except PoNotFound:
+        raise HTTPException(status_code=404, detail="Purchase order not found")
+    except TransitionError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    db.commit()
+    db.refresh(po)
+    out = svc.serialise(po, include_sensitive=include_sensitive)
+    out["approval"] = (
+        approvals_svc.serialise_approval(approval) if approval else None
     )
+    return out
 
 
 @router.post("/purchase-orders/{po_id}/issue")
@@ -349,3 +385,161 @@ def close_endpoint(
         include_sensitive=perms.has("pos.view_sensitive"),
         po_id=po_id, reason=body.reason, request=request,
     )
+
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# §R3 — Approval endpoints
+# ─────────────────────────────────────────────────────────────────────────
+
+@router.post("/purchase-orders/{po_id}/approve")
+def approve_endpoint(
+    po_id: uuid.UUID,
+    body: POApproveBody,
+    request: Request,
+    pair: tuple[Principal, UserPermissions] = Depends(_perm_dep),
+    db: Session = Depends(get_db),
+):
+    principal, perms = pair
+    _require(perms, "pos.approve")
+    include_sensitive = perms.has("pos.view_sensitive")
+    from app.services import po_approvals as approvals_svc
+    try:
+        po, row = approvals_svc.approve_po(
+            db, user=principal.user, perms=perms, po_id=po_id,
+            notes=body.notes, request=request,
+        )
+    except PoNotFound:
+        raise HTTPException(status_code=404, detail="Purchase order not found")
+    except approvals_svc.SelfApprovalForbidden:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "type": "po/self-approval-forbidden",
+                "title": "Submitter cannot approve their own PO",
+            },
+        )
+    except TransitionError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    db.commit()
+    db.refresh(po)
+    out = svc.serialise(po, include_sensitive=include_sensitive)
+    out["approval"] = approvals_svc.serialise_approval(row)
+    return out
+
+
+@router.post("/purchase-orders/{po_id}/reject")
+def reject_endpoint(
+    po_id: uuid.UUID,
+    body: PORejectBody,
+    request: Request,
+    pair: tuple[Principal, UserPermissions] = Depends(_perm_dep),
+    db: Session = Depends(get_db),
+):
+    principal, perms = pair
+    _require(perms, "pos.approve")
+    include_sensitive = perms.has("pos.view_sensitive")
+    from app.services import po_approvals as approvals_svc
+    try:
+        po, row = approvals_svc.reject_po(
+            db, user=principal.user, perms=perms, po_id=po_id,
+            notes=body.notes, request=request,
+        )
+    except PoNotFound:
+        raise HTTPException(status_code=404, detail="Purchase order not found")
+    except approvals_svc.SelfApprovalForbidden:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "type": "po/self-approval-forbidden",
+                "title": "Submitter cannot reject their own PO",
+            },
+        )
+    except TransitionError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    db.commit()
+    db.refresh(po)
+    out = svc.serialise(po, include_sensitive=include_sensitive)
+    out["approval"] = approvals_svc.serialise_approval(row)
+    return out
+
+
+@router.post("/purchase-orders/{po_id}/unlock")
+def unlock_endpoint(
+    po_id: uuid.UUID,
+    body: POUnlockBody,
+    request: Request,
+    pair: tuple[Principal, UserPermissions] = Depends(_perm_dep),
+    db: Session = Depends(get_db),
+):
+    principal, perms = pair
+    _require(perms, "pos.edit")
+    include_sensitive = perms.has("pos.view_sensitive")
+    from app.services import po_approvals as approvals_svc
+    try:
+        po = approvals_svc.unlock_po(
+            db, user=principal.user, perms=perms, po_id=po_id,
+            reason=body.reason, request=request,
+        )
+    except PoNotFound:
+        raise HTTPException(status_code=404, detail="Purchase order not found")
+    except TransitionError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    db.commit()
+    db.refresh(po)
+    return svc.serialise(po, include_sensitive=include_sensitive)
+
+
+@router.get("/purchase-orders/{po_id}/approvals")
+def list_po_approvals_endpoint(
+    po_id: uuid.UUID,
+    pair: tuple[Principal, UserPermissions] = Depends(_perm_dep),
+    db: Session = Depends(get_db),
+):
+    principal, perms = pair
+    _require(perms, "pos.view")
+    from app.services import po_approvals as approvals_svc
+    try:
+        po = svc.get_po(db, user=principal.user, perms=perms, po_id=po_id)
+    except PoNotFound:
+        raise HTTPException(status_code=404, detail="Purchase order not found")
+    rows = approvals_svc.list_approvals_for_po(db, po)
+    return {
+        "items": [approvals_svc.serialise_approval(r) for r in rows],
+        "total": len(rows),
+    }
+
+
+@router.get("/projects/{project_id}/approvals/pending")
+def list_project_pending_approvals(
+    project_id: uuid.UUID,
+    pair: tuple[Principal, UserPermissions] = Depends(_perm_dep),
+    db: Session = Depends(get_db),
+):
+    principal, perms = pair
+    _require(perms, "pos.approve")
+    from app.services import po_approvals as approvals_svc
+    items = approvals_svc.list_pending_approvals(
+        db, user=principal.user, perms=perms, project_id=project_id,
+    )
+    return {"items": items, "total": len(items)}
+
+
+@router.get("/approvals/pending")
+def list_all_pending_approvals(
+    pair: tuple[Principal, UserPermissions] = Depends(_perm_dep),
+    db: Session = Depends(get_db),
+):
+    principal, perms = pair
+    _require(perms, "pos.approve")
+    from app.services import po_approvals as approvals_svc
+    items = approvals_svc.list_pending_approvals(
+        db, user=principal.user, perms=perms,
+    )
+    return {"items": items, "total": len(items)}

@@ -124,6 +124,63 @@ These were surfaced in chat-19B and remain canonical:
 
 ---
 
+## Chat 24 — Purchase Orders & Commitments (Prompt 2.5)
+
+### Commitment contract (pinned per §2.2)
+
+`budget_lines.committed_value` is the canonical commitment column. Its
+value is recomputed by `fn_budget_line_recompute_commitments(uuid)`
+and is **mechanically tied to PO status**:
+
+```
+committed_value(budget_line) =
+  SUM(pol.net_amount)
+    FROM purchase_order_lines pol
+    JOIN purchase_orders po ON po.id = pol.purchase_order_id
+   WHERE pol.budget_line_id = <this_budget_line>
+     AND po.status IN ('approved', 'issued',
+                       'partially_receipted', 'receipted')
+```
+
+`pending_value` is the same sum filtered by
+`po.status IN ('draft', 'pending_approval')`. We do NOT persist
+`pending_value` as a column — it is derived on read (`/projects/{id}/budgets`
+serialiser, R5+). The DB has only `committed_value`.
+
+**`closed` and `voided` contribute ZERO** to both commitment and
+pending — committed_value snaps back to its previous value on close/void.
+
+Triggers:
+- `trg_po_status_commitments` on `purchase_orders` AFTER UPDATE OF status
+- `trg_pol_commitments_on_change` on `purchase_order_lines` AFTER INSERT
+  / UPDATE / DELETE (handles OLD + NEW budget_line on reassignment)
+
+### Over-budget approval gate (§4.2)
+
+A PO submission flips into `pending_approval` if, on **any** linked
+budget_line:
+
+```
+committed_value + actuals_to_date + this_po_net > current_budget
+```
+
+Within-budget submissions:
+- `approval_required=false` → auto-issue (`draft → issued`)
+- `approval_required=true`  → auto-approve (`draft → approved`),
+  approval row persisted as already-resolved for forensic audit
+
+Over-budget submissions force `pending_approval` regardless of the
+`approval_required` flag (the gate trumps the flag).
+
+### Self-approval guard
+
+The user who submitted a PO MUST NOT be able to approve OR reject it,
+**even if they hold `pos.approve`**. Surfaced as 403 with
+`detail.type = "po/self-approval-forbidden"`. The pending-approvals
+list endpoints also hide rows from their own submitters (UX guard).
+
+---
+
 ## Earlier chats
 
 See `docs/SY_Hub_2.3_Checkpoint3_Handoff.md` and
