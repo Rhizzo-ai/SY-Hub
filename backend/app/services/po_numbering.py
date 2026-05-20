@@ -114,6 +114,7 @@ def allocate_next_number(
         select(ProjectNumberPrefix)
         .where(ProjectNumberPrefix.id == resolved.id)
         .with_for_update()
+        .execution_options(populate_existing=True)
     )
     if locked is None:
         # Vanished between resolve + lock — treat as missing.

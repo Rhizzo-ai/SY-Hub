@@ -100,7 +100,7 @@ def _resolve_project(
     """
     # Project doesn't have tenant_id directly — it's derived via
     # primary_entity. Join through entities to enforce tenant scope.
-    from app.models.entities import Entity
+    from app.models.entity import Entity
     project = db.scalar(
         select(Project)
         .join(Entity, Entity.id == Project.primary_entity_id)

@@ -64,7 +64,7 @@ def _get_primary_entity_id(engine, admin_email: str) -> str:
         eid = c.execute(text("""
             SELECT e.id FROM entities e
             JOIN users u ON u.tenant_id = e.tenant_id
-            WHERE u.email = :em AND e.is_archived = false
+            WHERE u.email = :em
             ORDER BY e.created_at ASC LIMIT 1
         """), {"em": admin_email}).scalar()
     assert eid is not None, "test seed needs at least one entity in admin's tenant"

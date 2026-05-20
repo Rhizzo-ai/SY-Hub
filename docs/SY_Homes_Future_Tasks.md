@@ -496,4 +496,19 @@ and `docs/chat-summaries/chat-21-closing.md`.
   **P2** — schedule when the operations team flags concrete need.
 - **Surfaced in.** Chat 24 R2 operator audit, 2026-05-20.
 
-## 18. (placeholder — future entries appended here)
+## 18. Cold-start bootstrap blocked by 0018 guard (Prompt 2.5 R3 finding)
+
+Cold-start from empty DB blocked by 0018 guard (requires pre-seeded
+super_admin); from-scratch bootstrap / disaster-recovery rebuild needs
+the seed step to run interleaved before 0018. Pre-dates Chat 24
+(Prompt 2.1). Revisit against hard-constraint #5 (self-healing
+cold-start).
+
+- **Surfaced in.** Chat 24 R3 live-DB verification, 2026-02-20.
+- **Sizing.** ~0.5 day to refactor `app/bootstrap.py` to run RBAC seed
+  before migrations >= 0018, or to make 0018 idempotent against an
+  empty `users`/`user_roles` topology.
+- **Priority.** **P1** — required for any DR rebuild against a brand-new
+  cluster.
+
+## 19. (placeholder — future entries appended here)
