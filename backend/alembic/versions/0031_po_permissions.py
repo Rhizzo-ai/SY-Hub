@@ -125,13 +125,16 @@ def upgrade() -> None:
     #   designer            (none)            no equivalent in this repo;
     #                                         deliberate no-op for now.
     #
-    # Grant matrix (role × code):
+    # Grant matrix (role × code) — per build pack §2.3 default columns:
     #   super_admin / director: ALL 11
     #   finance:                view, view_sensitive, approve
     #                           (finance APPROVES + SEES money; does NOT
     #                            raise/issue/receipt POs — build pack §9.2)
-    #   project_manager:        view, create, edit, issue, void, receipt
+    #   project_manager:        view, view_sensitive, create, edit, issue,
+    #                           receipt, close, delete (8 perms — no
+    #                           edit_issued, no approve, no void)
     #   site_manager:           view, receipt
+    #   read_only:              view  (matches the read-only-everywhere pattern)
     op.execute("""
         INSERT INTO role_permissions (role_id, permission_id)
         SELECT r.id, p.id
@@ -150,8 +153,8 @@ def upgrade() -> None:
                 WHEN 'finance' THEN ARRAY[
                     'pos.view','pos.view_sensitive','pos.approve']
                 WHEN 'project_manager' THEN ARRAY[
-                    'pos.view','pos.create','pos.edit',
-                    'pos.issue','pos.void','pos.receipt']
+                    'pos.view','pos.view_sensitive','pos.create','pos.edit',
+                    'pos.issue','pos.receipt','pos.close','pos.delete']
                 WHEN 'site_manager' THEN ARRAY[
                     'pos.view','pos.receipt']
                 WHEN 'read_only' THEN ARRAY[

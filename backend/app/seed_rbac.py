@@ -260,10 +260,12 @@ ROLE_PERMISSIONS["project_manager"] = {
     "entities.view",
     # Chat 24 §R1 (Prompt 2.5) — suppliers
     "suppliers.view", "suppliers.create", "suppliers.edit",
-    # Chat 24 §R2 (Prompt 2.5) — purchase orders (contracts_manager
-    # role per build pack §9.2 — PM raises POs, issues, receipts, voids)
-    "pos.view", "pos.create", "pos.edit",
-    "pos.issue", "pos.void", "pos.receipt",
+    # Chat 24 §R2 (Prompt 2.5) — purchase orders.
+    # Spec §2.3 contracts_manager set: view, view_sensitive, create,
+    # edit, issue, receipt, close, delete. NO edit_issued, NO approve,
+    # NO void (void is super_admin/admin/director only per spec).
+    "pos.view", "pos.view_sensitive", "pos.create", "pos.edit",
+    "pos.issue", "pos.receipt", "pos.close", "pos.delete",
 }
 
 # finance
