@@ -10,7 +10,7 @@ import { authenticator } from 'otplib';
 const PREVIEW_URL =
   process.env.REACT_APP_PREVIEW_URL
   || process.env.REACT_APP_BACKEND_URL
-  || 'https://sy-budget-hub.preview.emergentagent.com';
+  || 'https://po-suppliers-phase2.preview.emergentagent.com';
 
 const PASSWORD = process.env.TEST_USER_PASSWORD || 'TestUser-Dev-2026!';
 

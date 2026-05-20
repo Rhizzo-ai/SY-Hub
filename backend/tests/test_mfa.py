@@ -14,7 +14,7 @@ from tests.conftest import login_with_auto_enroll
 
 BASE_URL = os.environ.get('REACT_APP_BACKEND_URL', '').rstrip('/')
 if not BASE_URL:
-    BASE_URL = "https://sy-budget-hub.preview.emergentagent.com"
+    BASE_URL = "https://po-suppliers-phase2.preview.emergentagent.com"
 
 TEST_PASSWORD = "TestUser-Dev-2026!"
 TEST_ADMIN_EMAIL = "test-admin@example.test"
