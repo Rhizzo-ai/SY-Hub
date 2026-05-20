@@ -81,6 +81,8 @@ from app.models.actuals import (
     VALID_TRANSITIONS, CHANGE_LOG_EVENT_TYPES,
 )
 from app.models.user_preferences import UserPreference
+from app.models.suppliers import Supplier, SUPPLIER_CIS_STATUSES
+from app.models.number_prefixes import ProjectNumberPrefix, PREFIX_ENTITY_TYPES
 
 __all__ = [
     "Tenant",
@@ -106,4 +108,9 @@ __all__ = [
     "ENTITY_SCOPES",
     "PROJECT_SCOPES",
     "USER_ROLE_STATUSES",
+    # Chat 24 §R1 (Prompt 2.5) additions
+    "Supplier",
+    "SUPPLIER_CIS_STATUSES",
+    "ProjectNumberPrefix",
+    "PREFIX_ENTITY_TYPES",
 ]

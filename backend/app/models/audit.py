@@ -32,6 +32,9 @@ AUDIT_ACTIONS = (
     "Post", "Mark_Paid", "Void",
     "Dispute", "Undispute", "Release_Retention",
     "Add_Attachment", "Remove_Attachment", "Promote_From_Capture",
+    # Chat 24 §R1 (Prompt 2.5) — supplier directory lifecycle.
+    # Enum values added in /app/backend/alembic/versions/0029_suppliers_prefixes.py.
+    "Archive", "Restore",
 )
 
 

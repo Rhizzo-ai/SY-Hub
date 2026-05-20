@@ -407,4 +407,78 @@ and `docs/chat-summaries/chat-21-closing.md`.
 - **Sizing.** ~2 hours: add `initialFocus` to LineItemsBreakdown, swap the mount in LineDrawer, run BudgetLineDrawer test suite, delete LineItemsPanel.jsx, confirm bundle unchanged. **P2** — purely a hygiene task; no functional gap, no user-visible behaviour change.
 - **Surfaced in.** Chat 23 §R10 G38 acceptance review.
 
-## 14. (placeholder — future entries appended here)
+## 14. Chat 24 §R1 role-name reconciliation — suppliers permission grants
+
+- **What.** Chat 24 Build Pack §2.3 specifies the supplier permission grant
+  matrix using role names that do not all exist in the codebase. Mapped
+  during R1 as follows:
+  - `super_admin` → `super_admin` (gets all via seed_rbac catch-all).
+  - `director`    → `director` (gets all via seed_rbac catch-all).
+  - `finance_director` → `finance`   ✓ explicit grant in R1.
+  - `contracts_manager` → `project_manager` ✓ explicit grant in R1 (without
+    `view_sensitive` or `archive`).
+  - `site_manager`     → `site_manager`     ✓ explicit grant in R1
+    (read-only).
+  - `admin`            → **no equivalent.** Build pack treats `admin` as a
+    distinct role with the same grants as `director` plus full users/roles
+    edit. In this repo `super_admin` is the catch-all root. Decision: skipped
+    in R1; `super_admin` covers the use case for now.
+  - `designer`         → **no equivalent.** Build pack lists designer with
+    `suppliers.view` only. Decision: skipped in R1.
+- **Why deferred.** Adding two new roles (`admin`, `designer`) is a Track 7
+  workstream (Roles & Personas) that touches seed_rbac, user-management
+  UI, role-grant migrations, and likely tests across every existing
+  permission grant. Doing it inside Chat 24 R1 would balloon scope and
+  delay PO/Bill numbering by 2-3 days.
+- **Impact.** Functional impact today is zero — `super_admin` covers
+  all flows tested in R1-R8. Two minor cosmetic differences:
+  - Documentation pages that name "admin" or "designer" should temporarily
+    say "(role pending — currently merged into super_admin / not yet
+    available)".
+  - The audit-trail roles tab on the user-management screen lists 10 roles
+    instead of the 12 the spec eventually requires.
+- **Sizing.** ~1 day for the role-catalogue migration + 4-6 hours of
+  follow-on grants + ~2 hours UI copy fix. **P2** — schedule when Track 7
+  opens.
+- **Surfaced in.** Chat 24 §R1 build, 2026-05-20.
+
+## 15. Chat 24 §R1 → R2 permission alias bridge for number-prefix routes
+
+- **What.** The `pos.*` permission block (16 codes) is scheduled for
+  Chat 24 R2 migration `0033_po_permissions_seed`. The R1 prefix endpoints
+  (`/api/v1/projects/{id}/number-prefixes`) need `pos.view` / `pos.edit`
+  per §3 of the build pack, but those codes don't exist yet at the end of
+  R1. **Temporary bridge:** `routers/number_prefixes.py` accepts EITHER
+  `pos.view` OR `suppliers.view` for the read path, EITHER `pos.edit` OR
+  `suppliers.edit` for the write path. The fallback to `suppliers.*` is
+  removed in R2 once the real codes are seeded.
+- **Why this is OK to ship in R1.** No production user will hit these
+  routes between R1 land and R2 land (single-chat lifecycle). The
+  fallback uses the same personas (finance / PM / director) so the
+  effective access pattern is identical to the final state.
+- **R2 follow-up.**
+  1. Drop the `suppliers.*` aliases from `_PREFIX_VIEW_PERMS` and
+     `_PREFIX_EDIT_PERMS` once `0033_po_permissions_seed` lands.
+  2. Confirm the 4 R1 prefix tests still pass after the swap.
+- **Surfaced in.** Chat 24 §R1 build, 2026-05-20.
+
+## 16. PO approval workflow — amount thresholds (Chat 24 deferred)
+
+- **What.** Build pack §11 (Chat 24 Prompt 2.5) explicitly lists "approval
+  amount thresholds" as out-of-scope for Prompt 2.5. POs in this prompt
+  are single-step (Draft → Approved → Sent → Received → Closed) with no
+  per-amount escalation rule. The future workflow will support
+  `tenant_settings.po_approval_thresholds` like:
+  - `≤ £5 000` → PM approves
+  - `≤ £25 000` → Director approves
+  - `≤ £100 000` → Finance Director approves
+  - `> £100 000` → Board approves (manual override)
+- **Why deferred.** Threshold ladders couple PO data to tenant policy,
+  which intersects with the system_config schema and the as-yet-unbuilt
+  audit-of-approvers reporting surface. Better to ship straight-through
+  approval in 2.5 and layer thresholds in a dedicated prompt with a
+  threshold-editor UI.
+- **Sizing.** ~2 days. **P2** — schedule after Track 2 (Cost) hits Phase 3.
+- **Surfaced in.** Chat 24 build pack §11 REFUSE SCOPE CREEP list.
+
+## 17. (placeholder — future entries appended here)

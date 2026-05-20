@@ -34,6 +34,7 @@ RESOURCES = (
     "xero_connections", "xero_bills", "xero_invoices", "xero_sync",
     "system_config", "notifications", "reports",
     "ai_capture",  # Chat 20 §R1.1 (B38) — cost dashboard resource
+    "suppliers",   # Chat 24 §R1 (Prompt 2.5) — supplier directory resource
 )
 
 ACTIONS = (
@@ -42,6 +43,7 @@ ACTIONS = (
     "submit", "approve", "reopen",
     "export", "admin",
     "view_costs",  # Chat 20 §R1.1 (B38) — cost dashboard action
+    "archive",     # Chat 24 §R1 (Prompt 2.5) — supplier archive/unarchive
 )
 
 ENTITY_SCOPES = ("All", "Specific")

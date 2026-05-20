@@ -1,6 +1,7 @@
 """Projects + team members API — Prompt 1.5."""
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import date, datetime, timezone
 from decimal import Decimal
@@ -37,6 +38,8 @@ from app.services.projects import (
 
 
 router = APIRouter(prefix="/projects", tags=["projects"])
+
+log = logging.getLogger(__name__)
 
 
 # ==========================================================================
@@ -353,6 +356,19 @@ def create_project(
         metadata={"kind": "bulk_auto_populate", **counts},
         request=request,
     )
+
+    # Chat 24 §R1 (Prompt 2.5) — seed null-middle default prefixes for both
+    # entity types (po + bill). Failure here is logged but does not block
+    # the project create; the operator can manually add prefixes via
+    # /api/v1/projects/{id}/number-prefixes if the seed fails.
+    try:
+        from app.services.number_prefixes import seed_default_prefixes
+        seed_default_prefixes(db, p.id, current.id, request=request)
+    except Exception:  # noqa: BLE001 — never block project create
+        log.exception(
+            "Chat 24 R1 prefix auto-seed failed for project %s — continuing",
+            p.id,
+        )
 
     db.commit()
     db.refresh(p)

@@ -107,6 +107,13 @@ PERMISSION_CATALOGUE += [
     ("ai_capture.view_costs", "ai_capture", "view_costs",
      "View aggregated AI capture cost / token / volume statistics", True),
 ]
+# Chat 24 §R1 (Prompt 2.5) — supplier directory (tenant-scoped).
+# sensitive: view_sensitive (banking/VAT/company numbers), archive.
+PERMISSION_CATALOGUE += _perms_for(
+    "suppliers",
+    include=["view", "view_sensitive", "create", "edit", "archive"],
+    sensitive={"view_sensitive", "archive"},
+)
 PERMISSION_CATALOGUE += _perms_for(
     "commitments",
     include=["view", "view_sensitive", "create", "edit", "approve"],
@@ -240,6 +247,8 @@ ROLE_PERMISSIONS["project_manager"] = {
     "cost_codes.view",
     "reports.view", "reports.export",
     "entities.view",
+    # Chat 24 §R1 (Prompt 2.5) — suppliers
+    "suppliers.view", "suppliers.create", "suppliers.edit",
 }
 
 # finance
@@ -260,6 +269,9 @@ ROLE_PERMISSIONS["finance"] = {
     "users.view",
     "audit.view",
     "ai_capture.view_costs",   # Chat 20 §R1.2 — cost dashboard visibility
+    # Chat 24 §R1 (Prompt 2.5) — suppliers (full incl. sensitive + archive)
+    "suppliers.view", "suppliers.view_sensitive",
+    "suppliers.create", "suppliers.edit", "suppliers.archive",
 }
 
 # site_manager
@@ -272,6 +284,8 @@ ROLE_PERMISSIONS["site_manager"] = {
     "certificates.view",
     "cost_codes.view",
     "entities.view",
+    # Chat 24 §R1 (Prompt 2.5) — read-only supplier directory access
+    "suppliers.view",
 }
 
 # sales

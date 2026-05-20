@@ -76,6 +76,13 @@ SENSITIVE_FIELDS: frozenset[str] = frozenset({
     # UK tax identifier — sensitive PII for sole traders / partnerships.
     # Surfaced as a residual during Patch #2 schema sweep.
     "utr",
+    # Chat 24 §R1 (Prompt 2.5) — supplier banking PII. Audit-trail diffs
+    # for these fields are redacted to [REDACTED] regardless of who reads
+    # the audit_log. `vat_number` / `company_number` are gated at the
+    # serialisation layer (suppliers.view_sensitive) but are NOT redacted
+    # in audit diffs — they're business identifiers, not PII.
+    "bank_account_no",
+    "bank_sort_code",
 })
 
 REDACTED = "[REDACTED]"
