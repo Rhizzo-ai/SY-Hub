@@ -156,7 +156,12 @@ def upgrade() -> None:
             sa.ForeignKey("users.id"), nullable=False,
         ),
         sa.CheckConstraint("currency = 'GBP'", name="ck_po_currency_gbp"),
-        sa.UniqueConstraint("tenant_id", "po_number", name="ux_po_tenant_number"),
+        # PO numbers are scoped to the PROJECT (matches user mental
+        # model — each project has its own PO-0001..N sequence,
+        # auto-seeded with null middle_prefix per Chat 24 §R1).
+        # Tenant-wide uniqueness would collide on the default prefix
+        # across sibling projects in the same tenant.
+        sa.UniqueConstraint("project_id", "po_number", name="ux_po_project_number"),
     )
     # Partial unique index — only enforced when po_number_prefix_id is set.
     op.execute(

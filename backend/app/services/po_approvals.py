@@ -164,7 +164,8 @@ def submit_po_with_budget_gate(
     approval_row: Optional[PurchaseOrderApproval] = None
 
     if not over_budget and not po.approval_required:
-        # Case 1 — auto-issue path (no approval row).
+        # Case 1 — within budget AND caller didn't flag approval_required:
+        # auto-issue (no approval row).
         target = po_transitions.submit(po, user.id)
         assert target == "issued"
         po.updated_by = user.id
@@ -188,62 +189,10 @@ def submit_po_with_budget_gate(
         )
         return po, None
 
-    if not over_budget and po.approval_required:
-        # Case 2 — within budget but approval_required=true →
-        # auto-approve (no human-in-the-loop), but persist a complete
-        # approval row for audit.
-        now = datetime.now(timezone.utc)
-        approval_row = PurchaseOrderApproval(
-            purchase_order_id=po.id,
-            submitted_by=user.id,
-            submitted_at=now,
-            submission_reason=(submission_reason or "Within-budget auto-approval"),
-            budget_snapshot=snapshot,
-            resolution="approved",
-            resolved_by=user.id,
-            resolved_at=now,
-            resolution_notes="Auto-approved — projected total within budget.",
-        )
-        db.add(approval_row)
-        # Transition: draft → approved (not via po_transitions.submit,
-        # which goes to pending_approval / issued; we use the explicit
-        # approve_record path).
-        po_transitions.assert_transition("draft", "approved")
-        # We need an intermediary 'pending_approval' touch? No — the
-        # state machine doesn't require it: § 2.4 declares 'approved'
-        # as reachable from 'pending_approval' but the in-budget +
-        # approval_required=true path skips PA. We model it as
-        # draft → pending_approval → approved in a single transaction.
-        po.status = "pending_approval"
-        po.submitted_at = now
-        po.submitted_by = user.id
-        db.flush()  # so the status trigger fires and recomputes
-        po.status = "approved"
-        po.approved_at = now
-        po.approved_by = user.id
-        po.updated_by = user.id
-        po.updated_at = now
-        db.flush()
-        after = _snap_po(po)
-        record_audit(
-            db, action="Approve",
-            resource_type="purchase_order",
-            resource_id=po.id,
-            actor_user_id=user.id,
-            project_id=po.project_id,
-            field_changes=field_diff(before, after),
-            metadata={
-                "po_number": po.po_number,
-                "new_status": "approved",
-                "budget_gate": "within_budget",
-                "approval_row_id": str(approval_row.id),
-                "auto_approved": True,
-            },
-            request=request,
-        )
-        return po, approval_row
-
-    # Case 3 — Over-budget path.
+    # All other paths land in pending_approval with an open approval
+    # row — either because the budget gate tripped, OR because the
+    # caller explicitly flagged approval_required=true (user-driven
+    # approval is always honoured, even within budget).
     target = po_transitions.submit(po, user.id)
     # po_transitions.submit() with approval_required=false would
     # auto-issue — but for the over-budget path we force PA regardless
@@ -276,7 +225,7 @@ def submit_po_with_budget_gate(
         metadata={
             "po_number": po.po_number,
             "new_status": "pending_approval",
-            "budget_gate": "over_budget",
+            "budget_gate": "over_budget" if over_budget else "within_budget_with_approval_flag",
             "overruns": overruns,
             "approval_row_id": str(approval_row.id),
         },
@@ -289,6 +238,8 @@ def submit_po_with_budget_gate(
         body=(
             f"Over-budget by £{sum(float(o['over_by']) for o in overruns):.2f} "
             f"across {len(overruns)} budget line(s)."
+            if over_budget else
+            "Submitter flagged this PO as requiring approval."
         ),
     )
     return po, approval_row

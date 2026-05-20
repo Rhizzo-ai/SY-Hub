@@ -19,7 +19,7 @@ from sqlalchemy import (
     Boolean, CheckConstraint, Computed, Date, DateTime, ForeignKey, Integer,
     Numeric, String, Text, UniqueConstraint, text,
 )
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import ENUM as PGEnum, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
@@ -82,7 +82,8 @@ class PurchaseOrder(Base):
     )
 
     status: Mapped[str] = mapped_column(
-        String(30), nullable=False, server_default=text("'draft'"),
+        PGEnum(*PO_STATUSES, name="po_status", create_type=False),
+        nullable=False, server_default=text("'draft'::po_status"),
     )
 
     issue_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
@@ -164,7 +165,7 @@ class PurchaseOrder(Base):
     )
 
     __table_args__ = (
-        UniqueConstraint("tenant_id", "po_number", name="ux_po_tenant_number"),
+        UniqueConstraint("project_id", "po_number", name="ux_po_project_number"),
         CheckConstraint("currency = 'GBP'", name="ck_po_currency_gbp"),
     )
 

@@ -137,6 +137,7 @@ def build_budget_snapshot(
             "actuals_to_date": str(actuals),
             "this_po_net": str(po_net),
             "projected_total": str(projected),
+            "over_by": str(projected - current_budget) if projected > current_budget else "0",
             "is_overrun": projected > current_budget,
         })
     return out

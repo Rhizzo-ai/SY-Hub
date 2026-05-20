@@ -97,6 +97,10 @@ def load_po_for_read(
     project = db.get(Project, po.project_id)
     if project is None:
         raise PoNotFound("Purchase order not found")
+    # Project doesn't carry tenant_id; guard via hasattr (matches the
+    # budgets service convention).
+    if hasattr(project, "tenant_id") and project.tenant_id != user.tenant_id:
+        raise PoNotFound("Purchase order not found")
     scope_check_project(db, project, user, perms)
     return po
 

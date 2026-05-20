@@ -34,10 +34,10 @@ depends_on = None
 
 
 def _add_enum_value_if_missing(enum_name: str, new_value: str) -> None:
-    """Add a value to a PostgreSQL ENUM, idempotently, in autocommit mode."""
-    bind = op.get_bind()
-    with bind.execution_options(isolation_level="AUTOCOMMIT") as conn:
-        conn.exec_driver_sql(
+    """Add a value to a PostgreSQL ENUM, idempotently, outside the
+    migration's transaction (ALTER TYPE ADD VALUE cannot run inside one)."""
+    with op.get_context().autocommit_block():
+        op.execute(
             f"ALTER TYPE {enum_name} ADD VALUE IF NOT EXISTS '{new_value}'"
         )
 
@@ -58,52 +58,52 @@ def upgrade() -> None:
     # suppliers.* rows (migration 0029), this brings the catalogue
     # from 86 → 102 permissions (G2.8 gate).
     op.execute("""
-        INSERT INTO permissions (code, resource, action, description, sensitive)
+        INSERT INTO permissions (id, code, resource, action, description, is_sensitive)
         VALUES
-            ('pos.view',
+            (gen_random_uuid(), 'pos.view',
              'pos'::permission_resource,
              'view'::permission_action,
              'View purchase orders.', FALSE),
-            ('pos.view_sensitive',
+            (gen_random_uuid(), 'pos.view_sensitive',
              'pos'::permission_resource,
              'view_sensitive'::permission_action,
              'View pricing on purchase orders.', TRUE),
-            ('pos.create',
+            (gen_random_uuid(), 'pos.create',
              'pos'::permission_resource,
              'create'::permission_action,
              'Create draft purchase orders.', FALSE),
-            ('pos.edit',
+            (gen_random_uuid(), 'pos.edit',
              'pos'::permission_resource,
              'edit'::permission_action,
              'Edit draft + approved purchase orders.', FALSE),
-            ('pos.edit_issued',
+            (gen_random_uuid(), 'pos.edit_issued',
              'pos'::permission_resource,
              'edit_issued'::permission_action,
              'Annotate header notes / delivery notes / external '
              'reference on issued+ purchase orders.', FALSE),
-            ('pos.delete',
+            (gen_random_uuid(), 'pos.delete',
              'pos'::permission_resource,
              'delete'::permission_action,
              'Delete draft purchase orders only.', TRUE),
-            ('pos.issue',
+            (gen_random_uuid(), 'pos.issue',
              'pos'::permission_resource,
              'issue'::permission_action,
              'Move a PO into the issued state — either via submit '
              '(no approval required) or via issue after approval.',
              FALSE),
-            ('pos.approve',
+            (gen_random_uuid(), 'pos.approve',
              'pos'::permission_resource,
              'approve'::permission_action,
              'Approve / reject pending PO approvals.', FALSE),
-            ('pos.void',
+            (gen_random_uuid(), 'pos.void',
              'pos'::permission_resource,
              'void'::permission_action,
              'Void a draft / pending / approved / issued PO.', TRUE),
-            ('pos.close',
+            (gen_random_uuid(), 'pos.close',
              'pos'::permission_resource,
              'close'::permission_action,
              'Close a partially-receipted or receipted PO.', FALSE),
-            ('pos.receipt',
+            (gen_random_uuid(), 'pos.receipt',
              'pos'::permission_resource,
              'receipt'::permission_action,
              'Record goods receipts against issued POs.', FALSE)

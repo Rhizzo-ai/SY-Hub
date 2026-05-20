@@ -47,9 +47,10 @@ depends_on = None
 
 
 def _add_enum_value_if_missing(enum_name: str, new_value: str) -> None:
-    bind = op.get_bind()
-    with bind.execution_options(isolation_level="AUTOCOMMIT") as conn:
-        conn.exec_driver_sql(
+    """Add a value to a PostgreSQL ENUM, idempotently, outside the
+    migration's transaction (ALTER TYPE ADD VALUE cannot run inside one)."""
+    with op.get_context().autocommit_block():
+        op.execute(
             f"ALTER TYPE {enum_name} ADD VALUE IF NOT EXISTS '{new_value}'"
         )
 

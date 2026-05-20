@@ -45,11 +45,10 @@ depends_on = None
 # ---------------------------------------------------------------------------
 
 def _add_enum_value_if_missing(enum_name: str, new_value: str) -> None:
-    """Add a value to a PostgreSQL ENUM, idempotently, in autocommit mode."""
-    bind = op.get_bind()
-    # Detach from the migration's outer transaction for this DDL.
-    with bind.execution_options(isolation_level="AUTOCOMMIT") as conn:
-        conn.exec_driver_sql(
+    """Add a value to a PostgreSQL ENUM, idempotently, outside the
+    migration's transaction (ALTER TYPE ADD VALUE cannot run inside one)."""
+    with op.get_context().autocommit_block():
+        op.execute(
             f"ALTER TYPE {enum_name} ADD VALUE IF NOT EXISTS '{new_value}'"
         )
 
@@ -289,25 +288,25 @@ def upgrade() -> None:
     # ─── 6. Permission catalogue rows ───────────────────────────────────────
     # Use ON CONFLICT to remain idempotent against repeat-runs / seed_rbac.
     op.execute("""
-        INSERT INTO permissions (code, resource, action, description, sensitive)
+        INSERT INTO permissions (id, code, resource, action, description, is_sensitive)
         VALUES
-            ('suppliers.view',
+            (gen_random_uuid(), 'suppliers.view',
              'suppliers'::permission_resource,
              'view'::permission_action,
              'View supplier directory (non-sensitive fields).', FALSE),
-            ('suppliers.view_sensitive',
+            (gen_random_uuid(), 'suppliers.view_sensitive',
              'suppliers'::permission_resource,
              'view_sensitive'::permission_action,
              'View supplier banking + VAT + company-number fields.', TRUE),
-            ('suppliers.create',
+            (gen_random_uuid(), 'suppliers.create',
              'suppliers'::permission_resource,
              'create'::permission_action,
              'Create new suppliers in the tenant directory.', FALSE),
-            ('suppliers.edit',
+            (gen_random_uuid(), 'suppliers.edit',
              'suppliers'::permission_resource,
              'edit'::permission_action,
              'Edit supplier records (incl. sensitive fields with view_sensitive).', FALSE),
-            ('suppliers.archive',
+            (gen_random_uuid(), 'suppliers.archive',
              'suppliers'::permission_resource,
              'archive'::permission_action,
              'Archive or unarchive supplier records (no hard-delete).', TRUE)

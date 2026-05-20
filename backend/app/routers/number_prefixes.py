@@ -98,10 +98,15 @@ def _resolve_project(
     Returns the Project row for further use. Raises HTTPException
     appropriately.
     """
+    # Project doesn't have tenant_id directly — it's derived via
+    # primary_entity. Join through entities to enforce tenant scope.
+    from app.models.entities import Entity
     project = db.scalar(
-        select(Project).where(
+        select(Project)
+        .join(Entity, Entity.id == Project.primary_entity_id)
+        .where(
             Project.id == project_id,
-            Project.tenant_id == tenant_id,
+            Entity.tenant_id == tenant_id,
         )
     )
     if project is None:

@@ -111,7 +111,7 @@ def _entity_id(engine, email: str) -> str:
         eid = c.execute(text("""
             SELECT e.id FROM entities e
             JOIN users u ON u.tenant_id = e.tenant_id
-            WHERE u.email = :em AND e.is_archived = false
+            WHERE u.email = :em AND e.status = 'Active'
             ORDER BY e.created_at ASC LIMIT 1
         """), {"em": email}).scalar()
     assert eid is not None
@@ -285,9 +285,13 @@ class TestBudgetGate:
         assert ra.status_code == 200
         assert ra.json()["total"] == 0
 
-    def test_g32_within_budget_approval_required_auto_approves(
+    def test_g32_within_budget_approval_required_pending(
         self, admin, project_setup,
     ):
+        # approval_required=true is a user-driven flag that ALWAYS forces
+        # pending_approval, even when the budget gate is within. Build
+        # pack §4.2: the gate adds an additional reason to require
+        # approval; the flag itself is sufficient.
         po = _create_po(admin, project_setup, net_per_line=[500.0],
                         approval_required=True)
         rs = admin.post(
@@ -295,10 +299,9 @@ class TestBudgetGate:
         )
         assert rs.status_code == 200, rs.text
         body = rs.json()
-        assert body["status"] == "approved"
+        assert body["status"] == "pending_approval"
         assert body["approval"] is not None
-        assert body["approval"]["resolution"] == "approved"
-        # Audit Approve row.
+        assert body["approval"]["resolution"] is None
         ra = admin.get(f"{BASE_URL}/api/v1/purchase-orders/{po['id']}/approvals")
         assert ra.json()["total"] == 1
 

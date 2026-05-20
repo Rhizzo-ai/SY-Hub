@@ -652,11 +652,20 @@ def seed_rbac_filtered_to_enum(ctx: BootstrapContext) -> None:
     """
     t0 = time.monotonic()
     valid_actions = _enum_values(ctx.database_url, "permission_action")
+    valid_resources = _enum_values(ctx.database_url, "permission_resource")
 
     import app.seed_rbac as rbac
     original = list(rbac.PERMISSION_CATALOGUE)
     if valid_actions:
-        filtered = [p for p in original if p[2] in valid_actions]
+        # Filter on BOTH action and resource — any new permission resource
+        # introduced in a post-0017 migration (e.g. Chat 24's `suppliers`
+        # and `pos`) must also be filtered until that migration runs.
+        # Tuple layout: (code, resource, action, description, is_sensitive).
+        filtered = [
+            p for p in original
+            if p[2] in valid_actions
+            and (not valid_resources or p[1] in valid_resources)
+        ]
     else:
         # permission_action enum doesn't exist yet (DB pre-0002). seed_rbac
         # cannot run at all; the orchestrator only invokes this AFTER

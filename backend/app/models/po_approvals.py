@@ -8,7 +8,7 @@ from typing import Any, Optional
 from sqlalchemy import (
     CheckConstraint, DateTime, ForeignKey, String, Text, text,
 )
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.dialects.postgresql import ENUM as PGEnum, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
@@ -43,7 +43,9 @@ class PurchaseOrderApproval(Base):
     # budget moves before resolution.
     budget_snapshot: Mapped[Any] = mapped_column(JSONB, nullable=False)
     resolution: Mapped[Optional[str]] = mapped_column(
-        String(20), nullable=True,
+        PGEnum("approved", "rejected",
+               name="po_approval_resolution", create_type=False),
+        nullable=True,
     )
     resolved_by: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=True,

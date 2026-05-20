@@ -46,6 +46,10 @@ PWD = os.environ["TEST_USER_PASSWORD"]
 
 ADMIN_EMAIL = "test-admin@example.test"
 PM_EMAIL = "test-pm@example.test"
+# site_manager is the lowest-privilege role with pos.view but
+# WITHOUT pos.view_sensitive — used to verify pricing fields are
+# nulled at the serialisation layer.
+SITE_EMAIL = "test-site@example.test"
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -77,12 +81,17 @@ def pm(engine):
     return login_with_auto_enroll(None, BASE_URL, PM_EMAIL, PWD)
 
 
+@pytest.fixture(scope="module")
+def site_user(engine):
+    return login_with_auto_enroll(None, BASE_URL, SITE_EMAIL, PWD)
+
+
 def _entity_id(engine, email: str) -> str:
     with engine.connect() as c:
         eid = c.execute(text("""
             SELECT e.id FROM entities e
             JOIN users u ON u.tenant_id = e.tenant_id
-            WHERE u.email = :em AND e.is_archived = false
+            WHERE u.email = :em AND e.status = 'Active'
             ORDER BY e.created_at ASC LIMIT 1
         """), {"em": email}).scalar()
     assert eid is not None
@@ -173,8 +182,9 @@ def _seed_budget_and_lines(engine, admin, project_id: str) -> tuple[str, str]:
         line_id = c.execute(text("""
             INSERT INTO budget_lines (
                 budget_id, cost_code_id, line_description, entity_id,
-                original_budget, ftc_method, display_order
-            ) VALUES (:bid, :ccid, 'R2 test line', :eid, 1000.00,
+                original_budget, current_budget,
+                ftc_method, display_order
+            ) VALUES (:bid, :ccid, 'R2 test line', :eid, 1000.00, 1000.00,
                       'Budget_Remaining', 0)
             RETURNING id
         """), {
@@ -351,7 +361,7 @@ class TestCRUD:
         assert fields["status"]["new"] == "draft"
 
     def test_get_nulls_pricing_without_view_sensitive(
-        self, admin, pm, project_setup,
+        self, admin, site_user, project_setup,
     ):
         r = admin.post(
             f"{BASE_URL}/api/v1/projects/{project_setup['project_id']}/purchase-orders",
@@ -359,14 +369,17 @@ class TestCRUD:
         )
         assert r.status_code == 201, r.text
         po_id = r.json()["id"]
-        # Admin sees pricing.
+        # Admin (has pos.view_sensitive) sees pricing.
         ra = admin.get(f"{BASE_URL}/api/v1/purchase-orders/{po_id}")
         assert ra.status_code == 200, ra.text
         assert Decimal(ra.json()["total_amount"]) == Decimal("240.00")
         assert ra.json()["lines"][0]["unit_rate"] is not None
 
-        # PM has pos.view but NOT pos.view_sensitive.
-        rp = pm.get(f"{BASE_URL}/api/v1/purchase-orders/{po_id}")
+        # site_manager has pos.view but NOT pos.view_sensitive — pricing
+        # fields must be nulled in the response. (Cannot use
+        # project_manager here: per build pack §2.3 / spec amendment #3
+        # PM holds pos.view_sensitive.)
+        rp = site_user.get(f"{BASE_URL}/api/v1/purchase-orders/{po_id}")
         assert rp.status_code == 200, rp.text
         out = rp.json()
         assert out["total_amount"] is None
