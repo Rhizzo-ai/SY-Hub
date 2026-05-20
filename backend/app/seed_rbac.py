@@ -323,6 +323,11 @@ ROLE_PERMISSIONS["read_only"] = {
     "actuals.view",
     "cost_codes.view",
     "programmes.view", "documents.view", "reports.view",
+    # Chat 24 §R2 (Prompt 2.5) — read_only consistently sees every
+    # track's read surface (matches budgets/actuals/programmes/documents
+    # pattern). NO view_sensitive (price/PII) and NO write actions.
+    "suppliers.view",
+    "pos.view",
 }
 
 # investor_read_only

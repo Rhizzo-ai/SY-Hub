@@ -285,7 +285,10 @@ def submit_endpoint(
     db: Session = Depends(get_db),
 ):
     principal, perms = pair
-    _require(perms, "pos.issue")
+    # Build pack §3.3 — /submit is gated by pos.create (the creator
+    # persona triggers submit). The /issue endpoint (post-approval)
+    # is gated by pos.issue.
+    _require(perms, "pos.create")
     return _run_transition(
         db, svc.submit_po,
         principal=principal, perms=perms,
@@ -302,9 +305,7 @@ def issue_endpoint(
     db: Session = Depends(get_db),
 ):
     principal, perms = pair
-    # Both /submit (draft → issued auto path) and /issue (approved → issued)
-    # gate against pos.issue per build pack §2.3 (one permission code,
-    # two transition surfaces).
+    # Build pack §3.3 — /issue (post-approval) gated by pos.issue.
     _require(perms, "pos.issue")
     return _run_transition(
         db, svc.issue_po,

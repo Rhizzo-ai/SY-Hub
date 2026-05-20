@@ -154,11 +154,13 @@ def upgrade() -> None:
                     'pos.issue','pos.void','pos.receipt']
                 WHEN 'site_manager' THEN ARRAY[
                     'pos.view','pos.receipt']
+                WHEN 'read_only' THEN ARRAY[
+                    'pos.view']
                 ELSE ARRAY[]::text[]
             END)
          WHERE r.code IN
                 ('super_admin','director','finance',
-                 'project_manager','site_manager')
+                 'project_manager','site_manager','read_only')
         ON CONFLICT DO NOTHING;
     """)
 
