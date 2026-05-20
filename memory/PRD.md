@@ -18,6 +18,29 @@ Frontend / actuals / commitments / Xero are out of scope until later prompts.
 
 ## What's been implemented
 
+### 2026-05-20 — Chat 24 ✓ CLOSED (R0–R5, Prompt 2.5)
+
+Triage closing artefact filed at `docs/chat-summaries/chat-24-closing.md`. R0–R5 shipped, independently verified against real PostgreSQL 16, pushed to `main`. R6–R9 deferred to Chat 25.
+
+- Alembic head `0033_po_receipts` (was 0028; +5 migrations 0029–0033).
+- Permissions 102 (was 86; +16: 11 `pos.*` + 5 `suppliers.*`), roles 10 (unchanged).
+- Backend pytest 875 passing (Emergent) / 55 PO+approval+receipt suites green (triage clean-DB).
+- Jest 312 passing across 53 suites; 25 URL-contract pins.
+- Main bundle 395.26 kB gz (cap 437, ~42 kB headroom); all R5 in lazy `suppliers-po` chunk.
+- 6 in-flight defects fixed (D1–D6): numbering concurrency race, bad import, isolation_level→autocommit_block in 0029/0031/0032, notification enum, `read_only.suppliers.view` backfill, legacy guardrail rebaseline.
+- 4 Build Pack deviations accepted (E1–E4): inline photos, no documents table, role-code mapping, no `pos.reopen`.
+- Future_Tasks added: §16 PO approval amount thresholds, §17 reopen-from-closed, §18 cold-start vs 0018 guard (P1), §19 unified documents table, §20 multipart photo streaming.
+
+**Carried as standing rules** ("Hard lessons"):
+1. "Committed to main" ≠ pushed. Always Save-to-GitHub + triage re-pull before sign-off.
+2. Backend STOP reports must include a real clean-DB migration run.
+3. "Tests passing" can mean the suite never ran — confirm count + collection.
+4. Demand printouts, not summaries.
+5. Verify-don't-trust caught everything that mattered. Keep it.
+6. Recommend a Claude Code phase-checkpoint pass on R1–R7 before Track 2 closes.
+
+**Chat 25 job 1**: E2E lifecycle smoke (suppliers→prefix→PO→submit→approve→issue→partial→full→close, + void) against pushed code on live preview — promotes R5 from provisional to confirmed. Then R6 inline grid, R7 transitions/approvals UI, R8 tests sweep, R9 close-out.
+
 ### 2026-02-20 — Chat 24 R5 ✓ PO frontend (Prompt 2.5) — OPERATOR-VERIFICATION-PENDING
 
 - Seven new routes wired under React.lazy + `suppliers-po` webpack chunk: `/suppliers`, `/suppliers/new`, `/suppliers/:id(/edit)`, `/projects/:id/purchase-orders(/new|/:po_id)`, `/projects/:id/settings/numbering`.
