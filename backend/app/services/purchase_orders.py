@@ -678,6 +678,8 @@ def list_pos(
     perms: UserPermissions,
     project_id: Optional[uuid.UUID] = None,
     supplier_id: Optional[uuid.UUID] = None,
+    budget_line_id: Optional[uuid.UUID] = None,
+    budget_id: Optional[uuid.UUID] = None,
     status_in: Optional[Iterable[str]] = None,
     q: Optional[str] = None,
     limit: int = 50,
@@ -686,6 +688,10 @@ def list_pos(
     """Tenant-scoped paginated list with Pattern α visibility.
 
     Returns (rows, total_unpaged).
+
+    Optional `budget_line_id` / `budget_id` filters JOIN
+    purchase_order_lines and return DISTINCT POs (a PO touching multiple
+    lines under the same budget is returned ONCE).
     """
     stmt = select(PurchaseOrder).where(
         PurchaseOrder.tenant_id == user.tenant_id
@@ -713,10 +719,26 @@ def list_pos(
             func.lower(PurchaseOrder.po_number).like(like)
         )
 
+    # JOIN purchase_order_lines for budget_line_id / budget_id filters.
+    # SELECT DISTINCT so a PO touching multiple lines under the same
+    # filter target appears once.
+    if budget_line_id is not None or budget_id is not None:
+        stmt = stmt.join(
+            PurchaseOrderLine,
+            PurchaseOrderLine.purchase_order_id == PurchaseOrder.id,
+        )
+        if budget_line_id is not None:
+            stmt = stmt.where(PurchaseOrderLine.budget_line_id == budget_line_id)
+        if budget_id is not None:
+            stmt = stmt.join(
+                BudgetLine, BudgetLine.id == PurchaseOrderLine.budget_line_id,
+            ).where(BudgetLine.budget_id == budget_id)
+        stmt = stmt.distinct()
+
     total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
     rows = list(db.scalars(
         stmt.order_by(PurchaseOrder.created_at.desc())
-        .limit(min(limit, 200))
+        .limit(min(limit, 1000))
         .offset(max(offset, 0))
     ).all())
     return rows, int(total)

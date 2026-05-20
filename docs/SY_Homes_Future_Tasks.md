@@ -545,4 +545,34 @@ create JSON. Until then, frontend can post small thumbnails inline.
 Surfaced 2026-02-20 (post-R4). P3 — only build if a real user
 complaint lands.
 
-## 21. (placeholder — future entries appended here)
+## 21. R5.5 PO-by-budget-line endpoints — URL-contract Jest pins owed by R6
+
+- **Added 2026-05-20 (Chat 25, R5.5).** Two new GETs landed to unblock R6
+  inline-expand grid:
+    - `GET /api/v1/budget-lines/{line_id}/purchase-orders`  (P0.1 — required)
+    - `GET /api/v1/budgets/{budget_id}/purchase-orders`     (P0.2 — bulk; expand-all)
+  Both reuse `svc.list_pos()` (with new optional `budget_line_id` / `budget_id`
+  filters) + `svc.serialise()` — inherits Pattern α visibility, tenant scope,
+  and the `pos.view_sensitive`-gated £ field nulling (server-side).
+- **Backend test coverage already landed:** 10 new tests in
+  `tests/test_purchase_orders_api.py::TestR55BudgetLinePOs` and `TestR55BudgetPOs`
+  — 200 happy-path shape, RO £-null gating, Pattern α (unknown → 404), bad
+  uuid → 422, empty list → 200.
+- **What R6 must add (URL-contract pins, §11 discipline).** When R6 wires the
+  `<BudgetLineExpandedRow/>` + `<POsSection/>` + `<ReceiptsSection/>` lazy
+  fetches, the Jest suite for those components MUST pin the EXACT URL
+  strings — positive assertions on `/api/v1/budget-lines/{id}/purchase-orders`
+  and `/api/v1/budgets/{id}/purchase-orders` (and the existing
+  `/api/v1/purchase-orders/{po_id}/receipts` already in use), plus a hard
+  negative against `/v1/...` (no-`/api`) and against `/api/...` (no-`/v1/`).
+- **Why this matters.** Both paths are mounted on `v1_router` (i.e. final
+  `/api/v1/...`). The `/api`-vs-`/api/v1` drift bug in §11 originated from a
+  hook calling `/v1/projects/.../cost-codes` while the router was mounted
+  under `api_router` — a one-character drift, undetected by 223 Jest tests
+  because each mocked the wrapper. Same risk class here. Pin the strings,
+  pin the negative, and the next cold-pull operator never sees an empty
+  expanded row again.
+- **Severity.** P1 — must land *in* R6 (not deferred). Linked from the R6
+  prompt's "URL-CONTRACT PINS (Jest)" requirement.
+
+## 22. (placeholder — future entries appended here)

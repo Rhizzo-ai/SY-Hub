@@ -26,6 +26,7 @@ from typing import Any, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.auth.deps import Principal, get_current_principal
@@ -167,6 +168,151 @@ def list_endpoint(
         "items": [
             svc.serialise(p, include_sensitive=include_sensitive) for p in rows
         ],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# R5.5: Budget-line / budget scoped PO lists
+# (lazy hydration for R6 inline-expand grid + opt-in expand-all)
+# ─────────────────────────────────────────────────────────────────────────
+
+@router.get("/budget-lines/{line_id}/purchase-orders")
+def list_pos_by_budget_line_endpoint(
+    line_id: uuid.UUID,
+    status: Optional[List[str]] = Query(None, alias="status"),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    pair: tuple[Principal, UserPermissions] = Depends(_perm_dep),
+    db: Session = Depends(get_db),
+):
+    """List POs whose lines touch the given budget_line, gated by
+    `pos.view`. Pricing fields gated by `pos.view_sensitive` at
+    serialisation.
+
+    Pattern α: an invisible / cross-tenant budget line surfaces as 404,
+    NOT 403, NOT empty 200 — existence is not leaked. A visible line
+    with zero POs returns 200 + empty list.
+    """
+    principal, perms = pair
+    _require(perms, "pos.view")
+    include_sensitive = perms.has("pos.view_sensitive")
+
+    # Pattern α — resolve budget_line → budget → project → primary_entity.
+    # tenant_id lives on Entity (Pattern α: not on Budget/BudgetLine/Project).
+    from app.models.budgets import Budget, BudgetLine
+    from app.models.projects import Project
+    from app.models.entity import Entity
+    row = db.execute(
+        select(
+            BudgetLine.id, BudgetLine.budget_id,
+            Budget.project_id, Entity.tenant_id,
+        )
+        .join(Budget, Budget.id == BudgetLine.budget_id)
+        .join(Project, Project.id == Budget.project_id)
+        .join(Entity, Entity.id == Project.primary_entity_id)
+        .where(BudgetLine.id == line_id)
+    ).first()
+    if row is None or row.tenant_id != principal.user.tenant_id:
+        raise HTTPException(status_code=404, detail="Budget line not found")
+    if not perms.is_super_admin:
+        vis = svc.visible_project_ids(db, principal.user.id, principal.user.tenant_id)
+        if vis is not None and row.project_id not in vis:
+            raise HTTPException(status_code=404, detail="Budget line not found")
+
+    rows, total = svc.list_pos(
+        db, user=principal.user, perms=perms,
+        budget_line_id=line_id,
+        status_in=status,
+        limit=limit, offset=offset,
+    )
+    return {
+        "budget_line_id": str(line_id),
+        "items": [svc.serialise(p, include_sensitive=include_sensitive) for p in rows],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
+
+
+@router.get("/budgets/{budget_id}/purchase-orders")
+def list_pos_by_budget_endpoint(
+    budget_id: uuid.UUID,
+    status: Optional[List[str]] = Query(None, alias="status"),
+    limit: int = Query(500, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
+    pair: tuple[Principal, UserPermissions] = Depends(_perm_dep),
+    db: Session = Depends(get_db),
+):
+    """Bulk: list every PO touching any line of the given budget, with
+    a per-budget-line index so the R6 grid can hydrate every expanded
+    row from ONE call.
+
+    Response shape:
+      {
+        "budget_id": "...",
+        "items": [<po>, <po>, ...],          # unique POs, full payload (lines[] included)
+        "by_budget_line": {                   # index: blid -> [po_id, po_id, ...]
+            "<blid_a>": ["<po_id>", ...],
+            "<blid_b>": [...]
+        },
+        "total": <unique PO count>,
+        "limit": ..., "offset": ...
+      }
+
+    Each PO appears ONCE in `items`. The index is the only "key" that
+    repeats a PO id across budget_line buckets (a PO touching two lines
+    of the same budget is indexed under both blids but the payload is
+    fetched once). The frontend grid hydrates an expanded row by mapping
+    `by_budget_line[blid] -> items.find(po.id == po_id)`.
+
+    Pricing fields gated by `pos.view_sensitive` (server-side). Invisible
+    / cross-tenant budgets surface as 404 (Pattern α).
+    """
+    principal, perms = pair
+    _require(perms, "pos.view")
+    include_sensitive = perms.has("pos.view_sensitive")
+
+    from app.models.budgets import Budget
+    from app.models.projects import Project
+    from app.models.entity import Entity
+    row = db.execute(
+        select(Budget.id, Budget.project_id, Entity.tenant_id)
+        .join(Project, Project.id == Budget.project_id)
+        .join(Entity, Entity.id == Project.primary_entity_id)
+        .where(Budget.id == budget_id)
+    ).first()
+    if row is None or row.tenant_id != principal.user.tenant_id:
+        raise HTTPException(status_code=404, detail="Budget not found")
+    if not perms.is_super_admin:
+        vis = svc.visible_project_ids(db, principal.user.id, principal.user.tenant_id)
+        if vis is not None and row.project_id not in vis:
+            raise HTTPException(status_code=404, detail="Budget not found")
+
+    rows, total = svc.list_pos(
+        db, user=principal.user, perms=perms,
+        budget_id=budget_id,
+        status_in=status,
+        limit=limit, offset=offset,
+    )
+
+    items: list[dict[str, Any]] = []
+    by_budget_line: dict[str, list[str]] = {}
+    for po in rows:
+        items.append(svc.serialise(po, include_sensitive=include_sensitive))
+        po_id_str = str(po.id)
+        for line in po.lines:
+            key = str(line.budget_line_id)
+            by_budget_line.setdefault(key, [])
+            if po_id_str not in by_budget_line[key]:
+                by_budget_line[key].append(po_id_str)
+
+    return {
+        "budget_id": str(budget_id),
+        "items": items,
+        "by_budget_line": by_budget_line,
         "total": total,
         "limit": limit,
         "offset": offset,

@@ -611,3 +611,199 @@ class TestConcurrentNumbering:
             f"concurrent allocation produced gaps or reordering — "
             f"got {po_numbers}, expected {expected}"
         )
+
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# R5.5 — Budget-line / budget scoped PO list endpoints
+# (pre-R6 backend addition to unblock the inline-expand grid)
+# ─────────────────────────────────────────────────────────────────────────
+
+RO_EMAIL = "test-readonly@example.test"
+
+
+@pytest.fixture(scope="module")
+def readonly(engine):
+    return login_with_auto_enroll(None, BASE_URL, RO_EMAIL, PWD)
+
+
+def _seed_extra_budget_line(engine, budget_id: str) -> str:
+    """Insert a second budget_line on the same budget — used to prove the
+    per-line filter narrows correctly."""
+    with engine.begin() as c:
+        cc_row = c.execute(text("""
+            SELECT id FROM cost_codes WHERE status='Active' ORDER BY code OFFSET 1 LIMIT 1
+        """)).first()
+        ent_id = c.execute(text("""
+            SELECT bl.entity_id FROM budget_lines bl WHERE bl.budget_id=:bid LIMIT 1
+        """), {"bid": budget_id}).scalar()
+        line_id = c.execute(text("""
+            INSERT INTO budget_lines (
+                budget_id, cost_code_id, line_description, entity_id,
+                original_budget, current_budget,
+                ftc_method, display_order
+            ) VALUES (:bid, :ccid, 'R5.5 extra line', :eid, 500.00, 500.00,
+                      'Budget_Remaining', 1)
+            RETURNING id
+        """), {"bid": budget_id, "ccid": cc_row.id, "eid": ent_id}).scalar()
+    return str(line_id)
+
+
+class TestR55BudgetLinePOs:
+    """GET /api/v1/budget-lines/{line_id}/purchase-orders (P0.1)."""
+
+    def test_happy_path_200_shape(self, admin, project_setup):
+        # Create one PO touching the seeded budget_line.
+        r = admin.post(
+            f"{BASE_URL}/api/v1/projects/{project_setup['project_id']}/purchase-orders",
+            json=_po_create_body(project_setup),
+        )
+        assert r.status_code == 201, r.text
+        po_id = r.json()["id"]
+
+        r2 = admin.get(
+            f"{BASE_URL}/api/v1/budget-lines/{project_setup['budget_line_id']}/purchase-orders"
+        )
+        assert r2.status_code == 200, r2.text
+        body = r2.json()
+        assert body["budget_line_id"] == project_setup["budget_line_id"]
+        assert body["total"] == 1
+        assert body["limit"] == 50
+        assert body["offset"] == 0
+        assert isinstance(body["items"], list) and len(body["items"]) == 1
+        po = body["items"][0]
+        assert po["id"] == po_id
+        # Standard PO shape preserved (matches /purchase-orders/{id}).
+        assert {"po_number", "supplier_id", "status", "lines"}.issubset(po.keys())
+        assert any(
+            str(line["budget_line_id"]) == project_setup["budget_line_id"]
+            for line in po["lines"]
+        )
+
+    def test_empty_line_returns_200_not_404(self, admin, engine, project_setup):
+        empty_line = _seed_extra_budget_line(engine, project_setup["budget_id"])
+        r = admin.get(f"{BASE_URL}/api/v1/budget-lines/{empty_line}/purchase-orders")
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["items"] == []
+        assert body["total"] == 0
+
+    def test_readonly_gating_pounds_are_null(self, admin, readonly, project_setup):
+        # Seed one PO as admin.
+        admin.post(
+            f"{BASE_URL}/api/v1/projects/{project_setup['project_id']}/purchase-orders",
+            json=_po_create_body(project_setup),
+        )
+        # Fetch the same line as read_only — every £ field must be null.
+        r = readonly.get(
+            f"{BASE_URL}/api/v1/budget-lines/{project_setup['budget_line_id']}/purchase-orders"
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["items"], "RO should see the PO row exists"
+        po = body["items"][0]
+        for k in ("subtotal_amount", "vat_amount", "total_amount"):
+            assert po.get(k) is None, f"RO leaked top-level {k}={po.get(k)!r}"
+        for line in po["lines"]:
+            for k in ("unit_rate", "net_amount", "vat_amount", "gross_amount"):
+                assert line.get(k) is None, (
+                    f"RO leaked line.{k}={line.get(k)!r}"
+                )
+
+    def test_bad_uuid_returns_422(self, admin):
+        r = admin.get(f"{BASE_URL}/api/v1/budget-lines/not-a-uuid/purchase-orders")
+        assert r.status_code == 422, r.text
+
+    def test_unknown_line_returns_404_not_403(self, admin):
+        # Random valid UUID that points to nothing — Pattern α: 404, no leak.
+        r = admin.get(
+            f"{BASE_URL}/api/v1/budget-lines/{uuid.uuid4()}/purchase-orders"
+        )
+        assert r.status_code == 404, r.text
+        assert r.status_code != 403
+
+
+class TestR55BudgetPOs:
+    """GET /api/v1/budgets/{budget_id}/purchase-orders (P0.2 bulk)."""
+
+    def test_happy_path_200_shape_with_index(self, admin, engine, project_setup):
+        # Create TWO POs — one on the seeded line, one on a new line.
+        admin.post(
+            f"{BASE_URL}/api/v1/projects/{project_setup['project_id']}/purchase-orders",
+            json=_po_create_body(project_setup),
+        )
+        extra_line = _seed_extra_budget_line(engine, project_setup["budget_id"])
+        admin.post(
+            f"{BASE_URL}/api/v1/projects/{project_setup['project_id']}/purchase-orders",
+            json={
+                "supplier_id": project_setup["supplier_id"],
+                "budget_id": project_setup["budget_id"],
+                "lines": [{
+                    "budget_line_id": extra_line,
+                    "description": "Extra line PO",
+                    "quantity": 1, "unit_rate": 50, "vat_rate": 20,
+                }],
+            },
+        )
+
+        r = admin.get(
+            f"{BASE_URL}/api/v1/budgets/{project_setup['budget_id']}/purchase-orders"
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["budget_id"] == project_setup["budget_id"]
+        assert body["total"] == 2
+        assert len(body["items"]) == 2
+        assert isinstance(body["by_budget_line"], dict)
+        # Each blid -> list of po_ids; each blid touched once.
+        assert project_setup["budget_line_id"] in body["by_budget_line"]
+        assert extra_line in body["by_budget_line"]
+        # PO ids in the index are present in items[].
+        all_po_ids = {p["id"] for p in body["items"]}
+        for blid, po_ids in body["by_budget_line"].items():
+            for pid in po_ids:
+                assert pid in all_po_ids
+
+    def test_empty_budget_returns_200_not_404(self, admin, engine, project_setup):
+        # Budget with NO POs (no calls to POST PO).
+        # Reuse the existing budget but ensure no POs yet — wipe any from prior tests.
+        with engine.begin() as c:
+            c.execute(text("DELETE FROM purchase_orders WHERE project_id=:p"),
+                      {"p": project_setup["project_id"]})
+        r = admin.get(
+            f"{BASE_URL}/api/v1/budgets/{project_setup['budget_id']}/purchase-orders"
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["items"] == []
+        assert body["by_budget_line"] == {}
+        assert body["total"] == 0
+
+    def test_readonly_gating_pounds_are_null(self, admin, readonly, project_setup):
+        admin.post(
+            f"{BASE_URL}/api/v1/projects/{project_setup['project_id']}/purchase-orders",
+            json=_po_create_body(project_setup),
+        )
+        r = readonly.get(
+            f"{BASE_URL}/api/v1/budgets/{project_setup['budget_id']}/purchase-orders"
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["items"], "RO should see PO row exists"
+        po = body["items"][0]
+        for k in ("subtotal_amount", "vat_amount", "total_amount"):
+            assert po.get(k) is None, f"RO leaked top-level {k}={po.get(k)!r}"
+        for line in po["lines"]:
+            for k in ("unit_rate", "net_amount", "vat_amount", "gross_amount"):
+                assert line.get(k) is None, (
+                    f"RO leaked line.{k}={line.get(k)!r}"
+                )
+
+    def test_bad_uuid_returns_422(self, admin):
+        r = admin.get(f"{BASE_URL}/api/v1/budgets/not-a-uuid/purchase-orders")
+        assert r.status_code == 422, r.text
+
+    def test_unknown_budget_returns_404_not_403(self, admin):
+        r = admin.get(f"{BASE_URL}/api/v1/budgets/{uuid.uuid4()}/purchase-orders")
+        assert r.status_code == 404, r.text
+        assert r.status_code != 403
