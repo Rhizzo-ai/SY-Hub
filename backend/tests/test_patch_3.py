@@ -54,9 +54,16 @@ class TestPatch3Permissions:
             # Prompt 2.4A adds budgets.admin → 84.
             # Prompt 2.5A adds actuals.admin → 85.
             # Prompt 2.5C / mig 0026 adds ai_capture.view_costs (chat-20) → 86.
+            # Chat 24 R1 adds suppliers.{view,view_sensitive,create,edit,
+            #   archive} (+5) → 91.
+            # Chat 24 R2 adds pos.{view,view_sensitive,create,edit,
+            #   edit_issued,delete,submit,issue,void,close,receipt} (+11)
+            #   → 102? Spec ships pos.* incrementally: R2 lays the 10
+            #   action codes excluding approve; receipt placeholder lands
+            #   in R2 too → 101. R3 adds pos.approve → 102.
             # Function name retains "81" — renaming is out of scope (see
             # chat-22 §2 + Future_Tasks polish entry).
-            assert total == 86
+            assert total == 102
         finally:
             db.close()
 

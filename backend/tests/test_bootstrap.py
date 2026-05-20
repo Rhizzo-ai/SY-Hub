@@ -198,7 +198,7 @@ def test_detect_db_state_at_head():
     current = B.detect_db_state(ctx)
     head = B._alembic_heads()
     assert current == head
-    assert current.startswith("0025_") or current == head
+    assert current.startswith("0032_") or current == head
 
 
 def test_detect_db_state_unstamped(ephemeral_db: str):
@@ -221,9 +221,11 @@ def test_alembic_heads_helper_returns_single_head():
     # items backfill migration landed.
     # Bumped again by Chat 23 R1.4: 0027_ → 0028_ when the
     # user_preferences table migration landed.
+    # Bumped again by Chat 24 R1/R2/R3 (Prompt 2.5): 0028_ → 0032_
+    # when suppliers / prefixes / purchase_orders / po_approvals landed.
     # See chat-15-closing §3 — this sentinel is "part of any migration's
     # bookkeeping" and must be bumped whenever the head moves.
-    assert head.startswith("0028_"), f"unexpected head id: {head}"
+    assert head.startswith("0032_"), f"unexpected head id: {head}"
 
 
 # ----------------------------------------------------------------------
@@ -433,8 +435,12 @@ seed()
 import app.seed_rbac as rbac
 from app.bootstrap import _enum_values
 valid_actions = _enum_values({ephemeral_db!r}, "permission_action")
+valid_resources = _enum_values({ephemeral_db!r}, "permission_resource")
 original = list(rbac.PERMISSION_CATALOGUE)
-rbac.PERMISSION_CATALOGUE = [p for p in original if p[2] in valid_actions]
+rbac.PERMISSION_CATALOGUE = [
+    p for p in original
+    if p[2] in valid_actions and p[1] in valid_resources
+]
 try:
     rbac.seed_rbac()
 finally:

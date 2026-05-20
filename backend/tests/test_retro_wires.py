@@ -320,6 +320,9 @@ class TestPermissionsCatalogue:
             # Prompt 2.4A adds budgets.admin → 84.
             # Prompt 2.5A adds actuals.admin → 85.
             # Prompt 2.5C / mig 0026 adds ai_capture.view_costs (chat-20) → 86.
-            assert total == 86
+            # Chat 24 R1 (mig 0029) adds suppliers.* (+5) → 91.
+            # Chat 24 R2 (mig 0031) adds pos.* (+10) → 101.
+            # Chat 24 R3 (mig 0032) adds pos.approve → 102.
+            assert total == 102
         finally:
             db.close()
