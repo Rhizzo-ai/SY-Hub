@@ -18,6 +18,17 @@ Frontend / actuals / commitments / Xero are out of scope until later prompts.
 
 ## What's been implemented
 
+### 2026-02-20 — Chat 24 R3 ✓ Live-DB verification PASSED
+- Provisioned local Postgres (`/app/backend/.env DATABASE_URL=postgresql+psycopg://syhomes:syhomes_dev@127.0.0.1:5432/syhomes`).
+- Ran `alembic downgrade -4` then `alembic upgrade head` (0028 → 0032) — clean, zero errors. 0029, 0031, 0032 already used `op.get_context().autocommit_block()` for `ALTER TYPE ADD VALUE`; verified reversible.
+- `SELECT count(*) FROM permissions` → **102** (live DB, not catalogue).
+- All R1/R2/R3 integration + unit suites green: **84/84 pass** (test_purchase_orders_api, test_purchase_orders_unit, test_po_approvals_api, test_po_approvals_unit, test_number_prefixes, test_suppliers). Includes TestConcurrentNumbering (8 threads, sequential PO-0001..PO-0008, zero unique-constraint violations).
+- Defects fixed during verification:
+  * **D1 (race)** `po_numbering.allocate_next_number`: `SELECT FOR UPDATE` acquired row lock but SQLAlchemy identity-map served *cached* `next_sequence`, so concurrent POSTs computed the same PO number and tripped `ux_po_project_number`. Added `.execution_options(populate_existing=True)`.
+  * **D2 (import)** `routers/number_prefixes._resolve_project`: wrong import `app.models.entities` → `app.models.entity` (singular). Without this, the v1 prefix endpoints raised `ModuleNotFoundError` under the tenant-scope path.
+  * **D3 (test)** `tests/test_number_prefixes._get_primary_entity_id`: dropped reference to non-existent `entities.is_archived` column.
+- Future task logged (P1): cold-start bootstrap blocked by 0018 guard (docs/SY_Homes_Future_Tasks.md §18).
+
 ### 2026-05-20 — Chat 24 R3 ✓ PO Approvals + commitment recompute (Prompt 2.5) — OPERATOR-VERIFICATION-PENDING
 - **Migration `0032_po_approvals.py`:**
   * po_approval_resolution ENUM (approved, rejected)
