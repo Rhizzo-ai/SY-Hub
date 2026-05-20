@@ -18,6 +18,17 @@ Frontend / actuals / commitments / Xero are out of scope until later prompts.
 
 ## What's been implemented
 
+### 2026-02-20 — Chat 24 R4 ✓ PO Receipts backend (Prompt 2.5) — OPERATOR-VERIFICATION-PENDING
+
+- Migration `0033_po_receipts`: 3 tables + recompute trigger + audit/notification enum extensions (via `autocommit_block` helper, no `isolation_level` regression). Backfills `read_only.suppliers.view` to close a drift hole exposed by the 0025 round-trip guardrail.
+- Models: `PurchaseOrderReceipt`, `PurchaseOrderReceiptLine`, `PurchaseOrderReceiptPhoto`.
+- Service `po_receipts.py`: status guard (issued|partially_receipted), future-date rejection, 30-day backdate requires `pos.edit_issued`, cumulative≤ordered guard, photo de-dup, auto status transition (issued ↔ partially_receipted ↔ receipted), Receipt audit, optional notifications.
+- Endpoints: `GET/POST /purchase-orders/{id}/receipts`, `GET/PATCH/DELETE /receipts/{id}` — all under `/api/v1/`.
+- Money invariant: `committed_value` unchanged across receipt create + full + delete (asserted by 2 integration tests).
+- Tests: 11 unit + 24 integration = 35 R4 tests, all green. Whole suite: 875 passed, 0 failed, 0 errors (ex pre-existing `test_projects.py`).
+- Live perm count: 102 (unchanged — R4 reuses `pos.receipt` from R2).
+- Clean-DB bootstrap reaches `0033_po_receipts`; downgrade -1 / upgrade round-trip clean.
+
 ### 2026-02-20 — Chat 24 R3 ✓ Live-DB verification PASSED
 - Provisioned local Postgres (`/app/backend/.env DATABASE_URL=postgresql+psycopg://syhomes:syhomes_dev@127.0.0.1:5432/syhomes`).
 - Ran `alembic downgrade -4` then `alembic upgrade head` (0028 → 0032) — clean, zero errors. 0029, 0031, 0032 already used `op.get_context().autocommit_block()` for `ALTER TYPE ADD VALUE`; verified reversible.
