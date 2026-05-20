@@ -13,7 +13,7 @@ from tests.conftest import login_with_auto_enroll
 
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "").rstrip("/")
 if not BASE_URL:
-    BASE_URL = "https://po-suppliers-phase2.preview.emergentagent.com"
+    BASE_URL = "https://e2e-smoke-r6.preview.emergentagent.com"
 
 ADMIN = "test-admin@example.test"
 READONLY = "test-readonly@example.test"
