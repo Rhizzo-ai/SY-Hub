@@ -70,15 +70,34 @@ module.exports = {
                         'sy-teal': {
                                 DEFAULT: 'var(--sy-teal)',
                                 hover: 'var(--sy-teal-hover)',
-                                foreground: 'var(--sy-teal-foreground)'
+                                foreground: 'var(--sy-teal-foreground)',
+                                // Chat 24 §R5 — extended shade ramp for status
+                                // pills, button hovers and link text on the
+                                // suppliers/PO surfaces. Hex values match the
+                                // brand palette in design_guidelines.json.
+                                100: '#d6f1ee',
+                                200: '#a9e3dc',
+                                600: '#0f9b8b',
+                                700: '#0c7e72',
+                                800: '#0a665c',
                         },
                         'sy-orange': {
                                 DEFAULT: 'var(--sy-orange)',
                                 hover: 'var(--sy-orange-hover)',
-                                foreground: 'var(--sy-orange-foreground)'
+                                foreground: 'var(--sy-orange-foreground)',
+                                100: '#fde8d3',
+                                600: '#dd7a17',
+                                700: '#b6620f',
+                                800: '#8e4d0c',
                         },
                         'sy-grey': {
-                                DEFAULT: 'var(--sy-grey)'
+                                DEFAULT: 'var(--sy-grey)',
+                                100: '#f3f4f6',
+                                200: '#e5e7eb',
+                                500: '#6b7280',
+                                600: '#4b5563',
+                                700: '#374151',
+                                800: '#1f2937',
                         }
                 },
                 keyframes: {

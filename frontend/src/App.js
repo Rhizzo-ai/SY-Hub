@@ -92,6 +92,31 @@ const BudgetDetail = React.lazy(() =>
     import(/* webpackChunkName: "budgets" */ "@/pages/projects/BudgetDetail")
 );
 
+// Chat 24 §R5 — lazy-load the supplier directory + PO surface so the
+// new pages land in their own chunk and protect the main bundle gz
+// budget (437 kB cap, ~395 kB at R4 close).
+const SupplierList = React.lazy(() =>
+    import(/* webpackChunkName: "suppliers-po" */ "@/pages/SupplierList")
+);
+const SupplierDetail = React.lazy(() =>
+    import(/* webpackChunkName: "suppliers-po" */ "@/pages/SupplierDetail")
+);
+const SupplierForm = React.lazy(() =>
+    import(/* webpackChunkName: "suppliers-po" */ "@/pages/SupplierForm")
+);
+const PurchaseOrderList = React.lazy(() =>
+    import(/* webpackChunkName: "suppliers-po" */ "@/pages/projects/PurchaseOrderList")
+);
+const PurchaseOrderForm = React.lazy(() =>
+    import(/* webpackChunkName: "suppliers-po" */ "@/pages/projects/PurchaseOrderForm")
+);
+const PurchaseOrderDetail = React.lazy(() =>
+    import(/* webpackChunkName: "suppliers-po" */ "@/pages/projects/PurchaseOrderDetail")
+);
+const NumberPrefixManager = React.lazy(() =>
+    import(/* webpackChunkName: "suppliers-po" */ "@/pages/projects/NumberPrefixManager")
+);
+
 function ShellRoutes() {
     return (
         <AppShell>
@@ -176,6 +201,47 @@ function ShellRoutes() {
                 <Route path="/notifications" element={<NotificationsPage />} />
                 <Route path="/settings/sdlt-rates" element={<SdltRatesPage />} />
                 <Route path="/settings/appraisal-defaults" element={<AppraisalDefaultsPage />} />
+                {/* Chat 24 §R5 — Suppliers + Purchase Orders + Numbering */}
+                <Route path="/suppliers" element={
+                    <React.Suspense fallback={<div className="p-6 text-sm">Loading…</div>}>
+                        <SupplierList />
+                    </React.Suspense>
+                } />
+                <Route path="/suppliers/new" element={
+                    <React.Suspense fallback={<div className="p-6 text-sm">Loading…</div>}>
+                        <SupplierForm />
+                    </React.Suspense>
+                } />
+                <Route path="/suppliers/:id" element={
+                    <React.Suspense fallback={<div className="p-6 text-sm">Loading…</div>}>
+                        <SupplierDetail />
+                    </React.Suspense>
+                } />
+                <Route path="/suppliers/:id/edit" element={
+                    <React.Suspense fallback={<div className="p-6 text-sm">Loading…</div>}>
+                        <SupplierForm />
+                    </React.Suspense>
+                } />
+                <Route path="/projects/:id/purchase-orders" element={
+                    <React.Suspense fallback={<div className="p-6 text-sm">Loading…</div>}>
+                        <PurchaseOrderList />
+                    </React.Suspense>
+                } />
+                <Route path="/projects/:id/purchase-orders/new" element={
+                    <React.Suspense fallback={<div className="p-6 text-sm">Loading…</div>}>
+                        <PurchaseOrderForm />
+                    </React.Suspense>
+                } />
+                <Route path="/projects/:id/purchase-orders/:po_id" element={
+                    <React.Suspense fallback={<div className="p-6 text-sm">Loading…</div>}>
+                        <PurchaseOrderDetail />
+                    </React.Suspense>
+                } />
+                <Route path="/projects/:id/settings/numbering" element={
+                    <React.Suspense fallback={<div className="p-6 text-sm">Loading…</div>}>
+                        <NumberPrefixManager />
+                    </React.Suspense>
+                } />
                 <Route path="*" element={
                     <div className="text-slate-600" data-testid="not-found-page">
                         <h1 className="font-heading text-2xl font-bold text-slate-900">Not found</h1>

@@ -511,4 +511,38 @@ cold-start).
 - **Priority.** **P1** — required for any DR rebuild against a brand-new
   cluster.
 
-## 19. (placeholder — future entries appended here)
+## 19. Unified documents table (decided post-R4)
+
+When the **Documents & Compliance** track lands as its own prompt,
+migrate the per-feature attachment tables into a single
+`documents` entity with proper versioning, tagging, retention and
+RBAC. In scope at that time:
+
+- `purchase_order_receipt_photos` → `documents` rows tagged
+  `receipt_proof` (the tag was dropped from R4 because there was
+  nothing to tag against).
+- `actual_attachments` → `documents` rows tagged
+  `bill_evidence` / `expense_evidence`.
+- Anywhere else file metadata is stored inline against a parent
+  row (audit later).
+
+Decided 2026-02-20 (post-R4 sign-off). R4 deliberately kept
+`purchase_order_receipt_photos` consistent with `actual_attachments`
+rather than reverse-engineering a half-documents table from a
+single receipt feature — the unified table is its own first-class
+platform pillar and needs its own design pass.
+
+## 20. PO photo multipart streaming endpoint (R5 nice-to-have)
+
+R5 keeps receipt photos inline with the receipt JSON body (metadata
+only). If large-file streaming becomes a real need (multi-MB
+delivery photos uploaded direct from a site phone), add a
+standalone `POST /receipts/{id}/photos` multipart endpoint that
+streams to disk and inserts a `purchase_order_receipt_photos` row,
+rather than packing base64-encoded bytes through the receipt
+create JSON. Until then, frontend can post small thumbnails inline.
+
+Surfaced 2026-02-20 (post-R4). P3 — only build if a real user
+complaint lands.
+
+## 21. (placeholder — future entries appended here)
