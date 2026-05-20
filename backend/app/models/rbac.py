@@ -35,6 +35,7 @@ RESOURCES = (
     "system_config", "notifications", "reports",
     "ai_capture",  # Chat 20 §R1.1 (B38) — cost dashboard resource
     "suppliers",   # Chat 24 §R1 (Prompt 2.5) — supplier directory resource
+    "pos",         # Chat 24 §R2 (Prompt 2.5) — purchase orders resource
 )
 
 ACTIONS = (
@@ -44,6 +45,7 @@ ACTIONS = (
     "export", "admin",
     "view_costs",  # Chat 20 §R1.1 (B38) — cost dashboard action
     "archive",     # Chat 24 §R1 (Prompt 2.5) — supplier archive/unarchive
+    "edit_issued", "void", "close", "receipt",  # Chat 24 §R2 (Prompt 2.5) — PO actions
 )
 
 ENTITY_SCOPES = ("All", "Specific")

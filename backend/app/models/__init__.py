@@ -83,6 +83,11 @@ from app.models.actuals import (
 from app.models.user_preferences import UserPreference
 from app.models.suppliers import Supplier, SUPPLIER_CIS_STATUSES
 from app.models.number_prefixes import ProjectNumberPrefix, PREFIX_ENTITY_TYPES
+from app.models.purchase_orders import (
+    PurchaseOrder, PurchaseOrderLine,
+    PO_STATUSES, TERMINAL_PO_STATUSES,
+    ISSUED_OR_BEYOND_STATUSES, HEADER_ANNOTATION_FIELDS,
+)
 
 __all__ = [
     "Tenant",
@@ -113,4 +118,11 @@ __all__ = [
     "SUPPLIER_CIS_STATUSES",
     "ProjectNumberPrefix",
     "PREFIX_ENTITY_TYPES",
+    # Chat 24 §R2 (Prompt 2.5) additions
+    "PurchaseOrder",
+    "PurchaseOrderLine",
+    "PO_STATUSES",
+    "TERMINAL_PO_STATUSES",
+    "ISSUED_OR_BEYOND_STATUSES",
+    "HEADER_ANNOTATION_FIELDS",
 ]

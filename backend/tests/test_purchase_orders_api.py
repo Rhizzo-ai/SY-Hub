@@ -1,0 +1,490 @@
+"""Chat 24 §R2 (Prompt 2.5) — Purchase Orders integration tests.
+
+Live-DB tests (require Postgres + a running uvicorn). Covers:
+
+  6 numbering tests:
+    - auto-allocate next sequence on POST against default prefix
+    - sequence increments monotonically across two POs
+    - explicit prefix_id is honoured
+    - mismatched prefix entity_type (bill instead of po) → 422
+    - archived prefix → 422
+    - project with no default prefix configured → 422
+
+  4 CRUD tests:
+    - POST creates a draft, audit row written, totals computed
+    - GET returns the PO + lines; pricing nulled without view_sensitive
+    - PATCH (full tier) updates a draft, audit diff written
+    - DELETE removes a draft; audit row written; 422 on non-draft
+
+OPERATOR VERIFICATION:
+  These tests run against the live uvicorn — they will fail in the
+  Emergent container (no PG). The agent has verified syntax / model
+  parsing / state-machine logic via test_purchase_orders_unit.py
+  (33 tests, all passing).
+"""
+from __future__ import annotations
+
+import os
+import uuid
+from datetime import datetime, timezone
+from decimal import Decimal
+
+import pytest
+from dotenv import load_dotenv
+from sqlalchemy import create_engine, text
+
+from tests.conftest import login_with_auto_enroll
+
+
+load_dotenv("/app/backend/.env")
+BASE_URL = (
+    os.environ.get("REACT_APP_BACKEND_URL", "").rstrip("/")
+    or "http://localhost:8001"
+)
+DATABASE_URL = os.environ["DATABASE_URL"]
+PWD = os.environ["TEST_USER_PASSWORD"]
+
+ADMIN_EMAIL = "test-admin@example.test"
+PM_EMAIL = "test-pm@example.test"
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Fixtures
+# ─────────────────────────────────────────────────────────────────────────
+
+@pytest.fixture(scope="module")
+def engine():
+    e = create_engine(DATABASE_URL, future=True)
+    with e.begin() as c:
+        c.execute(text("""
+            UPDATE users SET mfa_enabled=false, mfa_method=NULL,
+              mfa_secret_encrypted=NULL, mfa_backup_codes_encrypted=NULL,
+              mfa_enrolled_at=NULL, failed_login_attempts=0,
+              locked_until=NULL, lockout_level=0
+            WHERE email LIKE 'test-%@example.test'
+        """))
+    yield e
+    e.dispose()
+
+
+@pytest.fixture(scope="module")
+def admin(engine):
+    return login_with_auto_enroll(None, BASE_URL, ADMIN_EMAIL, PWD)
+
+
+@pytest.fixture(scope="module")
+def pm(engine):
+    return login_with_auto_enroll(None, BASE_URL, PM_EMAIL, PWD)
+
+
+def _entity_id(engine, email: str) -> str:
+    with engine.connect() as c:
+        eid = c.execute(text("""
+            SELECT e.id FROM entities e
+            JOIN users u ON u.tenant_id = e.tenant_id
+            WHERE u.email = :em AND e.is_archived = false
+            ORDER BY e.created_at ASC LIMIT 1
+        """), {"em": email}).scalar()
+    assert eid is not None
+    return str(eid)
+
+
+def _create_project(admin, entity_id: str) -> str:
+    suffix = uuid.uuid4().hex[:8].upper()
+    body = {
+        "name": f"Chat24-R2 Project {suffix}",
+        "project_type": "Pure_Dev",
+        "primary_entity_id": entity_id,
+        "land_ownership_method": "Direct_Purchase",
+        "site_address": "1 Test Lane",
+        "site_postcode": "AB12 3CD",
+        "tenure": "Freehold",
+        "land_type": "Greenfield",
+        "planning_type": "Full",
+        "planning_status": "Pre_App",
+        "implementation_required": True,
+    }
+    r = admin.post(f"{BASE_URL}/api/projects", json=body)
+    assert r.status_code == 201, f"project create failed: {r.text}"
+    return r.json()["id"]
+
+
+def _create_supplier(admin, name_suffix: str) -> str:
+    r = admin.post(
+        f"{BASE_URL}/api/v1/suppliers",
+        json={"name": f"R2-Supplier {name_suffix}", "default_vat_rate": 20.0},
+    )
+    assert r.status_code == 201, r.text
+    return r.json()["id"]
+
+
+def _seed_budget_and_lines(engine, admin, project_id: str) -> tuple[str, str]:
+    """Insert a Draft budget + one budget_line directly via SQL.
+
+    The seeded-from-appraisal API path requires an Approved appraisal —
+    too heavyweight for these tests. We bypass it by inserting at the
+    DB layer. Returns (budget_id, budget_line_id).
+    """
+    with engine.begin() as c:
+        # Look up an entity for the budget line entity_id.
+        ent_id = c.execute(text("""
+            SELECT primary_entity_id FROM projects WHERE id = :pid
+        """), {"pid": project_id}).scalar()
+        # Find a usable cost_code.
+        cc_row = c.execute(text("""
+            SELECT id, code FROM cost_codes
+            WHERE status = 'Active' ORDER BY code LIMIT 1
+        """)).first()
+        assert cc_row is not None, "need at least one Active cost_code seeded"
+        # Find an appraisal in this project, falling back to NULL is no good
+        # — source_appraisal_id is NOT NULL. We need one. The seed_test_users
+        # fixture is expected to provide one; if not, this test must skip.
+        app_id = c.execute(text("""
+            SELECT id FROM appraisals
+            WHERE project_id = :pid LIMIT 1
+        """), {"pid": project_id}).scalar()
+        if app_id is None:
+            pytest.skip("No appraisal seeded for this project — operator must "
+                        "seed an appraisal or build the budget via API first")
+        # Find creator user_id.
+        admin_id = c.execute(text("""
+            SELECT id FROM users WHERE email = :em
+        """), {"em": ADMIN_EMAIL}).scalar()
+
+        budget_id = c.execute(text("""
+            INSERT INTO budgets (
+                project_id, source_appraisal_id, version_number, version_label,
+                is_current, status, created_by_user_id
+            ) VALUES (:pid, :aid, 1, 'Original', true, 'Active', :uid)
+            RETURNING id
+        """), {"pid": project_id, "aid": app_id, "uid": admin_id}).scalar()
+        line_id = c.execute(text("""
+            INSERT INTO budget_lines (
+                budget_id, cost_code_id, line_description, entity_id,
+                original_budget, ftc_method, display_order
+            ) VALUES (:bid, :ccid, 'R2 test line', :eid, 1000.00,
+                      'Budget_Remaining', 0)
+            RETURNING id
+        """), {
+            "bid": budget_id, "ccid": cc_row.id, "eid": ent_id,
+        }).scalar()
+    return str(budget_id), str(line_id)
+
+
+@pytest.fixture
+def project_setup(admin, engine):
+    """Per-test project + budget + supplier + budget_line."""
+    eid = _entity_id(engine, ADMIN_EMAIL)
+    project_id = _create_project(admin, eid)
+    budget_id, budget_line_id = _seed_budget_and_lines(engine, admin, project_id)
+    supplier_id = _create_supplier(admin, uuid.uuid4().hex[:6].upper())
+    yield {
+        "project_id": project_id,
+        "budget_id": budget_id,
+        "budget_line_id": budget_line_id,
+        "supplier_id": supplier_id,
+    }
+    # Cascade cleanup via project delete (suppliers retained at tenant level
+    # — they're harmless leftovers for the test tenant).
+    with engine.begin() as c:
+        c.execute(text("DELETE FROM purchase_orders WHERE project_id = :pid"),
+                  {"pid": project_id})
+        c.execute(text("DELETE FROM budgets WHERE project_id = :pid"),
+                  {"pid": project_id})
+        c.execute(text("DELETE FROM projects WHERE id = :pid"),
+                  {"pid": project_id})
+        c.execute(text("DELETE FROM suppliers WHERE id = :sid"),
+                  {"sid": supplier_id})
+
+
+def _po_create_body(setup: dict, **overrides) -> dict:
+    body = {
+        "supplier_id": setup["supplier_id"],
+        "budget_id": setup["budget_id"],
+        "lines": [{
+            "budget_line_id": setup["budget_line_id"],
+            "description": "Test line 1",
+            "quantity": 2,
+            "unit_rate": 100,
+            "vat_rate": 20,
+        }],
+    }
+    body.update(overrides)
+    return body
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Numbering tests (6)
+# ─────────────────────────────────────────────────────────────────────────
+
+class TestNumbering:
+    def test_auto_allocate_uses_default_prefix(self, admin, project_setup):
+        r = admin.post(
+            f"{BASE_URL}/api/v1/projects/{project_setup['project_id']}/purchase-orders",
+            json=_po_create_body(project_setup),
+        )
+        assert r.status_code == 201, r.text
+        out = r.json()
+        assert out["po_number"] == "PO-0001"
+        assert out["po_sequence"] == 1
+        assert out["po_number_prefix_id"] is not None
+
+    def test_sequence_increments_monotonically(self, admin, project_setup):
+        for expected in ("PO-0001", "PO-0002", "PO-0003"):
+            r = admin.post(
+                f"{BASE_URL}/api/v1/projects/{project_setup['project_id']}/purchase-orders",
+                json=_po_create_body(project_setup),
+            )
+            assert r.status_code == 201, r.text
+            assert r.json()["po_number"] == expected, (
+                f"expected {expected}, got {r.json()['po_number']}"
+            )
+
+    def test_explicit_prefix_id_honoured(self, admin, project_setup):
+        # Create a non-default prefix and supply it on create.
+        rp = admin.post(
+            f"{BASE_URL}/api/v1/projects/{project_setup['project_id']}/number-prefixes",
+            json={"entity_type": "po", "middle_prefix": "HAD"},
+        )
+        assert rp.status_code == 201, rp.text
+        pid = rp.json()["id"]
+        r = admin.post(
+            f"{BASE_URL}/api/v1/projects/{project_setup['project_id']}/purchase-orders",
+            json=_po_create_body(project_setup, po_number_prefix_id=pid),
+        )
+        assert r.status_code == 201, r.text
+        assert r.json()["po_number"] == "PO-HAD-0001"
+
+    def test_bill_prefix_rejected_for_po(self, admin, project_setup):
+        # Use the auto-seeded bill prefix.
+        rp = admin.get(
+            f"{BASE_URL}/api/v1/projects/{project_setup['project_id']}/number-prefixes",
+            params={"entity_type": "bill"},
+        )
+        bill_pid = rp.json()["items"][0]["id"]
+        r = admin.post(
+            f"{BASE_URL}/api/v1/projects/{project_setup['project_id']}/purchase-orders",
+            json=_po_create_body(project_setup, po_number_prefix_id=bill_pid),
+        )
+        assert r.status_code == 422, r.text
+        assert "'po'" in r.json()["detail"].lower() or "bill" in r.json()["detail"].lower()
+
+    def test_archived_prefix_rejected(self, admin, project_setup, engine):
+        rp = admin.post(
+            f"{BASE_URL}/api/v1/projects/{project_setup['project_id']}/number-prefixes",
+            json={"entity_type": "po", "middle_prefix": "ARC"},
+        )
+        pid = rp.json()["id"]
+        admin.patch(
+            f"{BASE_URL}/api/v1/projects/{project_setup['project_id']}/number-prefixes/{pid}",
+            json={"is_archived": True},
+        )
+        r = admin.post(
+            f"{BASE_URL}/api/v1/projects/{project_setup['project_id']}/purchase-orders",
+            json=_po_create_body(project_setup, po_number_prefix_id=pid),
+        )
+        assert r.status_code == 422, r.text
+        assert "archived" in r.json()["detail"].lower()
+
+    def test_no_default_prefix_yields_422(self, admin, project_setup, engine):
+        # Archive both auto-seeded defaults so no default remains.
+        with engine.begin() as c:
+            c.execute(text("""
+                UPDATE project_number_prefixes
+                   SET is_default = false
+                 WHERE project_id = :pid
+            """), {"pid": project_setup["project_id"]})
+        r = admin.post(
+            f"{BASE_URL}/api/v1/projects/{project_setup['project_id']}/purchase-orders",
+            json=_po_create_body(project_setup),
+        )
+        assert r.status_code == 422, r.text
+        assert "default" in r.json()["detail"].lower()
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# CRUD tests (4)
+# ─────────────────────────────────────────────────────────────────────────
+
+class TestCRUD:
+    def test_create_writes_audit_with_totals(self, admin, project_setup, engine):
+        start = datetime.now(timezone.utc)
+        r = admin.post(
+            f"{BASE_URL}/api/v1/projects/{project_setup['project_id']}/purchase-orders",
+            json=_po_create_body(project_setup),
+        )
+        assert r.status_code == 201, r.text
+        out = r.json()
+        assert out["status"] == "draft"
+        # 2 * 100 = 200 net; vat 20% = 40; gross 240.
+        assert Decimal(out["total_amount"]) == Decimal("240.00")
+        assert Decimal(out["subtotal_amount"]) == Decimal("200.00")
+        assert len(out["lines"]) == 1
+
+        # Audit row exists with field-level diff.
+        with engine.connect() as c:
+            row = c.execute(text("""
+                SELECT field_changes FROM audit_log
+                 WHERE resource_type='purchase_order'
+                   AND resource_id=:rid
+                   AND action='Create'
+                   AND created_at >= :since
+            """), {"rid": out["id"], "since": start}).first()
+        assert row is not None, "missing Create audit row"
+        fields = {c["field"]: c for c in row.field_changes}
+        assert "po_number" in fields
+        assert fields["po_number"]["new"] == "PO-0001"
+        assert fields["status"]["new"] == "draft"
+
+    def test_get_nulls_pricing_without_view_sensitive(
+        self, admin, pm, project_setup,
+    ):
+        r = admin.post(
+            f"{BASE_URL}/api/v1/projects/{project_setup['project_id']}/purchase-orders",
+            json=_po_create_body(project_setup),
+        )
+        assert r.status_code == 201, r.text
+        po_id = r.json()["id"]
+        # Admin sees pricing.
+        ra = admin.get(f"{BASE_URL}/api/v1/purchase-orders/{po_id}")
+        assert ra.status_code == 200, ra.text
+        assert Decimal(ra.json()["total_amount"]) == Decimal("240.00")
+        assert ra.json()["lines"][0]["unit_rate"] is not None
+
+        # PM has pos.view but NOT pos.view_sensitive.
+        rp = pm.get(f"{BASE_URL}/api/v1/purchase-orders/{po_id}")
+        assert rp.status_code == 200, rp.text
+        out = rp.json()
+        assert out["total_amount"] is None
+        assert out["subtotal_amount"] is None
+        assert out["vat_amount"] is None
+        assert out["lines"][0]["unit_rate"] is None
+        assert out["lines"][0]["net_amount"] is None
+        # Non-sensitive fields still visible.
+        assert out["po_number"] == "PO-0001"
+        assert out["lines"][0]["description"] == "Test line 1"
+
+    def test_patch_full_tier_updates_draft(self, admin, project_setup, engine):
+        r = admin.post(
+            f"{BASE_URL}/api/v1/projects/{project_setup['project_id']}/purchase-orders",
+            json=_po_create_body(project_setup),
+        )
+        po_id = r.json()["id"]
+        start = datetime.now(timezone.utc)
+        rp = admin.patch(
+            f"{BASE_URL}/api/v1/purchase-orders/{po_id}",
+            json={"notes": "Edited", "delivery_address": "5 Test Road"},
+        )
+        assert rp.status_code == 200, rp.text
+        assert rp.json()["notes"] == "Edited"
+        assert rp.json()["delivery_address"] == "5 Test Road"
+
+        with engine.connect() as c:
+            row = c.execute(text("""
+                SELECT field_changes FROM audit_log
+                 WHERE resource_type='purchase_order'
+                   AND resource_id=:rid
+                   AND action='Update'
+                   AND created_at >= :since
+            """), {"rid": po_id, "since": start}).first()
+        fields = {c["field"]: c for c in row.field_changes}
+        assert fields["notes"]["new"] == "Edited"
+        assert fields["delivery_address"]["new"] == "5 Test Road"
+
+    def test_delete_draft_succeeds_but_blocks_non_draft(
+        self, admin, project_setup,
+    ):
+        r = admin.post(
+            f"{BASE_URL}/api/v1/projects/{project_setup['project_id']}/purchase-orders",
+            json=_po_create_body(project_setup),
+        )
+        po_id = r.json()["id"]
+        # Delete draft → 204.
+        rd = admin.delete(f"{BASE_URL}/api/v1/purchase-orders/{po_id}")
+        assert rd.status_code == 204, rd.text
+        rget = admin.get(f"{BASE_URL}/api/v1/purchase-orders/{po_id}")
+        assert rget.status_code == 404
+
+        # Create another, auto-issue via submit (approval_required=false), then
+        # delete must 422.
+        r2 = admin.post(
+            f"{BASE_URL}/api/v1/projects/{project_setup['project_id']}/purchase-orders",
+            json=_po_create_body(project_setup),
+        )
+        po2 = r2.json()["id"]
+        rs = admin.post(f"{BASE_URL}/api/v1/purchase-orders/{po2}/submit")
+        assert rs.status_code == 200, rs.text
+        assert rs.json()["status"] == "issued"
+        rdel = admin.delete(f"{BASE_URL}/api/v1/purchase-orders/{po2}")
+        assert rdel.status_code == 422, rdel.text
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Transition smoke tests (live, complementing unit tests)
+# ─────────────────────────────────────────────────────────────────────────
+
+class TestTransitions:
+    def test_submit_auto_issue_path(self, admin, project_setup):
+        r = admin.post(
+            f"{BASE_URL}/api/v1/projects/{project_setup['project_id']}/purchase-orders",
+            json=_po_create_body(project_setup),  # approval_required defaults false
+        )
+        po_id = r.json()["id"]
+        rs = admin.post(f"{BASE_URL}/api/v1/purchase-orders/{po_id}/submit")
+        assert rs.status_code == 200, rs.text
+        body = rs.json()
+        assert body["status"] == "issued"
+        assert body["submitted_at"] is not None
+        assert body["issued_at"] is not None
+
+    def test_submit_with_approval_required_goes_pending(self, admin, project_setup):
+        r = admin.post(
+            f"{BASE_URL}/api/v1/projects/{project_setup['project_id']}/purchase-orders",
+            json=_po_create_body(project_setup, approval_required=True),
+        )
+        po_id = r.json()["id"]
+        rs = admin.post(f"{BASE_URL}/api/v1/purchase-orders/{po_id}/submit")
+        assert rs.status_code == 200, rs.text
+        assert rs.json()["status"] == "pending_approval"
+
+    def test_void_requires_reason_and_stamps(self, admin, project_setup):
+        r = admin.post(
+            f"{BASE_URL}/api/v1/projects/{project_setup['project_id']}/purchase-orders",
+            json=_po_create_body(project_setup),
+        )
+        po_id = r.json()["id"]
+        # Missing reason → 422 (pydantic min_length=1).
+        rv1 = admin.post(
+            f"{BASE_URL}/api/v1/purchase-orders/{po_id}/void", json={},
+        )
+        assert rv1.status_code == 422
+        # With reason → 200, status=voided.
+        rv2 = admin.post(
+            f"{BASE_URL}/api/v1/purchase-orders/{po_id}/void",
+            json={"reason": "supplier withdrew"},
+        )
+        assert rv2.status_code == 200, rv2.text
+        assert rv2.json()["status"] == "voided"
+        assert rv2.json()["voided_reason"] == "supplier withdrew"
+
+    def test_patch_issued_only_allows_header_annotation(self, admin, project_setup):
+        r = admin.post(
+            f"{BASE_URL}/api/v1/projects/{project_setup['project_id']}/purchase-orders",
+            json=_po_create_body(project_setup),
+        )
+        po_id = r.json()["id"]
+        admin.post(f"{BASE_URL}/api/v1/purchase-orders/{po_id}/submit")
+        # Now issued — only notes/delivery_notes/external_reference allowed.
+        ok = admin.patch(
+            f"{BASE_URL}/api/v1/purchase-orders/{po_id}",
+            json={"notes": "annotated post-issue"},
+        )
+        assert ok.status_code == 200, ok.text
+        bad = admin.patch(
+            f"{BASE_URL}/api/v1/purchase-orders/{po_id}",
+            json={"supplier_id": project_setup["supplier_id"],
+                  "notes": "fine"},
+        )
+        assert bad.status_code == 403, bad.text
+        detail = bad.json()["detail"]
+        assert "supplier_id" in detail["disallowed_fields"]

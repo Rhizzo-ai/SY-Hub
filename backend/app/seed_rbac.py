@@ -114,6 +114,16 @@ PERMISSION_CATALOGUE += _perms_for(
     include=["view", "view_sensitive", "create", "edit", "archive"],
     sensitive={"view_sensitive", "archive"},
 )
+# Chat 24 §R2 (Prompt 2.5) — purchase orders.
+# sensitive: view_sensitive (pricing), delete, void, reopen.
+PERMISSION_CATALOGUE += _perms_for(
+    "pos",
+    include=[
+        "view", "view_sensitive", "create", "edit", "edit_issued",
+        "delete", "submit", "approve", "void", "close", "reopen", "receipt",
+    ],
+    sensitive={"view_sensitive", "delete", "void", "reopen"},
+)
 PERMISSION_CATALOGUE += _perms_for(
     "commitments",
     include=["view", "view_sensitive", "create", "edit", "approve"],
@@ -249,6 +259,9 @@ ROLE_PERMISSIONS["project_manager"] = {
     "entities.view",
     # Chat 24 §R1 (Prompt 2.5) — suppliers
     "suppliers.view", "suppliers.create", "suppliers.edit",
+    # Chat 24 §R2 (Prompt 2.5) — purchase orders
+    "pos.view", "pos.create", "pos.edit",
+    "pos.submit", "pos.void", "pos.receipt",
 }
 
 # finance
@@ -272,6 +285,10 @@ ROLE_PERMISSIONS["finance"] = {
     # Chat 24 §R1 (Prompt 2.5) — suppliers (full incl. sensitive + archive)
     "suppliers.view", "suppliers.view_sensitive",
     "suppliers.create", "suppliers.edit", "suppliers.archive",
+    # Chat 24 §R2 (Prompt 2.5) — purchase orders
+    "pos.view", "pos.view_sensitive",
+    "pos.create", "pos.edit", "pos.edit_issued",
+    "pos.approve", "pos.void", "pos.close", "pos.receipt",
 }
 
 # site_manager
@@ -286,6 +303,8 @@ ROLE_PERMISSIONS["site_manager"] = {
     "entities.view",
     # Chat 24 §R1 (Prompt 2.5) — read-only supplier directory access
     "suppliers.view",
+    # Chat 24 §R2 (Prompt 2.5) — PO read + receipt-only access
+    "pos.view", "pos.receipt",
 }
 
 # sales
