@@ -18,6 +18,19 @@ Frontend / actuals / commitments / Xero are out of scope until later prompts.
 
 ## What's been implemented
 
+### 2026-02-20 — Chat 24 R5 ✓ PO frontend (Prompt 2.5) — OPERATOR-VERIFICATION-PENDING
+
+- Seven new routes wired under React.lazy + `suppliers-po` webpack chunk: `/suppliers`, `/suppliers/new`, `/suppliers/:id(/edit)`, `/projects/:id/purchase-orders(/new|/:po_id)`, `/projects/:id/settings/numbering`.
+- API clients: `lib/api/{suppliers,purchaseOrders,numberPrefixes}.js` — every endpoint under `/v1/...` exactly once.
+- Hooks: `hooks/purchaseOrders.js` — TanStack Query with nested keys per Build Pack §5.6.
+- Components: `<POStatusPill/>` (brand-token pills — first real brand application), `<SensitiveValue/>` (em-dash fallback, defence-in-depth), `<SupplierSelect/>` (filter combobox + create-new), `<POLineEditor/>` (live qty×rate=net + totals strip).
+- Permissions: `lib/poCapability.js` — single source of truth; `nextActionsForStatus()` drives lifecycle button rendering.
+- Tailwind: extended `sy-teal/sy-orange/sy-grey` palettes with 100/200/600/700/800 shade ramps.
+- **URL-contract pins: 22 (≥ 12 floor)** in `lib/api/__tests__/po-url-contracts.test.js`.
+- **Whole Jest suite: 312 passed** (was 251 pre-R5, +61). 53 suites green.
+- **`yarn build` clean. Main bundle 395.26 kB gz (cap 437 kB, ~42 kB headroom).** R5 surface in own chunk: 10.43 kB gz.
+- Future_Tasks logged: §19 unified documents table (post-Documents track), §20 multipart streaming endpoint nice-to-have.
+
 ### 2026-02-20 — Chat 24 R4 ✓ PO Receipts backend (Prompt 2.5) — OPERATOR-VERIFICATION-PENDING
 
 - Migration `0033_po_receipts`: 3 tables + recompute trigger + audit/notification enum extensions (via `autocommit_block` helper, no `isolation_level` regression). Backfills `read_only.suppliers.view` to close a drift hole exposed by the 0025 round-trip guardrail.
