@@ -12,10 +12,60 @@ Frontend / actuals / commitments / Xero are out of scope until later prompts.
 - Pytest with cookies-only auth contract (no Bearer headers)
 - Pattern α tenant scoping: project-id resolution + `_visible_project_ids`
   filter, mirroring `routers/appraisals.py`. **No** `tenant_id` columns on
-  Track-2+ tables.
+  Track-2+ tables (exception: `purchase_orders.tenant_id` is denormalised
+  for list-time tenant filtering — see Chat 24 R2).
 - Audit append-only via `audit_log` + `audit_log_no_modify()` trigger.
 
 ## What's been implemented
+
+### 2026-05-20 — Chat 24 R2 ✓ Purchase Orders core (Prompt 2.5) — OPERATOR-VERIFICATION-PENDING
+- **Migrations:**
+  * `0030_purchase_orders.py` — po_status enum (8 states), purchase_orders +
+    purchase_order_lines tables, fn_po_recompute_header_totals trigger,
+    is_fully_receipted Computed column, partial unique idx on
+    (project_id, prefix_id, sequence) for forensic reconstruction.
+  * `0031_po_permissions.py` — 12 pos.* permissions, role grants.
+- **Models (`app/models/purchase_orders.py`):** PurchaseOrder + PurchaseOrderLine
+  with Status constants exported for state machine + edit-tier guard.
+- **Services:**
+  * `po_numbering.py` — atomic next-sequence allocation with SELECT FOR
+    UPDATE on the prefix row.
+  * `po_authz.py` — DUAL responsibility per build pack §4.5:
+    Pattern α tenant/project scoping AND edit-tier guard
+    (EditPermission.FULL / HEADER_ANNOTATION_ONLY / READ_ONLY with
+    check_can_edit_fields).
+  * `po_transitions.py` — state machine: submit, issue, void, close.
+    Approval (R3) and receipt (R4) transitions declared in
+    ALLOWED_TRANSITIONS but not yet driven.
+  * `purchase_orders.py` — CRUD + transitions; every CUD writes audit_log
+    with field-level diff; pricing fields gated by `pos.view_sensitive`.
+- **Router (`app/routers/purchase_orders.py`):** 9 endpoints under
+  `/api/v1/`:
+  GET/POST list+create, GET/PATCH/DELETE detail,
+  POST submit/issue/void/close.
+- **RBAC:** PERMISSION_CATALOGUE += 12 pos.* perms; role mappings for
+  super_admin (all 12), director (all 12), finance (9 incl. approve/void/close),
+  project_manager (6 incl. submit/void), site_manager (view + receipt).
+- **Tests (47 total):**
+  * `test_purchase_orders_unit.py` — 33 unit tests verified PASSING
+    in-container (state-machine 16 + edit-tier matrix 17).
+  * `test_purchase_orders_api.py` — 14 integration tests
+    OPERATOR-VERIFICATION-PENDING (require live PG): 6 numbering +
+    4 CRUD + 4 transitions.
+- **Scope honoured:** Approval flow → R3. Receipt flow → R4.
+  Bills entity, PO templates, multi-currency, approval thresholds → future
+  tracks. No frontend changes (R5/R6 scope).
+- **Commit:** `1012e18 Chat 24 R2: Purchase Orders core (Prompt 2.5)`.
+
+### 2026-05-19 — Chat 24 R1 ✓ Suppliers + Project Number Prefixes (Prompt 2.5)
+- Migration 0029_suppliers_prefixes, models `suppliers.py` +
+  `number_prefixes.py`, services + routers, 9 tests, all under /api/v1/.
+- Commit `357a939`.
+
+### 2026-05-19 — Chat 24 R0 ✓ Pre-flight cleanup
+- `LineItemsPanel.jsx` → `LineItemsBreakdown` swap in `LineDrawer.jsx`.
+- Supervisor `[program:backend]` template re-applied for self-healing.
+- Commit `9070a80`.
 
 ### 2026-05-19 — Chat 23 Build Pack A CLOSED ✓ (R1–R10 complete · 38/39 acceptance gates · 1 documented partial)
 - **R9/R10 closure:** All R-sections shipped, full test suites green at close (backend **843**, Jest **250**), bundle main **395.1 kB** (cap 437 kB, headroom 41.9 kB), permissions=86, roles=10, alembic head `0028_user_preferences_table`.
