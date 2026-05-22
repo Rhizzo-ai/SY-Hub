@@ -81,6 +81,28 @@ export async function rejectPO(poId, body) {
   return data;
 }
 
+// R7.0b — approved → draft "send back" path. Notes are required by the
+// backend (422 on empty/whitespace). The submitter IS allowed to send
+// back their own approved PO (no self-approval guard — this IS the
+// correction path).
+export async function sendBackPO(poId, body) {
+  const { data } = await api.post(
+    `/v1/purchase-orders/${poId}/send-back`, body,
+  );
+  return data;
+}
+
+// R7.3 helper — list approval rows for a PO (open + historical). Used
+// by <POApprovalPanel/> to surface the open pending_approval row + its
+// budget_snapshot, since GET /purchase-orders/{po_id} does NOT inline
+// the open approval row.
+export async function listPOApprovals(poId, { signal } = {}) {
+  const { data } = await api.get(
+    `/v1/purchase-orders/${poId}/approvals`, { signal },
+  );
+  return data;
+}
+
 export async function issuePO(poId) {
   const { data } = await api.post(`/v1/purchase-orders/${poId}/issue`, {});
   return data;

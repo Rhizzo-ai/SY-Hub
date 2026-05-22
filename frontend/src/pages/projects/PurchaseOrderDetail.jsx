@@ -1,26 +1,26 @@
 /**
- * PurchaseOrderDetail — Chat 24 §R5.
+ * PurchaseOrderDetail — Chat 24 §R5 + Chat 26 §R7.2/§R7.3.
  *
- * Tabs: Lines / Receipts / Approvals / Audit. Lifecycle action buttons
- * are gated by both the PO status (nextActionsForStatus) and the user
- * permissions (poCapability).
+ * Tabs: Lines / Receipts / Approvals / Audit.
  *
- * Sensitive numerics fall back to <SensitiveValue/> when the caller
- * lacks pos.view_sensitive.
+ * R7.2 — inline lifecycle buttons now live in <POActionButtons/>
+ * (status × perm × edit_tier × self-approval handled there).
+ * R7.3 — the Approvals tab now mounts <POApprovalPanel/>, which surfaces
+ * the over-budget snapshot + approve/reject controls when the PO is
+ * pending. Send-back lives in <POActionButtons/> on the approved row.
+ *
+ * Sensitive numerics still fall back to <SensitiveValue/> when the
+ * caller lacks pos.view_sensitive.
  */
 import React, { useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 
 import { useAuth } from '@/context/AuthContext';
-import {
-  usePO, useReceipts, usePoTransition,
-} from '@/hooks/purchaseOrders';
-import {
-  canApprovePO, canClosePO, canEditIssuedPO, canEditPO, canIssuePO,
-  canRejectPO, canReceiptPO, canSubmitPO, canViewSensitivePO, canVoidPO,
-  nextActionsForStatus,
-} from '@/lib/poCapability';
+import { usePO, useReceipts } from '@/hooks/purchaseOrders';
+import { canViewSensitivePO } from '@/lib/poCapability';
 import POStatusPill from '@/components/po/POStatusPill';
+import POActionButtons from '@/components/po/POActionButtons';
+import POApprovalPanel from '@/components/po/POApprovalPanel';
 import SensitiveValue from '@/components/po/SensitiveValue';
 import { fmtGBP, fmtNumber } from '@/lib/poFormat';
 
@@ -29,33 +29,17 @@ const TABS = ['lines', 'receipts', 'approvals', 'audit'];
 
 export default function PurchaseOrderDetail() {
   const { id: projectId, po_id: poId } = useParams();
-  const navigate = useNavigate();
-  const { user } = useAuth();
-  const canSensitive = canViewSensitivePO(user);
+  const { me } = useAuth();
+  const canSensitive = canViewSensitivePO(me);
   const [tab, setTab] = useState('lines');
 
   const { data: po, isLoading, isError } = usePO(poId);
   const { data: receipts } = useReceipts(poId, { enabled: tab === 'receipts' });
 
-  const submit = usePoTransition(poId, 'submit');
-  const approve = usePoTransition(poId, 'approve');
-  const reject = usePoTransition(poId, 'reject');
-  const issueTxn = usePoTransition(poId, 'issue');
-  const voidTxn = usePoTransition(poId, 'void');
-  const closeTxn = usePoTransition(poId, 'close');
-
   if (isLoading) return <div className="p-6 text-sm" data-testid="po-detail-loading">Loading…</div>;
   if (isError || !po) return <div className="p-6 text-sm text-red-600" data-testid="po-detail-error">
     Purchase order not found.
   </div>;
-
-  const actions = nextActionsForStatus(po.status);
-  const callTxn = async (m) => {
-    try { await m.mutateAsync({}); }
-    catch (err) {
-      window.alert(err?.response?.data?.detail?.message ?? err?.response?.data?.detail ?? err.message);
-    }
-  };
 
   return (
     <div className="p-6 space-y-4" data-testid="po-detail">
@@ -68,70 +52,7 @@ export default function PurchaseOrderDetail() {
             {po.supplier_name ?? '—'} · <POStatusPill status={po.status} />
           </div>
         </div>
-        <div className="flex flex-wrap gap-2">
-          {actions.includes('edit') && canEditPO(user) && (
-            <Link
-              to={`/projects/${projectId}/purchase-orders/${po.id}/edit`}
-              className="px-3 py-1.5 rounded border text-sm"
-              data-testid="po-detail-edit-btn"
-            >Edit</Link>
-          )}
-          {actions.includes('edit_issued') && canEditIssuedPO(user) && (
-            <Link
-              to={`/projects/${projectId}/purchase-orders/${po.id}/edit`}
-              className="px-3 py-1.5 rounded border text-sm"
-              data-testid="po-detail-edit-issued-btn"
-            >Edit (issued)</Link>
-          )}
-          {actions.includes('submit') && canSubmitPO(user) && (
-            <button
-              type="button" onClick={() => callTxn(submit)} disabled={submit.isPending}
-              className="px-3 py-1.5 rounded bg-sy-teal-600 text-white text-sm"
-              data-testid="po-detail-submit-btn"
-            >Submit</button>
-          )}
-          {actions.includes('approve') && canApprovePO(user) && (
-            <button
-              type="button" onClick={() => callTxn(approve)} disabled={approve.isPending}
-              className="px-3 py-1.5 rounded bg-sy-teal-600 text-white text-sm"
-              data-testid="po-detail-approve-btn"
-            >Approve</button>
-          )}
-          {actions.includes('reject') && canRejectPO(user) && (
-            <button
-              type="button"
-              onClick={async () => {
-                const reason = window.prompt('Rejection reason?');
-                if (!reason) return;
-                try { await reject.mutateAsync({ reason }); }
-                catch (err) { window.alert(err?.response?.data?.detail?.message ?? err.message); }
-              }}
-              className="px-3 py-1.5 rounded border text-red-700 text-sm"
-              data-testid="po-detail-reject-btn"
-            >Reject</button>
-          )}
-          {actions.includes('receipt') && canReceiptPO(user) && (
-            <Link
-              to={`/projects/${projectId}/purchase-orders/${po.id}/receipts/new`}
-              className="px-3 py-1.5 rounded bg-sy-orange-600 text-white text-sm"
-              data-testid="po-detail-receipt-btn"
-            >+ Receipt</Link>
-          )}
-          {actions.includes('void') && canVoidPO(user) && (
-            <button
-              type="button" onClick={() => callTxn(voidTxn)} disabled={voidTxn.isPending}
-              className="px-3 py-1.5 rounded border text-red-700 text-sm"
-              data-testid="po-detail-void-btn"
-            >Void</button>
-          )}
-          {actions.includes('close') && canClosePO(user) && (
-            <button
-              type="button" onClick={() => callTxn(closeTxn)} disabled={closeTxn.isPending}
-              className="px-3 py-1.5 rounded border text-sm"
-              data-testid="po-detail-close-btn"
-            >Close</button>
-          )}
-        </div>
+        <POActionButtons po={po} projectId={projectId} />
       </header>
 
       <section className="grid grid-cols-4 gap-2 text-sm">
@@ -235,32 +156,8 @@ export default function PurchaseOrderDetail() {
       )}
 
       {tab === 'approvals' && (
-        <div className="text-sm text-sy-grey-600" data-testid="po-detail-approvals">
-          {(po.approvals ?? []).length === 0
-            ? 'No approval history.'
-            : (
-              <table className="w-full text-sm border-collapse">
-                <thead>
-                  <tr className="text-left text-xs text-sy-grey-700 border-b">
-                    <th className="py-1 pr-2">When</th>
-                    <th className="py-1 pr-2">By</th>
-                    <th className="py-1 pr-2">Resolution</th>
-                    <th className="py-1 pr-2">Reason</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(po.approvals ?? []).map((a) => (
-                    <tr key={a.id} className="border-b last:border-0">
-                      <td className="py-1 pr-2 tabular-nums">{a.created_at?.slice(0, 10)}</td>
-                      <td className="py-1 pr-2">{a.approver_name ?? a.approver_user_id?.slice(0, 8)}</td>
-                      <td className="py-1 pr-2">{a.resolution}</td>
-                      <td className="py-1 pr-2">{a.reason ?? '—'}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )
-          }
+        <div data-testid="po-detail-approvals">
+          <POApprovalPanel po={po} />
         </div>
       )}
 

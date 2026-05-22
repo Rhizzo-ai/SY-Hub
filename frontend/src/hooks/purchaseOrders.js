@@ -146,6 +146,11 @@ export function usePoTransition(poId, verb) {
     submit: () => poApi.submitPO(poId),
     approve: (body) => poApi.approvePO(poId, body),
     reject: (body) => poApi.rejectPO(poId, body),
+    // R7.0b — approved → draft. NB: budget-line cache invalidation
+    // for commitment-changing verbs (send-back joins approve/issue/
+    // void) is R7.6/Batch 2; the R6 grid's committed column may lag
+    // a send-back until refetch — acceptable at the batch boundary.
+    sendBack: (body) => poApi.sendBackPO(poId, body),
     issue: () => poApi.issuePO(poId),
     void: (body) => poApi.voidPO(poId, body),
     close: () => poApi.closePO(poId),
@@ -156,6 +161,19 @@ export function usePoTransition(poId, verb) {
       qc.invalidateQueries({ queryKey: poKeys.detail(poId) });
       qc.invalidateQueries({ queryKey: poKeys.all });
     },
+  });
+}
+
+
+// R7.3 — list approval rows for a PO. Mounted by <POApprovalPanel/>
+// when status === 'pending_approval' to surface the open row's
+// budget_snapshot. Disabled by default so it doesn't fire on every PO
+// detail mount.
+export function usePOApprovals(poId, { enabled = true } = {}) {
+  return useQuery({
+    queryKey: ['purchase-order', poId, 'approvals'],
+    queryFn: ({ signal }) => poApi.listPOApprovals(poId, { signal }),
+    enabled: enabled && !!poId,
   });
 }
 
