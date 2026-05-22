@@ -14,11 +14,18 @@
  *   receipted           → Close
  *   closed / voided     → (none)
  *
- * `edit_tier` (lowercase string from backend):
- *   - 'read_only'              → no mutating buttons
- *   - 'header_annotation_only' → suppress Edit / Delete only; workflow OK
- *   - 'full'                   → all per matrix
- *   - absent / unknown         → treat as 'read_only' (defensive fallback)
+ * `edit_tier` (lowercase string from backend) gates EDITING ONLY —
+ * Edit / Delete buttons. Workflow transitions (Submit / Approve /
+ * Reject / Issue / Send back / Void / Close / Receipt) are gated by
+ * status × perm, independent of edit_tier. The backend explicitly
+ * tags pending_approval as edit_tier='read_only' to lock header/line
+ * fields while the approver decides — but Approve/Reject must still
+ * be reachable.
+ *
+ *   - 'full'                   → Edit + Delete + Edit (issued) allowed
+ *   - 'header_annotation_only' → suppress Edit / Delete (workflow OK)
+ *   - 'read_only'              → suppress Edit / Delete (workflow OK)
+ *   - absent / unknown         → treat as 'read_only' (defensive)
  *
  * Self-approval guard mirrors backend `SelfApprovalForbidden`: when
  * `po.submitted_by === me.id`, Approve + Reject hide. Send back is NOT
@@ -96,13 +103,13 @@ export default function POActionButtons({ po, projectId }) {
     }
   };
 
-  // ── edit_tier short-circuit: read-only PO renders nothing. ────────
-  if (tier === 'read_only') {
-    return <div data-testid="po-actions" />;
-  }
-
-  // Header-annotation-only suppresses Edit/Delete; workflow buttons
-  // still render per the status matrix.
+  // ── edit_tier short-circuit: blocks Edit / Delete buttons only.
+  // Workflow transitions (Submit / Approve / Reject / Issue / Send
+  // back / Void / Close / Receipt) are gated by status × perm and
+  // remain reachable regardless of edit_tier. The backend tags
+  // `pending_approval` as edit_tier='read_only' to lock header/line
+  // edits while the approver decides — Approve/Reject must still
+  // render. Only `'full'` unlocks Edit/Delete.
   const editAllowed = tier === 'full';
 
   // Convenience flags per status (drives which buttons mount).

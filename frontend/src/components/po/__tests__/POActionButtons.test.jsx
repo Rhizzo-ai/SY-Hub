@@ -229,17 +229,39 @@ describe('<POActionButtons/> R7.2 — status × persona × edit_tier × self-app
   });
 
   // ── edit_tier handling (P0.12) ─────────────────────────────────────
+  // edit_tier ONLY gates Edit / Delete. Workflow transitions stay
+  // reachable for every tier (the backend tags pending_approval as
+  // read_only to lock fields, but Approve / Reject must still render).
   describe('edit_tier handling', () => {
-    test("read_only suppresses ALL mutating buttons", () => {
+    test("read_only suppresses Edit + Delete but keeps Submit on draft", () => {
       useAuth.mockReturnValue({ me: ME_PM });
-      const { container } = renderWithProviders(
+      renderWithProviders(
         <POActionButtons
           po={makePO({ status: 'draft', edit_tier: 'read_only' })}
           projectId="p-1"
         />,
       );
-      const actions = container.querySelector('[data-testid="po-actions"]');
-      expect(actions.children.length).toBe(0);
+      // Workflow stays — backend lets PM submit even when fields are locked.
+      expect(screen.getByTestId('po-actions-submit-btn')).toBeInTheDocument();
+      // Edit + Delete suppressed.
+      expect(screen.queryByTestId('po-actions-edit-btn')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('po-actions-delete-btn')).not.toBeInTheDocument();
+    });
+
+    test("read_only on pending_approval keeps Approve + Reject visible (the matrix-critical case)", () => {
+      useAuth.mockReturnValue({ me: ME_APPROVER });
+      renderWithProviders(
+        <POActionButtons
+          po={makePO({
+            status: 'pending_approval',
+            edit_tier: 'read_only', // ← live backend value for this status
+            submitted_by: 'someone-else',
+          })}
+          projectId="p-1"
+        />,
+      );
+      expect(screen.getByTestId('po-actions-approve-btn')).toBeInTheDocument();
+      expect(screen.getByTestId('po-actions-reject-btn')).toBeInTheDocument();
     });
 
     test("header_annotation_only suppresses Edit + Delete but keeps Submit", () => {
@@ -255,16 +277,19 @@ describe('<POActionButtons/> R7.2 — status × persona × edit_tier × self-app
       expect(screen.queryByTestId('po-actions-delete-btn')).not.toBeInTheDocument();
     });
 
-    test("missing edit_tier falls back to read_only (no buttons)", () => {
+    test("missing edit_tier defaults to read_only (Edit/Delete hidden, workflow OK)", () => {
       useAuth.mockReturnValue({ me: ME_PM });
-      const { container } = renderWithProviders(
+      renderWithProviders(
         <POActionButtons
           po={{ id: 'po-1', status: 'draft', submitted_by: 'x' /* no edit_tier */ }}
           projectId="p-1"
         />,
       );
-      const actions = container.querySelector('[data-testid="po-actions"]');
-      expect(actions.children.length).toBe(0);
+      // Workflow still works — submit is reachable.
+      expect(screen.getByTestId('po-actions-submit-btn')).toBeInTheDocument();
+      // Edit/Delete gated by edit_tier === 'full' which fails.
+      expect(screen.queryByTestId('po-actions-edit-btn')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('po-actions-delete-btn')).not.toBeInTheDocument();
     });
 
     test("edit_tier is case-insensitive (FULL == full)", () => {

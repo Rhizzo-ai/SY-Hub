@@ -83,6 +83,22 @@ def _budget_and_lines(engine):
     return str(bid), by_code
 
 
+def _disable_mfa_for_test_users(engine):
+    """The login_with_auto_enroll helper enrolls super-admin roles in MFA
+    on first call. The enrolment secret is in-process only, so a second
+    invocation of this script fails with "no cached secret". Reset MFA
+    on every test-* user at the start so the script is re-runnable.
+    """
+    with engine.begin() as c:
+        c.execute(text("""
+            UPDATE users SET mfa_enabled=false, mfa_method=NULL,
+              mfa_secret_encrypted=NULL, mfa_backup_codes_encrypted=NULL,
+              mfa_enrolled_at=NULL, failed_login_attempts=0,
+              locked_until=NULL, lockout_level=0
+            WHERE email LIKE 'test-%@example.test'
+        """))
+
+
 def _wipe_pos(engine):
     """Idempotency: wipe previous POs + approvals on the spot-check project."""
     with engine.begin() as c:
@@ -181,6 +197,10 @@ def _submit_po(session, po_id: str) -> dict:
 
 def main():
     engine = create_engine(DATABASE_URL, future=True)
+
+    # Self-healing: any pod-restart re-enables MFA on super-admins, and
+    # our cached enrolment secrets are lost. Reset MFA so login works.
+    _disable_mfa_for_test_users(engine)
 
     # Sanity — wipe prior POs on this project so re-runs are clean.
     _wipe_pos(engine)
