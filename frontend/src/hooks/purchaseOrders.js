@@ -87,11 +87,18 @@ export function useProjectPOs(projectId, { params, enabled = true } = {}) {
 // row: the hook is mounted only when the row is expanded, so
 // `enabled: !!lineId` is sufficient to defer the fetch until first
 // expand.
+//
+// `staleTime` is non-zero so that when the R6 Expand-All flow
+// hydrates every line's cache from P0.2 in ONE bulk call, the
+// downstream POsSection mounts find the data fresh and DON'T fire
+// individual GETs. 30s mirrors the typical user dwell on a line
+// without being long enough to mask stale data after a mutation.
 export function useBudgetLinePOs(lineId, { enabled = true } = {}) {
   return useQuery({
     queryKey: poKeys.budgetLineList(lineId),
     queryFn: ({ signal }) => poApi.listBudgetLinePOs(lineId, { signal }),
     enabled: enabled && !!lineId,
+    staleTime: 30_000,
   });
 }
 

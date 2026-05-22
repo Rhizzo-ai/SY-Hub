@@ -33,6 +33,8 @@ export function BudgetGridToolbar({
   filters, onFiltersChange, table,
   canViewSensitive, onApplyPreset,
   savedViews, onApplyView, onOpenSaveView, onOpenManageViews,
+  onExpandAll, onCollapseAll, expandAllPending,
+  expandedLineCount = 0, totalLineCount = 0,
 }) {
   // Debounce only the search box (200ms). Other filters apply
   // immediately because they're click-driven, not type-driven.
@@ -154,6 +156,33 @@ export function BudgetGridToolbar({
       </label>
 
       <div className="ml-auto flex items-center gap-2">
+        {/* R6 — Expand-all / Collapse-all (user action only; never
+            fires on mount, never the default). One click hydrates
+            every line's PO cache from P0.2's by_budget_line index in
+            a SINGLE GET. */}
+        {onExpandAll && (
+          <button
+            type="button"
+            onClick={onExpandAll}
+            disabled={!!expandAllPending}
+            className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100 disabled:cursor-progress disabled:opacity-60"
+            data-testid="bg2-expand-all"
+            aria-label="Expand all line details"
+          >
+            {expandAllPending ? 'Expanding…' : 'Expand all'}
+          </button>
+        )}
+        {onCollapseAll && expandedLineCount > 0 && (
+          <button
+            type="button"
+            onClick={onCollapseAll}
+            className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100"
+            data-testid="bg2-collapse-all"
+            aria-label="Collapse all line details"
+          >
+            Collapse all ({expandedLineCount}/{totalLineCount})
+          </button>
+        )}
         <ViewPresetsDropdown
           canViewSensitive={canViewSensitive}
           onApplyPreset={onApplyPreset}

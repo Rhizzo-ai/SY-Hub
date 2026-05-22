@@ -22,7 +22,8 @@ import { fmtGBP } from '@/lib/poFormat';
 import { ReceiptsSection } from './ReceiptsSection';
 
 export function POsSection({ lineId, projectId }) {
-  const { data, isLoading, isError, error } = useBudgetLinePOs(lineId);
+  const query = useBudgetLinePOs(lineId);
+  const { data, isLoading, isError, error, refetch, isFetching } = query;
 
   if (isLoading) {
     return (
@@ -33,8 +34,22 @@ export function POsSection({ lineId, projectId }) {
   }
   if (isError) {
     return (
-      <div className="p-3 text-sm text-rose-600" data-testid="bg2-pos-error">
-        Failed to load purchase orders. {error?.friendlyMessage ?? error?.message ?? ''}
+      <div
+        className="flex items-center justify-between rounded border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700"
+        data-testid="bg2-pos-error"
+      >
+        <span>
+          Failed to load purchase orders. {error?.friendlyMessage ?? error?.message ?? ''}
+        </span>
+        <button
+          type="button"
+          onClick={() => refetch()}
+          disabled={isFetching}
+          className="ml-3 rounded border border-rose-300 bg-white px-2 py-1 text-xs font-medium text-rose-700 hover:bg-rose-100 disabled:cursor-progress disabled:opacity-60"
+          data-testid="bg2-pos-retry"
+        >
+          {isFetching ? 'Retrying…' : 'Retry'}
+        </button>
       </div>
     );
   }

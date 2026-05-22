@@ -18,6 +18,39 @@ Frontend / actuals / commitments / Xero are out of scope until later prompts.
 
 ## What's been implemented
 
+### 2026-05-22 — Chat 25 R6 v2 ✓ Closing-gap pass (frontend-only)
+
+Second R6 pass to close gaps from the v1 pass that the operator flagged.
+
+- **Expand-All (was missing, now wired end-to-end)**:
+  - Toolbar buttons `bg2-expand-all` + `bg2-collapse-all`.
+  - Single bulk GET `/v1/budgets/{id}/purchase-orders` hydrates every
+    per-line cache via `queryClient.setQueryData(poKeys.budgetLineList(lid), …)`.
+  - `useBudgetLinePOs` now has `staleTime: 30s` so seeded data is not
+    immediately re-fetched.
+  - Jest pin asserts ONE bulk GET → ZERO per-line PO GETs at mount.
+- **Sticky cost-code column** on horizontal scroll: leading expand
+  cell + cost_code header + cost_code body cell all `position: sticky`
+  with backing bg. 6 sticky-attachment hits in
+  `BudgetGridV2Desktop.jsx`.
+- **Empty / Error+Retry states**: POsSection and ReceiptsSection both
+  ship `…-loading`, `…-error`, `…-retry`, `…-empty` testids. Retry
+  triggers `refetch()`.
+- **A11y**: line expand button has `aria-expanded` + `aria-controls`;
+  the expanded panel has `role="region"` + `aria-labelledby`.
+  Keyboard Enter/Space work via native `<button>` semantics
+  (jest-asserted).
+- **Receipt photo thumbnail**: new `ReceiptPhotoThumb` with
+  `loading="lazy"`, non-empty `alt` (caption → filename → "Receipt
+  photo" fallback), `onError` → swaps to glyph fallback. Future-shaped
+  endpoint `/api/v1/receipts/photos/{id}` consumed; backend photo
+  router lands later.
+- **Warm-expand timing**: cache-hit mount measured at ~6ms (budget
+  500ms, headroom 80x).
+- **Jest**: 53 suites, **324 tests passing** (was 313; +11 R6 v2 tests).
+- **Bundle**: main bundle **385.29 kB gz** (gzip -9) / **395.25 kB gz**
+  (CRA) — same headroom as v1.
+
 ### 2026-05-22 — Chat 25 R6 ✓ Inline Expandable Budget-Line Grid (frontend)
 
 Phase A0 → 4 complete. R6 ships the Buildertrend-style inline expandable

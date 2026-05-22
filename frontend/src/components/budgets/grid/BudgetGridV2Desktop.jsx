@@ -14,6 +14,7 @@
  */
 import { useMemo, useState, useEffect, useRef, useCallback, Fragment } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
 import {
   flexRender, getCoreRowModel, getExpandedRowModel,
   getSortedRowModel, useReactTable,
@@ -34,6 +35,8 @@ import { useAuth } from '@/context/AuthContext';
 import {
   useReorderBudgetLines,
 } from '@/hooks/budgets';
+import { listBudgetPOs } from '@/lib/api/purchaseOrders';
+import { poKeys } from '@/hooks/purchaseOrders';
 import { useCostCodes, buildCostCodeMap } from '@/hooks/costCodes';
 import { isBudgetEditable, canEditLines } from '@/lib/budgetCapability';
 import { buildReorderedIds } from '@/lib/buildReorderedIds';
@@ -313,6 +316,58 @@ export function BudgetGridV2Desktop({ budget, projectId }) {
     }, { replace: true });
   }, [setSearchParams]);
 
+  // ----- R6: Expand-All / Collapse-All (user action, never default) ---
+  // One bulk fetch of P0.2 (`/v1/budgets/{id}/purchase-orders`) seeds
+  // every per-line cache via `queryClient.setQueryData`, then we write
+  // every line id into `?expanded=`. When the rows mount they find
+  // their per-line cache pre-populated and DON'T fire individual GETs.
+  // RO em-dash gating is unchanged — the bulk endpoint nulls the same
+  // sensitive money columns the per-line endpoint does.
+  const queryClient = useQueryClient();
+  const [expandAllError, setExpandAllError] = useState(null);
+  const [expandAllPending, setExpandAllPending] = useState(false);
+
+  const expandAllLines = useCallback(async () => {
+    setExpandAllError(null);
+    setExpandAllPending(true);
+    try {
+      const bulk = await listBudgetPOs(budget.id);
+      // Seed per-line caches from the by_budget_line index. Lines with
+      // no POs still get a cached empty list so their POsSection won't
+      // round-trip just to learn it's empty.
+      const byLine = bulk?.by_budget_line ?? {};
+      const lineIds = (budget.lines ?? []).map((l) => l.id);
+      for (const lid of lineIds) {
+        const items = Array.isArray(byLine[lid]) ? byLine[lid] : [];
+        queryClient.setQueryData(poKeys.budgetLineList(lid), {
+          budget_line_id: lid,
+          items,
+          total: items.length,
+          limit: bulk?.limit ?? items.length,
+          offset: bulk?.offset ?? 0,
+        });
+      }
+      setSearchParams((prev) => {
+        const next = new URLSearchParams(prev);
+        if (lineIds.length === 0) next.delete('expanded');
+        else next.set('expanded', lineIds.join(','));
+        return next;
+      }, { replace: true });
+    } catch (err) {
+      setExpandAllError(err?.friendlyMessage || err?.message || 'Failed to expand all');
+    } finally {
+      setExpandAllPending(false);
+    }
+  }, [budget.id, budget.lines, queryClient, setSearchParams]);
+
+  const collapseAllLines = useCallback(() => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.delete('expanded');
+      return next;
+    }, { replace: true });
+  }, [setSearchParams]);
+
   // ----- Default expansion (R3.6): TanStack `expanded` for category-group
   // rows; line expansion is URL-backed via `expandedLineSet` below.
   // (Initial state keys here are intentionally the bare groupKey, NOT
@@ -416,6 +471,11 @@ export function BudgetGridV2Desktop({ budget, projectId }) {
         onFiltersChange={setFilters}
         table={table}
         canViewSensitive={canViewSensitive}
+        onExpandAll={expandAllLines}
+        onCollapseAll={collapseAllLines}
+        expandAllPending={expandAllPending}
+        expandedLineCount={expandedLineSet.size}
+        totalLineCount={(budget.lines ?? []).length}
         onApplyPreset={(_name, preset) => {
           setColumnVisibility({ ...INITIAL_COLUMN_VISIBILITY, ...preset.visibility });
           setColumnOrder(preset.columnOrder ?? []);
@@ -432,6 +492,15 @@ export function BudgetGridV2Desktop({ budget, projectId }) {
         onOpenManageViews={() => setManageOpen(true)}
       />
 
+      {expandAllError && (
+        <div
+          className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700"
+          data-testid="bg2-expand-all-error"
+        >
+          Expand all failed — {expandAllError}.
+        </div>
+      )}
+
       {reorderMut.isError && (
         <div
           className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700"
@@ -441,30 +510,44 @@ export function BudgetGridV2Desktop({ budget, projectId }) {
         </div>
       )}
 
-      <div className="overflow-x-auto rounded-lg border border-slate-200">
+      <div className="overflow-x-auto rounded-lg border border-slate-200" data-testid="bg2-table-scroll">
         <table className="w-full text-sm" data-testid="bg2-table">
           <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-600">
             {table.getHeaderGroups().map((hg) => (
               <tr key={hg.id}>
-                <th className="w-8" aria-hidden="true" />
-                {hg.headers.map((h) => (
-                  <th
-                    key={h.id}
-                    scope="col"
-                    className={`px-3 py-2 text-left ${
-                      h.column.getCanSort() ? 'cursor-pointer select-none' : ''
-                    }`}
-                    style={{ minWidth: h.column.columnDef.size }}
-                    onClick={h.column.getToggleSortingHandler()}
-                    data-testid={`bg2-header-${h.id}`}
-                  >
-                    <span className="inline-flex items-center gap-1">
-                      {flexRender(h.column.columnDef.header, h.getContext())}
-                      {h.column.getIsSorted() === 'asc' && <span>▲</span>}
-                      {h.column.getIsSorted() === 'desc' && <span>▼</span>}
-                    </span>
-                  </th>
-                ))}
+                <th
+                  className="sticky left-0 z-20 w-8 bg-slate-50"
+                  aria-hidden="true"
+                  data-testid="bg2-header-leading-sticky"
+                />
+                {hg.headers.map((h) => {
+                  // R6 — sticky cost-code column so the row stays
+                  // anchored when the user scrolls right through the
+                  // money columns. `left: 32px` matches the leading
+                  // expand/drag cell width.
+                  const isSticky = h.column.id === 'cost_code';
+                  const stickyCls = isSticky
+                    ? 'sticky left-8 z-10 bg-slate-50 shadow-[2px_0_0_0_rgba(0,0,0,0.04)]'
+                    : '';
+                  return (
+                    <th
+                      key={h.id}
+                      scope="col"
+                      className={`px-3 py-2 text-left ${
+                        h.column.getCanSort() ? 'cursor-pointer select-none' : ''
+                      } ${stickyCls}`}
+                      style={{ minWidth: h.column.columnDef.size }}
+                      onClick={h.column.getToggleSortingHandler()}
+                      data-testid={`bg2-header-${h.id}`}
+                    >
+                      <span className="inline-flex items-center gap-1">
+                        {flexRender(h.column.columnDef.header, h.getContext())}
+                        {h.column.getIsSorted() === 'asc' && <span>▲</span>}
+                        {h.column.getIsSorted() === 'desc' && <span>▼</span>}
+                      </span>
+                    </th>
+                  );
+                })}
               </tr>
             ))}
           </thead>
@@ -489,15 +572,21 @@ export function BudgetGridV2Desktop({ budget, projectId }) {
                         className="bg-slate-50 font-semibold"
                         data-testid={`bg2-group-${orig.groupKey}`}
                       >
-                        <td className="w-8" />
-                        {row.getVisibleCells().map((cell) => (
-                          <td
-                            key={cell.id}
-                            className="px-3 py-2"
-                          >
-                            {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                          </td>
-                        ))}
+                        <td className="sticky left-0 z-10 w-8 bg-slate-50" />
+                        {row.getVisibleCells().map((cell) => {
+                          const isSticky = cell.column.id === 'cost_code';
+                          const stickyCls = isSticky
+                            ? 'sticky left-8 z-10 bg-slate-50'
+                            : '';
+                          return (
+                            <td
+                              key={cell.id}
+                              className={`px-3 py-2 ${stickyCls}`}
+                            >
+                              {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                            </td>
+                          );
+                        })}
                       </tr>
                     );
                   }
@@ -511,7 +600,10 @@ export function BudgetGridV2Desktop({ budget, projectId }) {
                         lineId={orig.id}
                         dragDisabled={dragDisabled}
                       >
-                        <td className="w-8 px-2">
+                        <td
+                          className="sticky left-0 z-10 w-8 bg-white px-2"
+                          data-testid={`bg2-line-leading-sticky-${orig.id}`}
+                        >
                           <button
                             type="button"
                             onClick={() => toggleExpandedLine(orig.id)}
@@ -532,14 +624,21 @@ export function BudgetGridV2Desktop({ budget, projectId }) {
                             disabled={dragDisabled}
                           />
                         </td>
-                        {row.getVisibleCells().map((cell) => (
-                          <td
-                            key={cell.id}
-                            className="px-3 py-2"
-                          >
-                            {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                          </td>
-                        ))}
+                        {row.getVisibleCells().map((cell) => {
+                          const isSticky = cell.column.id === 'cost_code';
+                          const stickyCls = isSticky
+                            ? 'sticky left-8 z-10 bg-white shadow-[2px_0_0_0_rgba(0,0,0,0.04)]'
+                            : '';
+                          return (
+                            <td
+                              key={cell.id}
+                              className={`px-3 py-2 ${stickyCls}`}
+                              data-testid={isSticky ? `bg2-line-cost-code-cell-${orig.id}` : undefined}
+                            >
+                              {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                            </td>
+                          );
+                        })}
                       </SortableLineRowBody>
                       {lineExpanded && (
                         <tr
