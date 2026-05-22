@@ -38,6 +38,10 @@ AUDIT_ACTIONS = (
     # Chat 24 §R4 (Prompt 2.5) — PO physical-delivery capture.
     # Enum value added in /app/backend/alembic/versions/0033_po_receipts.py.
     "Receipt",
+    # Chat 26 §R7.0b (Prompt 2.5 Track 2) — PO approved→draft send-back
+    # for correction (P0.13 resolution). Enum value added in
+    # /app/backend/alembic/versions/0034_audit_sendback.py.
+    "SendBack",
 )
 
 

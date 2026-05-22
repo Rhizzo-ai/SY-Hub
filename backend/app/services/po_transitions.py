@@ -1,4 +1,5 @@
-"""Purchase Order state machine — Chat 24 §R2 (Prompt 2.5), R7.0 Option B.
+"""Purchase Order state machine — Chat 24 §R2 (Prompt 2.5), R7.0 Option B,
+R7.0b send-back (Chat 26).
 
 States (8): draft, pending_approval, approved, issued,
 partially_receipted, receipted, closed, voided.
@@ -11,6 +12,11 @@ Transitions:
                                  was draft -> issued in §R2)
   - approved -> issued          (issue, post-approval — REQUIRED step;
                                  R7.0 stops the auto-issue collapse)
+  - approved -> draft           (R7.0b send-back for correction; clears
+                                 approve+submit stamps; the commitment
+                                 trigger trg_po_status_commitments drops
+                                 the PO out of committed_value
+                                 automatically — no manual recompute)
   - draft|pending|approved|issued -> voided (void with reason)
   - partially_receipted|receipted -> closed   (close)
   - pending_approval -> approved | draft  (R3)
@@ -42,10 +48,17 @@ class TransitionError(ValueError):
 # data-migration and admin tooling but no production code path takes it
 # any more (auto-issue collapse removed; issue is always reached via
 # `approved -> issued`).
+#
+# R7.0b (P0.13 resolution) — `approved -> draft` is the send-back edge.
+# A within-budget auto-approved PO with a wrong line/amount can be
+# corrected by sending it back to draft rather than being issued-wrong
+# or voided (voiding burns the sequential PO number). The commitment
+# trigger trg_po_status_commitments handles the committed_value drop
+# automatically on status change.
 ALLOWED_TRANSITIONS: dict[str, set[str]] = {
     "draft":                {"pending_approval", "approved", "issued", "voided"},
     "pending_approval":     {"approved", "draft", "voided"},
-    "approved":             {"issued", "voided"},
+    "approved":             {"issued", "voided", "draft"},
     "issued":               {"partially_receipted", "receipted",
                              "voided", "closed"},
     "partially_receipted":  {"receipted", "closed"},

@@ -113,6 +113,14 @@ class PORejectBody(BaseModel):
     notes: str = Field(..., min_length=1, max_length=2000)
 
 
+class POSendBackBody(BaseModel):
+    # R7.0b — notes are REQUIRED. Empty/whitespace caught at the service
+    # layer (ValueError → 422) so blank strings can't slip past
+    # min_length=1.
+    model_config = ConfigDict(extra="forbid")
+    notes: str = Field(..., min_length=1, max_length=2000)
+
+
 class POUnlockBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
     reason: str = Field(..., min_length=1, max_length=2000)
@@ -611,6 +619,54 @@ def reject_endpoint(
     db.refresh(po)
     out = svc.serialise(po, include_sensitive=include_sensitive)
     out["approval"] = approvals_svc.serialise_approval(row)
+    return out
+
+
+@router.post("/purchase-orders/{po_id}/send-back")
+def send_back_endpoint(
+    po_id: uuid.UUID,
+    body: POSendBackBody,
+    request: Request,
+    pair: tuple[Principal, UserPermissions] = Depends(_perm_dep),
+    db: Session = Depends(get_db),
+):
+    """R7.0b — send an `approved` PO back to `draft` for correction.
+
+    Permission gate is `pos.edit` OR `pos.approve` (either suffices).
+    Rationale: within-budget auto-approved POs have no approver in the
+    loop, so the creator (holds pos.edit) must be able to correct their
+    own PO; over-budget POs that an approver formally approved (holds
+    pos.approve) may later be found wrong and `reject` is unavailable
+    post-approval. NO self-approval guard — send-back IS the correction
+    path.
+    """
+    principal, perms = pair
+    if not (perms.has("pos.edit") or perms.has("pos.approve")):
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "type": "rbac/forbidden",
+                "title": "Requires pos.edit or pos.approve",
+            },
+        )
+    include_sensitive = perms.has("pos.view_sensitive")
+    from app.services import po_approvals as approvals_svc
+    try:
+        po = approvals_svc.send_back_po(
+            db, user=principal.user, perms=perms, po_id=po_id,
+            notes=body.notes, request=request,
+        )
+    except PoNotFound:
+        raise HTTPException(status_code=404, detail="Purchase order not found")
+    except TransitionError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    db.commit()
+    db.refresh(po)
+    out = svc.serialise(po, include_sensitive=include_sensitive)
+    # Back to draft: no open approval row. The reason lives in audit.
+    out["approval"] = None
     return out
 
 

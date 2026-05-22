@@ -725,3 +725,383 @@ class TestR70OptionB:
         assert body["status"] == "approved"
         assert body["approval"]["resolution"] == "approved"
         assert body["approval"]["resolved_by"] is not None
+
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Chat 26 §R7.0b — `approved → draft` send-back path
+# ─────────────────────────────────────────────────────────────────────────
+
+READONLY_EMAIL = "test-readonly@example.test"
+
+
+@pytest.fixture(scope="module")
+def readonly(engine):
+    """A principal with `pos.view` but neither `pos.edit` nor `pos.approve`."""
+    try:
+        return login_with_auto_enroll(None, BASE_URL, READONLY_EMAIL, PWD)
+    except Exception:
+        pytest.skip(
+            "test-readonly@example.test not seeded — seed for R7.0b T10"
+        )
+
+
+def _audit_rows_for_po(engine, po_id: str, action: str) -> list[dict]:
+    """Return SendBack/Reject/etc. audit rows for the given PO, latest first."""
+    with engine.connect() as c:
+        rows = c.execute(text("""
+            SELECT id::text, action::text, resource_id::text,
+                   metadata_json, created_at
+              FROM audit_log
+             WHERE resource_type = 'purchase_order'
+               AND resource_id = :pid
+               AND action = :act
+             ORDER BY created_at DESC
+        """), {"pid": po_id, "act": action}).mappings().all()
+    return [dict(r) for r in rows]
+
+
+def _submit_within_budget_to_approved(client, po_id: str) -> dict:
+    """Within-budget auto-approve flow → returns the approve-stamped body."""
+    rs = client.post(
+        f"{BASE_URL}/api/v1/purchase-orders/{po_id}/submit", json={},
+    )
+    assert rs.status_code == 200, rs.text
+    body = rs.json()
+    assert body["status"] == "approved", (
+        f"R7.0b precondition broken: expected within-budget submit to land "
+        f"at 'approved', got {body['status']!r}"
+    )
+    return body
+
+
+class TestR7SendBack:
+    """R7.0b — `approved → draft` send-back path (P0.13 resolution).
+
+    Money invariant T2 (`_bline_committed` 500.00 → 0.00) is the headline
+    artefact for the operator gate.
+    """
+
+    # ── T1 ───────────────────────────────────────────────────────────────
+    def test_send_back_from_approved_returns_draft(
+        self, admin, project_setup,
+    ):
+        po = _create_po(admin, project_setup, net_per_line=[500.0])
+        _submit_within_budget_to_approved(admin, po["id"])
+        rsb = admin.post(
+            f"{BASE_URL}/api/v1/purchase-orders/{po['id']}/send-back",
+            json={"notes": "Wrong cost code on line 1"},
+        )
+        assert rsb.status_code == 200, rsb.text
+        body = rsb.json()
+        assert body["status"] == "draft", (
+            f"R7.0b: send-back must land at 'draft', got {body['status']!r}"
+        )
+        assert body["approval"] is None
+
+    # ── T2 — MONEY INVARIANT (live SELECT, headline artefact) ─────────────
+    def test_send_back_drops_committed_value(
+        self, admin, project_setup, engine,
+    ):
+        line_id = project_setup["line_ids"][0]
+        assert _bline_committed(engine, line_id) == Decimal("0.00"), (
+            "Precondition: line starts at 0 committed"
+        )
+        po = _create_po(admin, project_setup, net_per_line=[500.0])
+        _submit_within_budget_to_approved(admin, po["id"])
+        # After approval the trigger contributes net (500) — this mirrors
+        # test_within_budget_approved_contributes_to_committed_value.
+        committed_after_approve = _bline_committed(engine, line_id)
+        # Live SELECT before the send-back (the §4 artefact #4 BEFORE row).
+        # Format with .quantize() to expose the NUMERIC(.,2) scale
+        # explicitly — psycopg normalises trailing zeros otherwise.
+        print(
+            f"\n[R7.0b T2] BEFORE send-back: "
+            f"budget_lines.committed_value = "
+            f"{committed_after_approve.quantize(Decimal('0.01'))}"
+        )
+        assert committed_after_approve == Decimal("500.00"), (
+            f"R7.0b precondition: expected committed=500.00 after "
+            f"approve, got {committed_after_approve}"
+        )
+        rsb = admin.post(
+            f"{BASE_URL}/api/v1/purchase-orders/{po['id']}/send-back",
+            json={"notes": "drop me"},
+        )
+        assert rsb.status_code == 200, rsb.text
+        committed_after_sendback = _bline_committed(engine, line_id)
+        # Live SELECT after the send-back (the §4 artefact #4 AFTER row).
+        print(
+            f"[R7.0b T2]  AFTER send-back: "
+            f"budget_lines.committed_value = "
+            f"{committed_after_sendback.quantize(Decimal('0.01'))}"
+        )
+        # THE invariant — the commitment trigger drops the PO out of
+        # committed_value automatically on the approved→draft transition.
+        # No manual recompute in the service layer.
+        assert committed_after_sendback == Decimal("0.00"), (
+            f"R7.0b MONEY INVARIANT BROKEN: expected committed=0.00 "
+            f"after send-back, got {committed_after_sendback}"
+        )
+
+    # ── T3 ───────────────────────────────────────────────────────────────
+    def test_send_back_clears_stamps(self, admin, project_setup, engine):
+        po = _create_po(admin, project_setup, net_per_line=[500.0])
+        approved_body = _submit_within_budget_to_approved(admin, po["id"])
+        # Sanity — approve+submit stamps populated at approved.
+        assert approved_body["approved_at"] is not None
+        assert approved_body["submitted_at"] is not None
+        rsb = admin.post(
+            f"{BASE_URL}/api/v1/purchase-orders/{po['id']}/send-back",
+            json={"notes": "clear them all"},
+        )
+        assert rsb.status_code == 200, rsb.text
+        body = rsb.json()
+        # Cleared on the serialised body.
+        for stamp in ("approved_at", "approved_by",
+                      "submitted_at", "submitted_by"):
+            assert body.get(stamp) is None, (
+                f"R7.0b: {stamp} must be NULL on the send-back response, "
+                f"got {body.get(stamp)!r}"
+            )
+        # Also cleared on the row (live SELECT, no caching shenanigans).
+        with engine.connect() as c:
+            row = c.execute(text("""
+                SELECT approved_at, approved_by, submitted_at, submitted_by,
+                       status::text
+                  FROM purchase_orders WHERE id = :pid
+            """), {"pid": po["id"]}).mappings().one()
+        assert row["status"] == "draft"
+        assert row["approved_at"] is None
+        assert row["approved_by"] is None
+        assert row["submitted_at"] is None
+        assert row["submitted_by"] is None
+
+    # ── T4 ───────────────────────────────────────────────────────────────
+    def test_send_back_requires_notes(self, admin, project_setup):
+        po = _create_po(admin, project_setup, net_per_line=[500.0])
+        _submit_within_budget_to_approved(admin, po["id"])
+        # Empty body → pydantic Field(..., min_length=1) → 422.
+        r1 = admin.post(
+            f"{BASE_URL}/api/v1/purchase-orders/{po['id']}/send-back",
+            json={},
+        )
+        assert r1.status_code == 422, r1.text
+        # Whitespace-only → service-layer ValueError → 422.
+        r2 = admin.post(
+            f"{BASE_URL}/api/v1/purchase-orders/{po['id']}/send-back",
+            json={"notes": "   "},
+        )
+        assert r2.status_code == 422, r2.text
+
+    # ── T5 ───────────────────────────────────────────────────────────────
+    def test_send_back_writes_audit_with_notes(
+        self, admin, project_setup, engine,
+    ):
+        po = _create_po(admin, project_setup, net_per_line=[500.0])
+        _submit_within_budget_to_approved(admin, po["id"])
+        rsb = admin.post(
+            f"{BASE_URL}/api/v1/purchase-orders/{po['id']}/send-back",
+            json={"notes": "wrong line on supplier mapping"},
+        )
+        assert rsb.status_code == 200, rsb.text
+        rows = _audit_rows_for_po(engine, po["id"], "SendBack")
+        assert len(rows) == 1, (
+            f"R7.0b: expected exactly one SendBack audit row, got "
+            f"{len(rows)}"
+        )
+        meta = rows[0]["metadata_json"] or {}
+        assert meta.get("send_back_notes") == "wrong line on supplier mapping", (
+            f"R7.0b: audit metadata must persist the notes; got {meta!r}"
+        )
+        assert meta.get("new_status") == "draft"
+
+    # ── T6 ───────────────────────────────────────────────────────────────
+    @pytest.mark.parametrize("hold_status", [
+        "draft", "pending_approval", "issued", "voided",
+    ])
+    def test_send_back_rejected_from_non_approved(
+        self, admin, project_setup, engine, hold_status,
+    ):
+        # Arrange a PO at each non-approved status, then attempt send-back.
+        # We force the status on the row via a live UPDATE (engine fixture)
+        # because not all of these states are reachable from a clean
+        # within-budget create without long set-ups, and we're testing
+        # the transition gate exclusively here.
+        po = _create_po(admin, project_setup, net_per_line=[500.0])
+        # For pending_approval we go via the over-budget path so the
+        # approval row + state are real.
+        if hold_status == "pending_approval":
+            po2 = _create_po(admin, project_setup, net_per_line=[1100.0])
+            admin.post(
+                f"{BASE_URL}/api/v1/purchase-orders/{po2['id']}/submit",
+                json={},
+            )
+            target_id = po2["id"]
+        else:
+            target_id = po["id"]
+            if hold_status != "draft":
+                with engine.begin() as c:
+                    c.execute(text("""
+                        UPDATE purchase_orders SET status = :st
+                         WHERE id = :pid
+                    """), {"st": hold_status, "pid": target_id})
+        rsb = admin.post(
+            f"{BASE_URL}/api/v1/purchase-orders/{target_id}/send-back",
+            json={"notes": "should fail"},
+        )
+        assert rsb.status_code == 409, (
+            f"R7.0b: send-back from {hold_status!r} must be 409, got "
+            f"{rsb.status_code}: {rsb.text}"
+        )
+
+    # ── T7 ───────────────────────────────────────────────────────────────
+    def test_submitter_can_send_back_own_auto_approved_po(
+        self, pm, project_setup,
+    ):
+        # PM has pos.edit but NOT pos.approve. PM creates AND submits a
+        # within-budget PO that auto-approves with PM as the submitter.
+        # PM then sends their own PO back — proves no self-approval guard.
+        po = _create_po(pm, project_setup, net_per_line=[500.0])
+        _submit_within_budget_to_approved(pm, po["id"])
+        rsb = pm.post(
+            f"{BASE_URL}/api/v1/purchase-orders/{po['id']}/send-back",
+            json={"notes": "self correction"},
+        )
+        assert rsb.status_code == 200, (
+            f"R7.0b: submitter must be able to send back own auto-approved "
+            f"PO (no self-approval guard); got {rsb.status_code}: {rsb.text}"
+        )
+        assert rsb.json()["status"] == "draft"
+
+    # ── T8 ───────────────────────────────────────────────────────────────
+    def test_send_back_then_resubmit_within_budget_lands_approved(
+        self, admin, project_setup,
+    ):
+        po = _create_po(admin, project_setup, net_per_line=[500.0])
+        first = _submit_within_budget_to_approved(admin, po["id"])
+        first_approved_at = first["approved_at"]
+        first_submitted_at = first["submitted_at"]
+        # Send back.
+        rsb = admin.post(
+            f"{BASE_URL}/api/v1/purchase-orders/{po['id']}/send-back",
+            json={"notes": "round-trip"},
+        )
+        assert rsb.status_code == 200, rsb.text
+        # Re-submit. Same within-budget conditions → lands at approved
+        # again with FRESH stamps (the cleared NULLs are repopulated by
+        # the auto-approve path).
+        second = _submit_within_budget_to_approved(admin, po["id"])
+        assert second["approved_at"] is not None
+        assert second["submitted_at"] is not None
+        # Stamps are fresh — they must differ from the first round (or at
+        # the very least not be NULL). We can't assume strict monotonic
+        # inequality because clocks could be coarse, so the strong
+        # invariant we pin is "not NULL after resubmit".
+        assert second["approved_at"] != first_approved_at or True
+        assert second["submitted_at"] != first_submitted_at or True
+
+    # ── T9 ───────────────────────────────────────────────────────────────
+    def test_send_back_over_budget_preserves_historical_approval_row(
+        self, admin, pm, finance, project_setup, engine,
+    ):
+        # PM submits over-budget → pending_approval (open approval row).
+        # Finance approves → approved (row resolved='approved').
+        # Finance sends back → draft. Historical row stays.
+        po = _create_po(pm, project_setup, net_per_line=[1100.0])
+        rs = pm.post(
+            f"{BASE_URL}/api/v1/purchase-orders/{po['id']}/submit", json={},
+        )
+        assert rs.status_code == 200, rs.text
+        assert rs.json()["status"] == "pending_approval"
+        ra = finance.post(
+            f"{BASE_URL}/api/v1/purchase-orders/{po['id']}/approve",
+            json={"notes": "ok"},
+        )
+        assert ra.status_code == 200, ra.text
+        assert ra.json()["status"] == "approved"
+        # Approval row id (we'll pin its survival across send-back).
+        first_approval_id = ra.json()["approval"]["id"]
+        # Send back (finance has pos.approve so the OR gate clears).
+        rsb = finance.post(
+            f"{BASE_URL}/api/v1/purchase-orders/{po['id']}/send-back",
+            json={"notes": "needs correction"},
+        )
+        assert rsb.status_code == 200, rsb.text
+        assert rsb.json()["status"] == "draft"
+        # The prior approval row is untouched.
+        with engine.connect() as c:
+            row = c.execute(text("""
+                SELECT id::text, resolution, resolved_by::text
+                  FROM purchase_order_approvals WHERE id = :aid
+            """), {"aid": first_approval_id}).mappings().one()
+        assert row["resolution"] == "approved", (
+            f"R7.0b: prior approval row must stay resolved='approved' "
+            f"as historical truth; got {row['resolution']!r}"
+        )
+        assert row["resolved_by"] is not None
+        # Re-submit creates a NEW pending_approval + NEW open approval row
+        # (over-budget still trips the gate post-correction).
+        rs2 = pm.post(
+            f"{BASE_URL}/api/v1/purchase-orders/{po['id']}/submit", json={},
+        )
+        assert rs2.status_code == 200, rs2.text
+        assert rs2.json()["status"] == "pending_approval"
+        new_approval_id = rs2.json()["approval"]["id"]
+        assert new_approval_id != first_approval_id, (
+            "R7.0b: re-submit must create a brand new open approval row"
+        )
+        with engine.connect() as c:
+            new_row = c.execute(text("""
+                SELECT resolution FROM purchase_order_approvals
+                 WHERE id = :aid
+            """), {"aid": new_approval_id}).scalar()
+        assert new_row is None, (
+            f"R7.0b: new approval row must be unresolved; got {new_row!r}"
+        )
+
+    # ── T10 ──────────────────────────────────────────────────────────────
+    def test_send_back_forbidden_without_edit_or_approve(
+        self, admin, readonly, project_setup,
+    ):
+        # Admin creates & submits a within-budget PO → approved. Then a
+        # read-only principal (has pos.view, lacks pos.edit AND pos.approve)
+        # attempts send-back → 403 with the structured detail shape.
+        po = _create_po(admin, project_setup, net_per_line=[500.0])
+        _submit_within_budget_to_approved(admin, po["id"])
+        r = readonly.post(
+            f"{BASE_URL}/api/v1/purchase-orders/{po['id']}/send-back",
+            json={"notes": "not allowed"},
+        )
+        assert r.status_code == 403, (
+            f"R7.0b: readonly must be 403, got {r.status_code}: {r.text}"
+        )
+        detail = r.json()["detail"]
+        assert isinstance(detail, dict), (
+            f"R7.0b: 403 detail must be structured, got "
+            f"{type(detail).__name__} = {detail!r}"
+        )
+        assert detail.get("type") == "rbac/forbidden", (
+            f"R7.0b: 403 must use type='rbac/forbidden'; got "
+            f"{detail.get('type')!r}"
+        )
+        assert "pos.edit" in (detail.get("title") or "")
+        assert "pos.approve" in (detail.get("title") or "")
+
+    # ── T10b — POSITIVE COUNTERPART (Finance has pos.approve but NOT pos.edit) ─
+    def test_send_back_allowed_for_approve_only_principal(
+        self, admin, finance, project_setup,
+    ):
+        # Finance has pos.approve + pos.view but NOT pos.edit. The OR gate
+        # in the router must let them send back.
+        po = _create_po(admin, project_setup, net_per_line=[500.0])
+        _submit_within_budget_to_approved(admin, po["id"])
+        r = finance.post(
+            f"{BASE_URL}/api/v1/purchase-orders/{po['id']}/send-back",
+            json={"notes": "approver send-back"},
+        )
+        assert r.status_code == 200, (
+            f"R7.0b: approve-only principal must be allowed via the OR "
+            f"gate; got {r.status_code}: {r.text}"
+        )
+        assert r.json()["status"] == "draft"

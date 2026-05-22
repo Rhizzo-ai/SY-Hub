@@ -181,3 +181,30 @@ class TestSelfApprovalForbidden:
         from app.services.po_approvals import SelfApprovalForbidden
         with pytest.raises(SelfApprovalForbidden):
             raise SelfApprovalForbidden("test")
+
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Chat 26 §R7.0b — transition map edge (`approved -> draft`)
+# ─────────────────────────────────────────────────────────────────────────
+
+class TestR7SendBackTransition:
+    def test_transition_map_allows_approved_to_draft(self):
+        """T-unit — pure state-machine check, no DB.
+
+        - approved → draft: now permitted (R7.0b send-back).
+        - draft → approved: still permitted (R7.0 Option B within-budget
+          auto-approve).
+        - issued → draft: still forbidden (terminal-ish; only voided/
+          partially_receipted/receipted/closed are valid from issued).
+        """
+        from app.services.po_transitions import (
+            TransitionError, assert_transition,
+        )
+        # The new edge.
+        assert_transition("approved", "draft")
+        # The R7.0 edge is still there.
+        assert_transition("draft", "approved")
+        # An adjacent edge that MUST stay forbidden.
+        with pytest.raises(TransitionError):
+            assert_transition("issued", "draft")

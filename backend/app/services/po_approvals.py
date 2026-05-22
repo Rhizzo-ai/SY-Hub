@@ -407,6 +407,80 @@ def reject_po(
 
 
 # ─────────────────────────────────────────────────────────────────────────
+# Send-back — approved → draft (Chat 26 §R7.0b / P0.13 resolution)
+# ─────────────────────────────────────────────────────────────────────────
+
+def send_back_po(
+    db: Session,
+    *,
+    user: User,
+    perms: UserPermissions,
+    po_id: uuid.UUID,
+    notes: str,
+    request: Optional[Request] = None,
+) -> PurchaseOrder:
+    """Send an APPROVED PO back to draft for correction (R7.0b / P0.13).
+
+    Differs from reject_po:
+      - Valid ONLY from 'approved' (reject is from 'pending_approval').
+      - NO self-approval guard: send-back IS the correction path; the
+        submitter of a within-budget auto-approved PO must be able to
+        send back their own PO. Do NOT call the self-approval check.
+      - Does NOT mutate approval rows. The within-budget auto path has
+        no approval row; the over-budget path's row is historical truth
+        and stays resolved='approved'.
+
+    Notes are REQUIRED (mirror reject_po: empty/whitespace → ValueError
+    → 422 at the router boundary). Commitment is dropped automatically
+    by the DB trigger trg_po_status_commitments on the approved→draft
+    status change; this service performs NO manual commitment recompute.
+    """
+    if not notes or not notes.strip():
+        raise ValueError("Send-back notes are required")
+
+    po = load_po_for_write(db, po_id, user, perms, lock_for_update=True)
+    if po.status != "approved":
+        from app.services.po_transitions import TransitionError
+        raise TransitionError(
+            f"Send-back only valid from 'approved'; current status={po.status!r}"
+        )
+
+    before = _snap_po(po)
+    now = datetime.now(timezone.utc)
+
+    po_transitions.assert_transition("approved", "draft")
+    po.status = "draft"
+    # Return to a clean draft: clear BOTH approve and submit stamps so
+    # the next submit re-runs the full flow from scratch. Mirrors
+    # unlock_po; differs from reject_po (which only clears submit stamps
+    # because pending_approval never sets approved_*).
+    po.approved_at = None
+    po.approved_by = None
+    po.submitted_at = None
+    po.submitted_by = None
+    po.updated_by = user.id
+    po.updated_at = now
+    db.flush()  # fires trg_po_status_commitments → committed_value recomputed
+
+    after = _snap_po(po)
+    record_audit(
+        db, action="SendBack",
+        resource_type="purchase_order",
+        resource_id=po.id,
+        actor_user_id=user.id,
+        project_id=po.project_id,
+        field_changes=field_diff(before, after),
+        metadata={
+            "po_number": po.po_number,
+            "new_status": "draft",
+            "send_back_notes": notes.strip(),
+        },
+        request=request,
+    )
+    return po
+
+
+# ─────────────────────────────────────────────────────────────────────────
 # Unlock — approved → draft (rare path)
 # ─────────────────────────────────────────────────────────────────────────
 
