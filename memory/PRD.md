@@ -18,6 +18,55 @@ Frontend / actuals / commitments / Xero are out of scope until later prompts.
 
 ## What's been implemented
 
+### 2026-02-12 — Chat 26 §R7 Batch 1 fix-up (live-eyeball gate) ✓
+
+Live operator eyeball found three classes of dead/broken buttons that
+the Jest matrix had codified as expected — because both ends of the
+matrix were wrong in the same way. Working tree only; awaiting gate.
+
+- **Removed from Batch 1 (now hidden, deferred to Batch 2):**
+  `po-actions-edit-btn`, `po-actions-delete-btn`,
+  `po-actions-edit-issued-btn`, `po-actions-receipt-btn`,
+  `po-actions-receipt-partial-btn`, `po-actions-void-btn`,
+  `po-actions-void-issued-btn`. Root causes per ticket:
+  * Edit / Delete / Edit-issued / Receipt → target routes don't
+    exist; clicks landed on the App.js `*` catch-all `not-found-page`.
+  * Void → backend `POVoidBody.reason` is `Field(..., min_length=1)`;
+    sending `{}` 422s. The reason dialog ships with R7.6.
+
+- **Slim Batch-1 matrix that DOES ship (verified live via Playwright
+  as `test-pm` with spot-check `pos.approve` grant):**
+  ```
+  draft               → Submit
+  pending_approval    → Approve, Reject     (self-approval guard)
+  approved            → Issue, Send back    (send-back NOT guarded)
+  issued              → Close
+  partially_receipted → Close
+  receipted           → Close
+  closed / voided     → (none)
+  ```
+
+- **Regression guard** in `POActionButtons.test.jsx` —
+  `deferred-to-Batch-2 buttons must render on NO state × persona`:
+  8 states × 4 personas × 7 deferred testids = 32 assertions firing
+  every CI run. When Batch 2 wires a button back in, the corresponding
+  testid must be removed from `DEFERRED_TESTIDS` in the same commit.
+
+- **Spot-check seed** (`/app/scripts/seed_r7_batch1_pos.py`):
+  - Re-run is idempotent: wipes prior POs on the project, restores the
+    five-PO matrix (draft / pending×2 / approved×2). PO numbers
+    advance (e.g. PO-0006…PO-0010 on second run); IDs change but
+    states are restored cleanly.
+  - MFA self-heal step disables MFA on every `test-*@example.test`
+    user (super-admin enrolment auto-fires on each restart).
+  - Spot-check grant: gives `pos.approve` to the Project Manager role
+    so `test-pm` can exercise Approve/Reject without an MFA dance.
+    Sandbox only — production seeding never invokes this script.
+
+- **Jest**: 57 suites, **387/387 passing** (was 357 → +30 net,
+  +32 deferred-button regression assertions − 2 obsolete edit_tier
+  assertions). Verified with a fresh `yarn test` post-edit.
+
 ### 2026-02-12 — Chat 26 §R7 Batch 1 ✓ Frontend (R7.0b send-back wiring + R7.1 + R7.2 + R7.3)
 
 Frontend-only batch building on R7.0b's already-pushed backend send-back
@@ -713,6 +762,23 @@ Triage closing artefact filed at `docs/chat-summaries/chat-24-closing.md`. R0–
 10. `SystemConfig` variance-threshold columns
 11. Idempotency keys on `/from-appraisal`, `/new-version`
 12. SOX-style author-cannot-activate review (MD/Louise call)
+
+### P0 — Batch 2 (Chat 26, next prompt)
+- **R7.4 — Receipt form.** New routes `/projects/:id/purchase-orders/:po_id/receipts/new` and `/.../receipts/:receipt_id/edit`. Will re-mount `po-actions-receipt-btn` and `po-actions-receipt-partial-btn` in `<POActionButtons/>` (currently hidden; regression test in `POActionButtons.test.jsx` will flip).
+- **R7.5 — Approvals dashboard.** Global landing page for all PO approvals awaiting current user. Pulls from `/api/v1/purchase-orders?status=pending_approval&assigned_to=me` (or equivalent — confirm endpoint shape during R7.5 preflight).
+- **R7.6 — Confirm-dialog system + optimistic mutations.**
+  - Generic `<ConfirmDialog/>` (reason textarea + confirm/cancel). Re-mounts:
+    - **Void** button (`po-actions-void-btn`, `po-actions-void-issued-btn`) — backend `POVoidBody.reason` is `Field(..., min_length=1)` so dialog must collect a non-empty reason before firing.
+    - Optionally: surface the existing Send-back / Reject dialogs through the same primitive.
+  - Optimistic cache updates: turn the current "mutate → invalidate → refetch → render" three-hop into a single render flip with rollback-on-error. Same change un-breaks the "click Approve → page lag → click Approve again → double-mutation" trap.
+  - Budget-line cache invalidation on commitment-changing verbs (send-back joins approve/issue/void in that set).
+- **PO Edit / Delete forms (draft state, edit_tier=full).** New routes
+  `/projects/:id/purchase-orders/:po_id/edit` and `/.../delete`. Will re-mount
+  `po-actions-edit-btn` + `po-actions-delete-btn`. **Edit-issued** form
+  (`/edit` reused with status=`issued`) re-mounts `po-actions-edit-issued-btn`.
+  Whichever batch ships first, the `DEFERRED_TESTIDS` regression guard in
+  `POActionButtons.test.jsx` should be trimmed at the same commit so the
+  newly-wired button doesn't fail the matrix.
 
 ### P2 — debt / future-proofing
 - **Batch 2 / R7.6 polish — `useProjectBudgets` UUID guard.** Add a

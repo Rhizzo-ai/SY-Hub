@@ -52,7 +52,7 @@ export default function PurchaseOrderDetail() {
             {po.supplier_name ?? '—'} · <POStatusPill status={po.status} />
           </div>
         </div>
-        <POActionButtons po={po} projectId={projectId} />
+        <POActionButtons po={po} />
       </header>
 
       <section className="grid grid-cols-4 gap-2 text-sm">

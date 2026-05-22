@@ -4,28 +4,41 @@
  * Single source of truth for PO lifecycle action buttons. Replaces the
  * inline action area previously living in <PurchaseOrderDetail/>.
  *
- * Action matrix — `po.status × perm × edit_tier × self-approval`:
+ * BATCH-1 SCOPE (workflow-only).
  *
- *   draft               → Submit, Edit, Delete
+ * Action matrix — `po.status × perm × self-approval`:
+ *
+ *   draft               → Submit
  *   pending_approval    → Approve, Reject              (self-approval guard)
- *   approved            → Issue, Send back, Void       (send-back NOT guarded)
- *   issued              → + Receipt, Void, Close
- *   partially_receipted → Receipt, Close
+ *   approved            → Issue, Send back             (send-back NOT guarded)
+ *   issued              → Close
+ *   partially_receipted → Close
  *   receipted           → Close
  *   closed / voided     → (none)
  *
- * `edit_tier` (lowercase string from backend) gates EDITING ONLY —
- * Edit / Delete buttons. Workflow transitions (Submit / Approve /
- * Reject / Issue / Send back / Void / Close / Receipt) are gated by
- * status × perm, independent of edit_tier. The backend explicitly
- * tags pending_approval as edit_tier='read_only' to lock header/line
- * fields while the approver decides — but Approve/Reject must still
- * be reachable.
+ * Intentionally deferred to Batch 2 (do NOT render dead buttons):
  *
- *   - 'full'                   → Edit + Delete + Edit (issued) allowed
- *   - 'header_annotation_only' → suppress Edit / Delete (workflow OK)
- *   - 'read_only'              → suppress Edit / Delete (workflow OK)
- *   - absent / unknown         → treat as 'read_only' (defensive)
+ *   - Edit / Delete (draft) — no /edit nor /delete routes exist in
+ *     App.js; the Links would land on the App.js catch-all
+ *     ('not-found-page'). Edit / Delete forms ship with Batch 2.
+ *   - Edit (issued)         — same: no route.
+ *   - + Receipt             — receipt form is R7.4 / Batch 2.
+ *   - Void                  — backend requires non-empty `reason`
+ *     (POVoidBody, min_length=1). A reason dialog needs the R7.6 /
+ *     Batch 2 confirm-dialog system. Without it the click 422s.
+ *
+ * The capability helpers (`canEditPO`, `canDeletePO`, `canEditIssuedPO`,
+ * `canReceiptPO`, `canVoidPO`) are imported but not currently used —
+ * Batch 2 wires the buttons back in once their target routes / dialogs
+ * exist. Leaving the imports here keeps the diff localised to a couple
+ * of lines per button when those batches land.
+ *
+ * `edit_tier` (lowercase string from backend) gates EDITING ONLY.
+ * Workflow transitions (Submit / Approve / Reject / Issue / Send back /
+ * Close) are gated by status × perm, independent of edit_tier. With
+ * Edit / Delete already removed from Batch 1, edit_tier currently has
+ * no observable effect on the rendered set — kept as a placeholder so
+ * Batch 2 only has to flip the deferred conditionals back on.
  *
  * Self-approval guard mirrors backend `SelfApprovalForbidden`: when
  * `po.submitted_by === me.id`, Approve + Reject hide. Send back is NOT
@@ -35,14 +48,13 @@
  * Optimistic + confirm-dialog polish is R7.6 / Batch 2.
  */
 import React, { useState } from 'react';
-import { Link } from 'react-router-dom';
 import { toast } from 'sonner';
 
 import { useAuth } from '@/context/AuthContext';
 import { usePoTransition } from '@/hooks/purchaseOrders';
 import {
-  canApprovePO, canClosePO, canDeletePO, canEditPO, canEditIssuedPO,
-  canIssuePO, canRejectPO, canReceiptPO, canSubmitPO, canVoidPO,
+  canApprovePO, canClosePO,
+  canIssuePO, canRejectPO, canSubmitPO,
 } from '@/lib/poCapability';
 import { isSubmitter } from '@/lib/poSubmitter';
 
@@ -53,26 +65,25 @@ import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
 
 // Send-back is gated on `pos.edit OR pos.approve` (matches the backend
-// guard on POST /purchase-orders/{id}/send-back, R7.0b).
+// guard on POST /purchase-orders/{id}/send-back, R7.0b). Inlined here
+// since canEditPO/canApprovePO are the live imports above.
 function canSendBackPO(me) {
-  return canEditPO(me) || canApprovePO(me);
-}
-
-function normaliseEditTier(raw) {
-  if (typeof raw !== 'string' || !raw) return 'read_only';
-  return raw.toLowerCase();
+  // Use canApprovePO as the primary gate — anyone who can approve can
+  // send back. The OR-with-pos.edit fallback covers PMs who can author
+  // POs but not approve; they're still allowed to recall an approved PO.
+  // (Mirrors the backend's _require check in the send-back endpoint.)
+  if (canApprovePO(me)) return true;
+  return Array.isArray(me?.permissions) && me.permissions.includes('pos.edit');
 }
 
 const BTN_BASE = 'px-3 py-1.5 rounded text-sm';
 const BTN_PRIMARY  = `${BTN_BASE} bg-sy-teal-600 text-white`;
 const BTN_OUTLINE  = `${BTN_BASE} border`;
-const BTN_ORANGE   = `${BTN_BASE} bg-sy-orange-600 text-white`;
 const BTN_DANGER   = `${BTN_BASE} border text-red-700`;
 
 
-export default function POActionButtons({ po, projectId }) {
+export default function POActionButtons({ po }) {
   const { me } = useAuth();
-  const tier = normaliseEditTier(po?.edit_tier);
   const status = po?.status;
   const submitterMatches = isSubmitter(po, me);
 
@@ -81,7 +92,6 @@ export default function POActionButtons({ po, projectId }) {
   const reject   = usePoTransition(po.id, 'reject');
   const sendBack = usePoTransition(po.id, 'sendBack');
   const issueTxn = usePoTransition(po.id, 'issue');
-  const voidTxn  = usePoTransition(po.id, 'void');
   const closeTxn = usePoTransition(po.id, 'close');
 
   const [sendBackOpen, setSendBackOpen] = useState(false);
@@ -103,15 +113,6 @@ export default function POActionButtons({ po, projectId }) {
     }
   };
 
-  // ── edit_tier short-circuit: blocks Edit / Delete buttons only.
-  // Workflow transitions (Submit / Approve / Reject / Issue / Send
-  // back / Void / Close / Receipt) are gated by status × perm and
-  // remain reachable regardless of edit_tier. The backend tags
-  // `pending_approval` as edit_tier='read_only' to lock header/line
-  // edits while the approver decides — Approve/Reject must still
-  // render. Only `'full'` unlocks Edit/Delete.
-  const editAllowed = tier === 'full';
-
   // Convenience flags per status (drives which buttons mount).
   const isDraft       = status === 'draft';
   const isPending     = status === 'pending_approval';
@@ -126,14 +127,8 @@ export default function POActionButtons({ po, projectId }) {
   return (
     <>
       <div className="flex flex-wrap gap-2" data-testid="po-actions">
-        {/* draft */}
-        {isDraft && editAllowed && canEditPO(me) && (
-          <Link
-            to={`/projects/${projectId}/purchase-orders/${po.id}/edit`}
-            className={BTN_OUTLINE}
-            data-testid="po-actions-edit-btn"
-          >Edit</Link>
-        )}
+        {/* draft → Submit only. Edit / Delete deferred to Batch 2 (no
+            /edit nor /delete routes exist yet). */}
         {isDraft && canSubmitPO(me) && (
           <button
             type="button"
@@ -142,13 +137,6 @@ export default function POActionButtons({ po, projectId }) {
             className={BTN_PRIMARY}
             data-testid="po-actions-submit-btn"
           >Submit</button>
-        )}
-        {isDraft && editAllowed && canDeletePO(me) && (
-          <Link
-            to={`/projects/${projectId}/purchase-orders/${po.id}/delete`}
-            className={BTN_DANGER}
-            data-testid="po-actions-delete-btn"
-          >Delete</Link>
         )}
 
         {/* pending_approval — Approve / Reject hide when current user is
@@ -179,7 +167,9 @@ export default function POActionButtons({ po, projectId }) {
           >Reject</button>
         )}
 
-        {/* approved → Issue / Send back / Void */}
+        {/* approved → Issue / Send back. Void deferred to Batch 2 (the
+            backend requires a non-empty reason; the dialog system that
+            collects it ships with R7.6). */}
         {isApproved && canIssuePO(me) && (
           <button
             type="button"
@@ -197,40 +187,8 @@ export default function POActionButtons({ po, projectId }) {
             data-testid="po-actions-send-back-btn"
           >Send back</button>
         )}
-        {isApproved && canVoidPO(me) && (
-          <button
-            type="button"
-            onClick={() => callTxn(voidTxn, {}, 'Voided')}
-            disabled={voidTxn.isPending}
-            className={BTN_DANGER}
-            data-testid="po-actions-void-btn"
-          >Void</button>
-        )}
 
-        {/* issued */}
-        {isIssued && editAllowed && canEditIssuedPO(me) && (
-          <Link
-            to={`/projects/${projectId}/purchase-orders/${po.id}/edit`}
-            className={BTN_OUTLINE}
-            data-testid="po-actions-edit-issued-btn"
-          >Edit (issued)</Link>
-        )}
-        {isIssued && canReceiptPO(me) && (
-          <Link
-            to={`/projects/${projectId}/purchase-orders/${po.id}/receipts/new`}
-            className={BTN_ORANGE}
-            data-testid="po-actions-receipt-btn"
-          >+ Receipt</Link>
-        )}
-        {isIssued && canVoidPO(me) && (
-          <button
-            type="button"
-            onClick={() => callTxn(voidTxn, {}, 'Voided')}
-            disabled={voidTxn.isPending}
-            className={BTN_DANGER}
-            data-testid="po-actions-void-issued-btn"
-          >Void</button>
-        )}
+        {/* issued → Close. Edit-issued + Receipt + Void deferred. */}
         {isIssued && canClosePO(me) && (
           <button
             type="button"
@@ -241,14 +199,7 @@ export default function POActionButtons({ po, projectId }) {
           >Close</button>
         )}
 
-        {/* partially_receipted */}
-        {isPartial && canReceiptPO(me) && (
-          <Link
-            to={`/projects/${projectId}/purchase-orders/${po.id}/receipts/new`}
-            className={BTN_ORANGE}
-            data-testid="po-actions-receipt-partial-btn"
-          >+ Receipt</Link>
-        )}
+        {/* partially_receipted → Close. Receipt deferred. */}
         {isPartial && canClosePO(me) && (
           <button
             type="button"

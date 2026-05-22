@@ -99,6 +99,31 @@ def _disable_mfa_for_test_users(engine):
         """))
 
 
+def _grant_spotcheck_perms_to_pm(engine):
+    """test-pm@example.test is the operator's spot-check persona — the
+    only test-* user with PO perms whose role doesn't force MFA. To
+    exercise the full Batch-1 matrix (incl. Approve / Reject on a
+    pending PO submitted by someone else, e.g. PO #3) the PM needs the
+    `pos.approve` perm in addition to the PM role's defaults. We attach
+    `pos.approve` via a direct role_permissions row on the
+    'Project Manager' role for the spot-check sandbox only — production
+    seeding never runs this script.
+    """
+    with engine.begin() as c:
+        # Add pos.approve to Project Manager role if missing.
+        c.execute(text("""
+            INSERT INTO role_permissions (role_id, permission_id)
+            SELECT r.id, p.id
+              FROM roles r, permissions p
+             WHERE r.name = 'Project Manager'
+               AND p.code = 'pos.approve'
+               AND NOT EXISTS (
+                  SELECT 1 FROM role_permissions
+                   WHERE role_id = r.id AND permission_id = p.id
+               )
+        """))
+
+
 def _wipe_pos(engine):
     """Idempotency: wipe previous POs + approvals on the spot-check project."""
     with engine.begin() as c:
@@ -201,6 +226,10 @@ def main():
     # Self-healing: any pod-restart re-enables MFA on super-admins, and
     # our cached enrolment secrets are lost. Reset MFA so login works.
     _disable_mfa_for_test_users(engine)
+
+    # Spot-check-only: PM gets pos.approve so the operator can walk the
+    # full matrix from a single non-MFA login.
+    _grant_spotcheck_perms_to_pm(engine)
 
     # Sanity — wipe prior POs on this project so re-runs are clean.
     _wipe_pos(engine)
@@ -311,7 +340,7 @@ def main():
         (po1, "draft, by test-pm           — operator clicks Submit"),
         (po2, "pending_approval, by test-pm — operator can Approve/Reject"),
         (po3, "pending_approval, by test-admin — SELF-APPROVAL: Approve disabled, Reject hidden"),
-        (po4, "approved, by test-pm        — operator: Issue / Send back / Void"),
+        (po4, "approved, by test-pm        — operator: Issue / Send back  (Void → Batch 2)"),
         (po5, "approved, by test-admin     — SELF-APPROVAL DOES NOT block Send back"),
     ):
         print(f"    {po['po_number']:>12}  {label}")
