@@ -715,6 +715,16 @@ Triage closing artefact filed at `docs/chat-summaries/chat-24-closing.md`. R0–
 12. SOX-style author-cannot-activate review (MD/Louise call)
 
 ### P2 — debt / future-proofing
+- **Batch 2 / R7.6 polish — `useProjectBudgets` UUID guard.** Add a
+  one-line client-side guard before firing GET `/v1/projects/:id/budgets`
+  so a bad-URL `:projectId` (e.g. `undefined`, `null`, copy-paste
+  fragment) renders the empty-state instead of 422-toasting the user:
+  `enabled: canView && /^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$/.test(projectId)`.
+  Same pattern likely useful on the sister hooks (`useBudget`,
+  `useProjectActuals`, `useProjectPOs`). Diagnosed during the Batch 1
+  gate eyeball; root cause was an empty seed DB + a non-UUID URL
+  hitting Pydantic's `uuid_parsing` path validator. Not a code bug;
+  filed as P2 hardening only.
 - `Project.tenant_id` column (will retire the `hasattr` no-op in services).
 - Remaining `ON DELETE RESTRICT` FKs on `appraisal_scenarios`.
 
