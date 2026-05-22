@@ -67,6 +67,10 @@ export const poKeys = {
   all: ['purchase-orders'],
   projectList: (projectId, params) =>
     ['purchase-orders', 'project', projectId, params ?? {}],
+  budgetLineList: (lineId) =>
+    ['purchase-orders', 'budget-line', lineId],
+  budgetList: (budgetId) =>
+    ['purchase-orders', 'budget', budgetId],
   detail: (poId) => ['purchase-order', poId],
   receipts: (poId) => ['purchase-order', poId, 'receipts'],
 };
@@ -76,6 +80,29 @@ export function useProjectPOs(projectId, { params, enabled = true } = {}) {
     queryKey: poKeys.projectList(projectId, params),
     queryFn: ({ signal }) => poApi.listProjectPOs(projectId, { signal, params }),
     enabled: enabled && !!projectId,
+  });
+}
+
+// R5.5 — Budget-line scoped POs. Driven lazily by the R6 expandable
+// row: the hook is mounted only when the row is expanded, so
+// `enabled: !!lineId` is sufficient to defer the fetch until first
+// expand.
+export function useBudgetLinePOs(lineId, { enabled = true } = {}) {
+  return useQuery({
+    queryKey: poKeys.budgetLineList(lineId),
+    queryFn: ({ signal }) => poApi.listBudgetLinePOs(lineId, { signal }),
+    enabled: enabled && !!lineId,
+  });
+}
+
+// R5.5 — Bulk PO fetch indexed by budget_line_id. Not consumed by R6
+// (each row fetches its own), but exposed here so future "expand-all"
+// flows have a single batch endpoint.
+export function useBudgetPOs(budgetId, { enabled = true } = {}) {
+  return useQuery({
+    queryKey: poKeys.budgetList(budgetId),
+    queryFn: ({ signal }) => poApi.listBudgetPOs(budgetId, { signal }),
+    enabled: enabled && !!budgetId,
   });
 }
 

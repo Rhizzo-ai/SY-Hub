@@ -24,6 +24,25 @@ export async function listProjectPOs(projectId, { signal, params } = {}) {
   return data;
 }
 
+// ─── R5.5 — Budget-line / budget scoped PO lists ────────────────────
+// Used by the R6 inline expandable budget-line grid. Each call hits
+// the exact path the Jest URL-contract pins assert on.
+export async function listBudgetLinePOs(lineId, { signal, params } = {}) {
+  const { data } = await api.get(
+    `/v1/budget-lines/${lineId}/purchase-orders`,
+    { signal, params },
+  );
+  return data;
+}
+
+export async function listBudgetPOs(budgetId, { signal, params } = {}) {
+  const { data } = await api.get(
+    `/v1/budgets/${budgetId}/purchase-orders`,
+    { signal, params },
+  );
+  return data;
+}
+
 export async function getPO(poId, { signal } = {}) {
   const { data } = await api.get(`/v1/purchase-orders/${poId}`, { signal });
   return data;

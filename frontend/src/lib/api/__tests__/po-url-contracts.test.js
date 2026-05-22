@@ -79,6 +79,24 @@ describe('Purchase Orders URL contracts', () => {
     );
   });
 
+  // R5.5 — Budget-line / budget scoped PO lists (powers R6 inline
+  // expandable budget-line grid).
+  test('listBudgetLinePOs → /v1/budget-lines/{id}/purchase-orders', async () => {
+    await poApi.listBudgetLinePOs('BL1');
+    expect(api.get).toHaveBeenCalledWith(
+      '/v1/budget-lines/BL1/purchase-orders',
+      { params: undefined, signal: undefined },
+    );
+  });
+
+  test('listBudgetPOs → /v1/budgets/{id}/purchase-orders (bulk)', async () => {
+    await poApi.listBudgetPOs('B1');
+    expect(api.get).toHaveBeenCalledWith(
+      '/v1/budgets/B1/purchase-orders',
+      { params: undefined, signal: undefined },
+    );
+  });
+
   test('getPO → /v1/purchase-orders/{id}', async () => {
     await poApi.getPO('PO1');
     expect(api.get).toHaveBeenCalledWith('/v1/purchase-orders/PO1', { signal: undefined });

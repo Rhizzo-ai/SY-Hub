@@ -50,7 +50,8 @@ export function useProjectActuals(projectId, { params, enabled = true } = {}) {
  * Uses the existing /api/v1/actuals listing with the `budget_line_id`
  * query parameter (confirmed in routers/actuals.py:65).
  *
- * Mounted by BillsSection inside BudgetGridDrilldown when a line row
+ * Previously consumed by the per-line BillsSection (deleted in R6);
+ * retained because actuals lists are still surfaced elsewhere when a line row
  * is expanded. staleTime: 30s — pops new bills into the drilldown
  * relatively quickly without thrashing during keyboard-driven row
  * navigation.

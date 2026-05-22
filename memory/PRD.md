@@ -18,6 +18,38 @@ Frontend / actuals / commitments / Xero are out of scope until later prompts.
 
 ## What's been implemented
 
+### 2026-05-22 — Chat 25 R6 ✓ Inline Expandable Budget-Line Grid (frontend)
+
+Phase A0 → 4 complete. R6 ships the Buildertrend-style inline expandable
+budget-line drilldown against the R5.5 backend endpoints landed in the
+prior session.
+
+- **New components** (`src/components/budgets/grid/PerLineTransactionDrilldown/`):
+  - `BudgetLineExpandedRow.jsx` — orchestrates breakdown + POs + Bills
+  - `POsSection.jsx` — lazy-fetches `/v1/budget-lines/{id}/purchase-orders` (R5.5)
+  - `ReceiptsSection.jsx` — nested per-PO `/v1/purchase-orders/{id}/receipts` (P0.3)
+  - `BillsPlaceholder.jsx` — static placeholder (Documents & Compliance later track)
+- **URL state**: `?expanded=line-id,line-id` on `BudgetDetail`, toggled via
+  `setSearchParams(..., { replace: true })` so deep-links don't pollute
+  history. Legacy `?line=` / `?drilldown=` are rewritten on mount.
+- **A11y**: dedicated expand button per line with `aria-expanded` +
+  `aria-controls`; panel mounts as `role="region"` with `aria-labelledby`.
+- **RO gating**: `<SensitiveValue/>` renders `—` when the server returns
+  `null` for `gross_total` / receipt amounts (already verified at the
+  backend by R5.5 RO tests).
+- **Deleted**: `BudgetGridDrilldown.jsx`, `POsSectionStub.jsx`,
+  `VariationsSectionStub.jsx`, `BillsSection.jsx`, `BillStatusBadge.jsx`
+  and their tests (`Drilldown.test.jsx`, `BillsSection.test.jsx`).
+- **Jest**: 52 suites, **313 passing** (was 312; +11 R6 tests, +2 R5.5
+  URL-pins, ‑10 stale stubs).
+- **Bundle**: main **385.26 kB gz** (gzip ‑9 reported) / **395 kB gz**
+  per CRA; ceiling 437 kB → **>40 kB headroom**.
+- **Jest mock**: `src/__mocks__/react-router-dom.js` extended with a
+  driveable `useSearchParams`/`__setSearchParams` so future URL-state
+  tests don't need a real router stack.
+- 0 dangling references for `BudgetGridDrilldown` / `POsSectionStub` /
+  `VariationsSectionStub` / `BillStatusBadge` / legacy `BillsSection`.
+
 ### 2026-05-20 — Chat 24 ✓ CLOSED (R0–R5, Prompt 2.5)
 
 Triage closing artefact filed at `docs/chat-summaries/chat-24-closing.md`. R0–R5 shipped, independently verified against real PostgreSQL 16, pushed to `main`. R6–R9 deferred to Chat 25.

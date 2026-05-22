@@ -12,7 +12,8 @@
  *
  * Mobile users get BudgetGridMobileReadOnly instead (R8).
  */
-import { useMemo, useState, useEffect, useRef, Fragment } from 'react';
+import { useMemo, useState, useEffect, useRef, useCallback, Fragment } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   flexRender, getCoreRowModel, getExpandedRowModel,
   getSortedRowModel, useReactTable,
@@ -41,7 +42,8 @@ import { groupLinesByCategory } from '@/lib/budgetCategoryGroup';
 import { LineDrawer } from '../LineDrawer';
 import { BudgetGridToolbar } from './BudgetGridToolbar';
 import { BudgetGridHeaderTiles } from './BudgetGridHeaderTiles';
-import { BudgetGridDrilldown } from './BudgetGridDrilldown';
+import { BudgetLineExpandedRow }
+  from './PerLineTransactionDrilldown/BudgetLineExpandedRow';
 import { BulkActionsBar } from './BulkActionsBar';
 import { SaveViewDialog } from './SaveViewDialog';
 import { ManageViewsDialog } from './ManageViewsDialog';
@@ -284,8 +286,41 @@ export function BudgetGridV2Desktop({ budget, projectId }) {
     [grouped, sorting],
   );
 
-  // ----- Default expansion (R3.6): categories open, items closed -----
-  const [expanded, setExpanded] = useState(() =>
+  // ----- R6: URL-backed expanded set (?expanded=lineId,lineId) ---------
+  // Category-group rows still expand/collapse via local state — only
+  // line-row expansion is URL-backed (deep-linkable, share-able).
+  // We use `router.replace` so toggling rows doesn't pollute history.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const expandedLineSet = useMemo(() => {
+    const raw = searchParams.get('expanded') ?? '';
+    const ids = raw.split(',').map((s) => s.trim()).filter(Boolean);
+    return new Set(ids);
+  }, [searchParams]);
+
+  const toggleExpandedLine = useCallback((lineId) => {
+    setSearchParams((prev) => {
+      // `prev` is a URLSearchParams; clone so we don't mutate React's
+      // current state object.
+      const next = new URLSearchParams(prev);
+      const current = (next.get('expanded') ?? '')
+        .split(',').map((s) => s.trim()).filter(Boolean);
+      const idx = current.indexOf(lineId);
+      if (idx === -1) current.push(lineId);
+      else current.splice(idx, 1);
+      if (current.length === 0) next.delete('expanded');
+      else next.set('expanded', current.join(','));
+      return next;
+    }, { replace: true });
+  }, [setSearchParams]);
+
+  // ----- Default expansion (R3.6): TanStack `expanded` for category-group
+  // rows; line expansion is URL-backed via `expandedLineSet` below.
+  // (Initial state keys here are intentionally the bare groupKey, NOT
+  // the row id — TanStack expects the row id (`g:<groupKey>`) for hits,
+  // so groups start collapsed and the user toggles them open. This
+  // matches Chat 23 R3.6 behavior + the BudgetGridV2-CostCodeRender
+  // test pins.)
+  const [expandedGroups, setExpandedGroups] = useState(() =>
     Object.fromEntries(grouped.map((g) => [g.groupKey, true])),
   );
 
@@ -305,22 +340,20 @@ export function BudgetGridV2Desktop({ budget, projectId }) {
     data: sortedGrouped,
     columns,
     state: {
-      sorting, columnVisibility, columnOrder, expanded, rowSelection,
+      sorting, columnVisibility, columnOrder, expanded: expandedGroups, rowSelection,
     },
     onSortingChange: setSorting,
     onColumnVisibilityChange: setColumnVisibility,
     onColumnOrderChange: setColumnOrder,
-    onExpandedChange: setExpanded,
+    onExpandedChange: setExpandedGroups,
     onRowSelectionChange: setRowSelection,
     getCoreRowModel: getCoreRowModel(),
     getExpandedRowModel: getExpandedRowModel(),
     getSortedRowModel: getSortedRowModel(),
     getSubRows: (row) => row.subRows,
-    // Allow group rows AND line rows to be expandable. Line rows have
-    // no subRows themselves — their "expansion" renders the drilldown
-    // panel as an injected colspan row directly under the line.
-    getRowCanExpand: (row) =>
-      row.original.isGroup || (!row.original.isItem && !!row.original.id),
+    // Only group rows expand via TanStack; line rows expand via the URL
+    // (`?expanded=lineId,...`) and bypass TanStack's expanded state.
+    getRowCanExpand: (row) => row.original.isGroup,
     getRowId: (row, index, parent) => {
       // Group rows use groupKey; line + item rows use their UUID id.
       if (row.isGroup) return `g:${row.groupKey}`;
@@ -469,7 +502,8 @@ export function BudgetGridV2Desktop({ budget, projectId }) {
                     );
                   }
                   // Line row — sortable wrapper for drag-reorder.
-                  const expanded = row.getIsExpanded();
+                  const lineExpanded = expandedLineSet.has(orig.id);
+                  const panelId = `bg2-expanded-panel-${orig.id}`;
                   return (
                     <Fragment key={row.id}>
                       <SortableLineRowBody
@@ -478,6 +512,21 @@ export function BudgetGridV2Desktop({ budget, projectId }) {
                         dragDisabled={dragDisabled}
                       >
                         <td className="w-8 px-2">
+                          <button
+                            type="button"
+                            onClick={() => toggleExpandedLine(orig.id)}
+                            aria-expanded={lineExpanded}
+                            aria-controls={panelId}
+                            aria-label={lineExpanded
+                              ? 'Collapse line details'
+                              : 'Expand line details'}
+                            className="inline-flex h-5 w-5 items-center justify-center rounded text-slate-500 hover:bg-slate-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-sy-teal"
+                            data-testid={`bg2-line-expand-${orig.id}`}
+                          >
+                            <span aria-hidden="true">
+                              {lineExpanded ? '▼' : '▶'}
+                            </span>
+                          </button>
                           <LineDragHandle
                             lineId={orig.id}
                             disabled={dragDisabled}
@@ -492,16 +541,17 @@ export function BudgetGridV2Desktop({ budget, projectId }) {
                           </td>
                         ))}
                       </SortableLineRowBody>
-                      {expanded && (
+                      {lineExpanded && (
                         <tr
+                          id={panelId}
                           className="bg-slate-50"
-                          data-testid={`bg2-drilldown-row-${orig.id}`}
+                          data-testid={`bg2-expanded-row-${orig.id}`}
                         >
                           <td
                             colSpan={row.getVisibleCells().length + 1}
                             className="p-0"
                           >
-                            <BudgetGridDrilldown
+                            <BudgetLineExpandedRow
                               line={orig}
                               budget={budget}
                               projectId={projectId}

@@ -8,8 +8,8 @@
  *
  * Bottom-anchored Sheet on mobile, full viewport width. The transaction
  * sub-sections (POs stub, Variations stub, Bills LIVE) are rendered via
- * the existing `BudgetGridDrilldown` so a Site Manager can check what's
- * been billed without leaving mobile.
+ * the R6 `BudgetLineExpandedRow` so a Site Manager can check what's
+ * been ordered/receipted without leaving mobile.
  *
  * Constraints (Build Pack A locked decisions):
  *   - All line fields except Notes are READ-ONLY (no Description edit,
@@ -29,7 +29,8 @@ import { useCostCodes, buildCostCodeMap } from '@/hooks/costCodes';
 import { useMemo } from 'react';
 import { VarianceBadge } from '../VarianceBadge';
 import { NotesCell } from './NotesCell';
-import { BudgetGridDrilldown } from './BudgetGridDrilldown';
+import { BudgetLineExpandedRow }
+  from './PerLineTransactionDrilldown/BudgetLineExpandedRow';
 
 function Row({ label, value, testid, mono = true }) {
   return (
@@ -165,15 +166,15 @@ export function MobileLineDetailDrawer({
             </section>
 
             <section data-testid="bg2-mobile-drawer-drilldown">
-              <BudgetGridDrilldown
+              <BudgetLineExpandedRow
                 line={line}
                 budget={budget}
                 projectId={projectId}
                 canEdit={false}
                 /* canEdit=false: line-item edits go through the desktop
                  * LineItemsBreakdown's edit form. Mobile users can still
-                 * SEE breakdown rows + live Bills, just not mutate the
-                 * 4-type breakdown. */
+                 * SEE breakdown rows + POs + Receipts, just not mutate
+                 * the 4-type breakdown. */
               />
             </section>
           </div>

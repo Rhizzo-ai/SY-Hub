@@ -8,7 +8,8 @@
  *
  * Hooks-first ordering preserved (Rules of Hooks).
  */
-import { useParams, Link } from 'react-router-dom';
+import { useEffect } from 'react';
+import { useParams, useSearchParams, Link } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import { useBudget } from '@/hooks/budgets';
 import { BudgetHeader } from '@/components/budgets/BudgetHeader';
@@ -19,6 +20,21 @@ export default function BudgetDetail() {
   const { projectId, budgetId } = useParams();
   const { me } = useAuth();
   const canView = !!me?.permissions?.includes('budgets.view');
+
+  // R6 — Legacy deep-link redirect: pre-R6 share links used `?line=` or
+  // `?drilldown=` to deep-link into a single line's drilldown panel.
+  // Rewrite those into `?expanded=` (the R6 URL contract) using
+  // `router.replace` so we don't pollute history.
+  const [searchParams, setSearchParams] = useSearchParams();
+  useEffect(() => {
+    const legacy = searchParams.get('line') ?? searchParams.get('drilldown');
+    if (!legacy || searchParams.get('expanded')) return;
+    const next = new URLSearchParams(searchParams);
+    next.set('expanded', legacy);
+    next.delete('line');
+    next.delete('drilldown');
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams]);
 
   const { data: budget, isLoading, isError, error } = useBudget(budgetId, {
     enabled: canView,

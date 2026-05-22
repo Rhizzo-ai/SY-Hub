@@ -47,12 +47,16 @@ jest.mock('@/hooks/costCodes', () => {
 
 // Drilldown sub-components fan out into hooks/network that we don't
 // care to exercise here — stub the drilldown wholesale so the drawer
-// test stays focused on the §R8 contract.
-jest.mock('../grid/BudgetGridDrilldown', () => ({
-  BudgetGridDrilldown: ({ line }) => (
-    <div data-testid={`bg2-drilldown-${line.id}`}>drilldown-stub</div>
-  ),
-}));
+// test stays focused on the §R8 contract. (R6: the drilldown was
+// replaced by BudgetLineExpandedRow.)
+jest.mock(
+  '../grid/PerLineTransactionDrilldown/BudgetLineExpandedRow',
+  () => ({
+    BudgetLineExpandedRow: ({ line }) => (
+      <div data-testid={`bg2-drilldown-${line.id}`}>drilldown-stub</div>
+    ),
+  }),
+);
 
 // Real NotesCell would patch the line on debounce — silence the network.
 // Provide enough surface for the Desktop path's mutation hooks too so the

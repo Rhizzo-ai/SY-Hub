@@ -55,15 +55,13 @@ export function makeColumns({
       id: 'expand',
       header: '',
       cell: ({ row }) => {
-        // Group rows expand via TanStack's subRows. Line rows expand
-        // into the BudgetGridDrilldown panel (Chat 23 R4.5) — that
-        // toggle is mounted directly on the row's expanded state, not
-        // via subRows. Item rows never expand.
+        // R6: Group rows expand via TanStack. Line-row expansion now
+        // lives on the leading column's dedicated `bg2-line-expand-*`
+        // button (URL-backed via ?expanded=), so this column cell only
+        // renders for groups.
         const orig = row.original;
-        if (orig.isItem) return null;
-        const isLine = !orig.isGroup;
-        const canExpand = row.getCanExpand() || isLine;
-        if (!canExpand) return null;
+        if (!orig.isGroup) return null;
+        if (!row.getCanExpand()) return null;
         return (
           <button
             type="button"
