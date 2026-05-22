@@ -575,4 +575,29 @@ complaint lands.
 - **Severity.** P1 — must land *in* R6 (not deferred). Linked from the R6
   prompt's "URL-CONTRACT PINS (Jest)" requirement.
 
-## 22. (placeholder — future entries appended here)
+## 22. (R6 v2 polish-pass backlog — operator-flagged 2026-05-22)
+
+Reported by operator while validating R6: the Budgets grid is reachable but
+the dashboard nav does not surface it. None of these are R6 regressions —
+they're stale shell-level UX from earlier phases. Logged here for the
+polish pass, not patched in R6 v2.
+
+- **Sidebar "Budgets" entry is dead.** `AppShell.jsx:33` lists
+  `{ label: "Budgets", to: "/budgets", enabled: false, testid: "nav-budgets" }`.
+  The same dead-disable applies to Appraisals, Cash Flow, Programme, Documents,
+  Compliance, Xero — they're rendered greyed-out and not clickable. Decision
+  pending: either (a) flip Budgets to `enabled: true` and route `/budgets` to
+  a project picker, or (b) drop the entry entirely and rely on the
+  Projects → \[project\] → Budgets path.
+- **Project Detail page has no Budgets link.** `pages/ProjectDetail.jsx`
+  surfaces Cost Codes / Appraisals / Actuals as inline links but no
+  `Link to={`/projects/${id}/budgets`}`. Operator currently lands on the
+  budget grid only via deep-link or via the AppraisalPage "Create Budget"
+  flow. P1 polish — add the missing inline link block.
+- **Stale 404 copy.** `App.js:248` renders
+  `"This module is not yet available in Phase 1."` for any unmatched
+  route, including `/budgets`. Wording is stale (we're past Phase 1).
+  Same class as the Phase 1.2 login footer in `AppShell.jsx:60`-area —
+  fold both into a copy-sweep ticket. Do NOT touch in R6 v2.
+
+## 23. (placeholder — future entries appended here)
