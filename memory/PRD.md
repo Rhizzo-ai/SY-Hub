@@ -18,6 +18,75 @@ Frontend / actuals / commitments / Xero are out of scope until later prompts.
 
 ## What's been implemented
 
+### 2026-02-12 — Chat 26 §R7 Batch 1 ✓ Frontend (R7.0b send-back wiring + R7.1 + R7.2 + R7.3)
+
+Frontend-only batch building on R7.0b's already-pushed backend send-back
+endpoint. Working tree only — **not** pushed; awaiting operator
+consolidated-STOP gate approval.
+
+- **§1 — Send-back wiring (carry-forward from R7.0b)**:
+  - `lib/api/purchaseOrders.js` — `sendBackPO(poId, body)` POSTs
+    `/v1/purchase-orders/{id}/send-back`; `listPOApprovals(poId)` GETs
+    `/v1/purchase-orders/{id}/approvals` (data source for R7.3 panel).
+  - `hooks/purchaseOrders.js` — `sendBack` verb in `usePoTransition`
+    map. New `usePOApprovals(poId, {enabled})` hook for the panel.
+    NB: budget-line cache invalidation on commitment-changing verbs
+    (send-back joins approve/issue/void) deferred to R7.6 / Batch 2.
+
+- **R7.1 — Project-Detail Budgets tab-link**:
+  - `pages/ProjectDetail.jsx` — `<Link>` to `/projects/{id}/budgets`
+    (`data-testid=tab-budgets`), gated by
+    `budgets.view || me.is_super_admin`. Routes already resolve to
+    `BudgetsList` (not the catch-all). Sidebar `Budgets` entry in
+    `AppShell.jsx` **left disabled** per locked decision (a global
+    landing page is backlog).
+
+- **R7.2 — `components/po/POActionButtons.jsx`** (new):
+  - Refactors the inline action area out of `PurchaseOrderDetail.jsx`
+    into a single source of truth.
+  - Status × perm matrix incl. **approved** row (Issue / Send back /
+    Void). Send-back uses shadcn `Dialog` + `Textarea` with required
+    notes; reject also moved to a dialog (was `window.prompt`).
+  - Self-approval guard mirrors backend `SelfApprovalForbidden`:
+    `po.submitted_by === me.id` hides Approve, shows disabled twin
+    with tooltip, hides Reject. **Send-back is NOT subject** — it IS
+    the correction path.
+  - `edit_tier` (lowercased string from backend) handled
+    case-insensitively: `read_only` → no mutating buttons;
+    `header_annotation_only` → suppress Edit/Delete only; `full` →
+    all per matrix; absent → defensive `read_only` fallback.
+
+- **R7.3 — `components/po/POApprovalPanel.jsx`** (new):
+  - Mounts in the PO detail "approvals" tab. Renders iff
+    `po.status === 'pending_approval'` AND an open approval row exists
+    (resolution === null). The GET endpoint does NOT inline the open
+    row, so the panel fetches via `usePOApprovals` (`/approvals` list)
+    and picks the open one; the rest become history.
+  - Over-budget snapshot table from
+    `approval.budget_snapshot` (array of decimal-string overrun lines —
+    `Number()` only for display via `fmtGBP`; no arithmetic).
+  - Sensitive £ → `SensitiveValue` em-dash for read-only personas.
+  - Approve (optional reason) / Reject (required reason). Self-
+    approval guard via shared `lib/poSubmitter.js` helper. **Send-back
+    is NOT here** — it lives only in `<POActionButtons/>` on the
+    `approved` row.
+
+- **Tests** — Jest +44 (**356/356 passing**, was 312):
+  - `lib/api/__tests__/purchaseOrders.sendBack.test.js` — api/hook
+    wiring URL contract.
+  - `pages/__tests__/ProjectDetail.budgetsTab.test.jsx` — tab gating
+    (with-perm / without-perm / super-admin / siblings).
+  - `components/po/__tests__/POActionButtons.test.jsx` — per-status ×
+    per-persona matrix (FULL PM / approver / read-only), approved row,
+    self-approval rule, send-back dialog DOM transcript, edit_tier
+    handling.
+  - `components/po/__tests__/POApprovalPanel.test.jsx` — snapshot
+    rendering, panel visibility logic, read-only em-dash, approve /
+    reject verbs, creator-cannot-approve, send-back excluded.
+
+- **No backend / migration / RBAC change.** Permissions 102, roles 10,
+  alembic head `0034_audit_sendback` (unchanged from R7.0b push).
+
 ### 2026-05-22 — Chat 25 R6 v2 ✓ Closing-gap pass (frontend-only)
 
 Second R6 pass to close gaps from the v1 pass that the operator flagged.
