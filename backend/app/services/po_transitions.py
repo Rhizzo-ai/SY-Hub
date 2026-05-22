@@ -1,20 +1,20 @@
-"""Purchase Order state machine — Chat 24 §R2 (Prompt 2.5).
+"""Purchase Order state machine — Chat 24 §R2 (Prompt 2.5), R7.0 Option B.
 
 States (8): draft, pending_approval, approved, issued,
 partially_receipted, receipted, closed, voided.
 
-R2-scoped transitions:
-  - draft -> pending_approval   (submit when approval_required=true)
-  - draft -> issued             (submit when approval_required=false)
-  - approved -> issued          (issue, post-approval)
+Transitions:
+  - draft -> pending_approval   (submit when approval_required=true,
+                                 budget-gate enforced)
+  - draft -> approved           (submit when within-budget AND
+                                 approval_required=false — R7.0 Option B;
+                                 was draft -> issued in §R2)
+  - approved -> issued          (issue, post-approval — REQUIRED step;
+                                 R7.0 stops the auto-issue collapse)
   - draft|pending|approved|issued -> voided (void with reason)
   - partially_receipted|receipted -> closed   (close)
-
-Transitions deferred to R3 / R4 are not implemented here but the
-status set is the same:
   - pending_approval -> approved | draft  (R3)
   - issued -> partially_receipted|receipted (R4 receipts)
-  - closed -> approved|issued|… (R4 reopen)
 
 Every successful transition stamps the appropriate `*_at`/`*_by`
 columns and emits an audit_log row via the caller's service.
@@ -31,13 +31,20 @@ class TransitionError(ValueError):
     """Raised when a state transition is not permitted for the current status."""
 
 
-# Allowed transition map. Source-of-truth for the R2 state machine.
+# Allowed transition map. Source-of-truth for the state machine.
 # `closed` and `voided` are TERMINAL per build pack §2.4 — reopen-from-
 # closed is deliberately NOT in scope for Prompt 2.5 (logged to
 # SY_Homes_Future_Tasks.md §15).
+#
+# R7.0 — `draft -> approved` is now a permitted edge so the within-budget
+# auto-approve path can land directly without first faking
+# `pending_approval`. The legacy `draft -> issued` edge is retained for
+# data-migration and admin tooling but no production code path takes it
+# any more (auto-issue collapse removed; issue is always reached via
+# `approved -> issued`).
 ALLOWED_TRANSITIONS: dict[str, set[str]] = {
-    "draft":                {"pending_approval", "issued", "voided"},
-    "pending_approval":     {"approved", "draft", "voided"},      # R3 does the work
+    "draft":                {"pending_approval", "approved", "issued", "voided"},
+    "pending_approval":     {"approved", "draft", "voided"},
     "approved":             {"issued", "voided"},
     "issued":               {"partially_receipted", "receipted",
                              "voided", "closed"},
@@ -70,9 +77,19 @@ def assert_transition(current: str, target: str) -> None:
 def submit(po: PurchaseOrder, user_id) -> str:
     """Submit a Draft PO.
 
-    Behaviour:
+    Behaviour (R7.0 Option B):
       - approval_required = true  -> draft -> pending_approval
-      - approval_required = false -> draft -> issued (auto-issue path)
+      - approval_required = false -> draft -> approved  (was: issued
+        in §R2. R7.0 changes the within-budget auto-flow to land at
+        `approved` so a separate, explicit Issue action is required
+        before a supplier-visible PO exists. `approved`-but-not-`issued`
+        is the safety buffer — committed in the books, supplier not
+        yet told, still pullable.)
+
+    Note: this transition unit does NOT enforce the budget gate; the
+    over-budget path is handled upstream in
+    `po_approvals.submit_po_with_budget_gate` which forces
+    `pending_approval` regardless of `approval_required`.
 
     Returns the new status. Caller persists.
     """
@@ -86,12 +103,16 @@ def submit(po: PurchaseOrder, user_id) -> str:
         po.submitted_at = now
         po.submitted_by = user_id
     else:
-        # Auto-issue: still record the submit stamp for audit forensics.
-        target = "issued"
+        # R7.0 — Option B: within-budget auto path lands at `approved`,
+        # NOT `issued`. `issued_at`/`issued_by` are LEFT NULL and only
+        # populated by the subsequent explicit `issue()` call. Record
+        # the submit stamp for audit forensics, and the approved stamp
+        # so reporting knows when the safety buffer started.
+        target = "approved"
         po.submitted_at = now
         po.submitted_by = user_id
-        po.issued_at = now
-        po.issued_by = user_id
+        po.approved_at = now
+        po.approved_by = user_id
     assert_transition(po.status, target)
     po.status = target
     return target

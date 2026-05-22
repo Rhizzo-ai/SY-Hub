@@ -104,14 +104,20 @@ class TestSubmit:
         # No auto-issue.
         assert po.issued_at is None
 
-    def test_submit_without_approval_auto_issues(self):
+    def test_submit_without_approval_auto_approves(self):
+        # R7.0 Option B — within-budget auto path lands at `approved`,
+        # NOT `issued`. issued_at / issued_by MUST remain NULL until
+        # the explicit issue() call.
         po = _po("draft", approval_required=False)
         uid = uuid.uuid4()
-        assert po_transitions.submit(po, uid) == "issued"
-        assert po.status == "issued"
+        assert po_transitions.submit(po, uid) == "approved"
+        assert po.status == "approved"
         assert po.submitted_by == uid
-        assert po.issued_by == uid
-        assert po.issued_at is not None
+        assert po.submitted_at is not None
+        assert po.approved_by == uid
+        assert po.approved_at is not None
+        assert po.issued_at is None
+        assert po.issued_by is None
 
     def test_submit_from_non_draft_raises(self):
         for bad in ("pending_approval", "approved", "issued", "closed", "voided"):

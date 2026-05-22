@@ -269,16 +269,19 @@ def _bline_committed(engine, line_id: str) -> Decimal:
 # ─────────────────────────────────────────────────────────────────────────
 
 class TestBudgetGate:
-    def test_g31_within_budget_auto_issue_no_approval_row(
+    def test_g31_within_budget_auto_approve_no_approval_row(
         self, admin, project_setup,
     ):
+        # R7.0 Option B: within-budget + approval_required=false now
+        # lands at `approved` (was `issued` in §R2). No approval row
+        # is created — the auto-approve path is silent.
         po = _create_po(admin, project_setup, net_per_line=[500.0])
         rs = admin.post(
             f"{BASE_URL}/api/v1/purchase-orders/{po['id']}/submit", json={},
         )
         assert rs.status_code == 200, rs.text
         body = rs.json()
-        assert body["status"] == "issued"
+        assert body["status"] == "approved"
         assert body["approval"] is None
         # No approval row inserted.
         ra = admin.get(f"{BASE_URL}/api/v1/purchase-orders/{po['id']}/approvals")
@@ -510,9 +513,29 @@ class TestCommitmentMatrix:
         assert _bline_committed(engine, project_setup["line_ids"][0]) == Decimal("0.00")
 
     def test_closed_releases_commitment(self, admin, project_setup, engine):
+        # R7.0 — within-budget submit lands at `approved`, not `issued`.
+        # `closed` is only reachable from receipt-bearing statuses; this
+        # test now drives the PO through approved → issue → receipt →
+        # close so the commitment-release contract is exercised end-to-end.
         po = _create_po(admin, project_setup, net_per_line=[500.0])
         admin.post(
             f"{BASE_URL}/api/v1/purchase-orders/{po['id']}/submit", json={},
+        )
+        admin.post(
+            f"{BASE_URL}/api/v1/purchase-orders/{po['id']}/issue", json={},
+        )
+        # Receipt the full quantity so the PO transitions issued → receipted.
+        with engine.begin() as c:
+            line_id = c.execute(text("""
+                SELECT id FROM purchase_order_lines
+                 WHERE purchase_order_id = :pid LIMIT 1
+            """), {"pid": po["id"]}).scalar()
+        admin.post(
+            f"{BASE_URL}/api/v1/purchase-orders/{po['id']}/receipts",
+            json={
+                "received_date": "2026-05-22",
+                "lines": [{"purchase_order_line_id": str(line_id), "quantity_received": 1}],
+            },
         )
         admin.post(
             f"{BASE_URL}/api/v1/purchase-orders/{po['id']}/close",
@@ -543,3 +566,162 @@ class TestPendingApprovalsList:
         assert ra.status_code == 200, ra.text
         ids = [it["po_id"] for it in ra.json()["items"]]
         assert po["id"] in ids
+
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# R7.0 — Option B (within-budget submit lands at `approved`, NOT auto-issue)
+# ─────────────────────────────────────────────────────────────────────────
+#
+# These six tests are the build-pack-named acceptance gates for R7.0.
+# They are deliberately additive to the existing budget-gate / self-
+# approval tests so the run summary shows the six names in one block.
+
+class TestR70OptionB:
+    """R7.0 Option B — explicit landing-state contract for within-budget
+    PO submission. Within-budget + no approval_required lands at
+    `approved` (was `issued`); a separate `issue` action is required
+    to actually issue.
+    """
+
+    def test_within_budget_submit_lands_approved_not_issued(
+        self, admin, project_setup,
+    ):
+        # Within-budget submit (approval_required defaults false) MUST
+        # land at `approved`. The legacy auto-issue collapse is gone.
+        po = _create_po(admin, project_setup, net_per_line=[500.0])
+        rs = admin.post(
+            f"{BASE_URL}/api/v1/purchase-orders/{po['id']}/submit", json={},
+        )
+        assert rs.status_code == 200, rs.text
+        body = rs.json()
+        assert body["status"] == "approved", (
+            f"R7.0 invariant broken: expected status='approved', got "
+            f"{body['status']!r}"
+        )
+        assert body["approval"] is None
+        # Negative — issued_at MUST be NULL after submit. Only the
+        # explicit issue call may populate it.
+        assert body.get("issued_at") is None, (
+            f"R7.0: issued_at must be NULL at approved, got "
+            f"{body.get('issued_at')!r}"
+        )
+        # Positive — approved stamp must be populated.
+        assert body.get("approved_at") is not None
+        assert body.get("submitted_at") is not None
+
+    def test_within_budget_approved_requires_explicit_issue(
+        self, admin, project_setup,
+    ):
+        # approved → issue → issued. The issue endpoint is the only
+        # path to `issued` for the within-budget auto-approve flow.
+        po = _create_po(admin, project_setup, net_per_line=[500.0])
+        rs = admin.post(
+            f"{BASE_URL}/api/v1/purchase-orders/{po['id']}/submit", json={},
+        )
+        assert rs.status_code == 200, rs.text
+        assert rs.json()["status"] == "approved"
+        # Now explicitly issue. The endpoint name comes from R5 (already
+        # live; we pin it here so any drift is caught).
+        ri = admin.post(
+            f"{BASE_URL}/api/v1/purchase-orders/{po['id']}/issue", json={},
+        )
+        assert ri.status_code == 200, ri.text
+        body = ri.json()
+        assert body["status"] == "issued"
+        assert body["issued_at"] is not None
+        assert body["approved_at"] is not None  # preserved
+        # The PO is reachable on the project list under both statuses
+        # at different points in its life-cycle.
+
+    def test_within_budget_approved_contributes_to_committed_value(
+        self, admin, project_setup, engine,
+    ):
+        # Money-contract invariant: committed_value includes `approved`
+        # POs. Live SELECT against the production trigger.
+        line_id = project_setup["line_ids"][0]
+        assert _bline_committed(engine, line_id) == Decimal("0.00")
+        po = _create_po(admin, project_setup, net_per_line=[500.0])
+        rs = admin.post(
+            f"{BASE_URL}/api/v1/purchase-orders/{po['id']}/submit", json={},
+        )
+        assert rs.status_code == 200
+        assert rs.json()["status"] == "approved"
+        # Net is 500 (gross would be 600 @ 20% VAT; commitment is on net).
+        assert _bline_committed(engine, line_id) == Decimal("500.00"), (
+            "R7.0: a within-budget PO at `approved` must contribute its "
+            "net to committed_value. The legacy DB trigger already does "
+            "this; this test pins the contract end-to-end."
+        )
+
+    def test_over_budget_submit_still_pending_approval(
+        self, admin, project_setup,
+    ):
+        # Regression — the over-budget path is UNCHANGED by R7.0. The
+        # gate still trumps the approval_required flag and lands at
+        # pending_approval with an approval row.
+        po = _create_po(admin, project_setup, net_per_line=[1100.0])  # 1000 budget
+        rs = admin.post(
+            f"{BASE_URL}/api/v1/purchase-orders/{po['id']}/submit", json={},
+        )
+        assert rs.status_code == 200, rs.text
+        body = rs.json()
+        assert body["status"] == "pending_approval"
+        assert body["approval"] is not None
+        assert body["approval"]["resolution"] is None
+        # Approval snapshot carries the overrun.
+        snap = body["approval"]["budget_snapshot"]
+        assert any(s["is_overrun"] for s in snap)
+
+    def test_self_approval_rejected_distinct_from_permission_denied(
+        self, admin, project_setup,
+    ):
+        # An approver (admin holds pos.approve) creates a PO that requires
+        # approval (over-budget forces pending_approval). When the same
+        # admin tries to approve their own PO, the response MUST be the
+        # self-approval guard — NOT a generic permission 403.
+        po = _create_po(admin, project_setup, net_per_line=[1100.0])
+        rs = admin.post(
+            f"{BASE_URL}/api/v1/purchase-orders/{po['id']}/submit", json={},
+        )
+        assert rs.status_code == 200, rs.text
+        assert rs.json()["status"] == "pending_approval"
+        ra = admin.post(
+            f"{BASE_URL}/api/v1/purchase-orders/{po['id']}/approve",
+            json={"notes": "self"},
+        )
+        assert ra.status_code == 403, ra.text
+        # The detail shape is what distinguishes this from a generic
+        # missing-perm 403. The R3 service raises SelfApprovalForbidden;
+        # the router maps it to `detail.type = "po/self-approval-forbidden"`.
+        detail = ra.json()["detail"]
+        assert isinstance(detail, dict), (
+            f"R7.0: self-approval 403 must carry a structured detail, "
+            f"got {type(detail).__name__} = {detail!r}"
+        )
+        assert detail.get("type") == "po/self-approval-forbidden", (
+            f"R7.0: self-approval 403 must use the distinct error type "
+            f"`po/self-approval-forbidden`, got {detail.get('type')!r}"
+        )
+        assert "approve" in (detail.get("title") or "").lower()
+
+    def test_second_approver_can_approve(self, admin, finance, project_setup):
+        # Negative coverage for the self-approval guard: a DIFFERENT
+        # approver (finance — has pos.approve via the test fixture)
+        # must succeed where the submitter cannot. The PO transitions
+        # pending_approval → approved.
+        po = _create_po(admin, project_setup, net_per_line=[1100.0])
+        rs = admin.post(
+            f"{BASE_URL}/api/v1/purchase-orders/{po['id']}/submit", json={},
+        )
+        assert rs.status_code == 200
+        assert rs.json()["status"] == "pending_approval"
+        rf = finance.post(
+            f"{BASE_URL}/api/v1/purchase-orders/{po['id']}/approve",
+            json={"notes": "ok"},
+        )
+        assert rf.status_code == 200, rf.text
+        body = rf.json()
+        assert body["status"] == "approved"
+        assert body["approval"]["resolution"] == "approved"
+        assert body["approval"]["resolved_by"] is not None

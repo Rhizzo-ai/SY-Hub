@@ -432,8 +432,9 @@ class TestCRUD:
         rget = admin.get(f"{BASE_URL}/api/v1/purchase-orders/{po_id}")
         assert rget.status_code == 404
 
-        # Create another, auto-issue via submit (approval_required=false), then
-        # delete must 422.
+        # Create another, auto-approve via submit (approval_required=false), then
+        # delete must 422. (R7.0 Option B: within-budget auto path lands at
+        # approved, not issued — but delete is still blocked once submitted.)
         r2 = admin.post(
             f"{BASE_URL}/api/v1/projects/{project_setup['project_id']}/purchase-orders",
             json=_po_create_body(project_setup),
@@ -441,7 +442,7 @@ class TestCRUD:
         po2 = r2.json()["id"]
         rs = admin.post(f"{BASE_URL}/api/v1/purchase-orders/{po2}/submit")
         assert rs.status_code == 200, rs.text
-        assert rs.json()["status"] == "issued"
+        assert rs.json()["status"] == "approved"
         rdel = admin.delete(f"{BASE_URL}/api/v1/purchase-orders/{po2}")
         assert rdel.status_code == 422, rdel.text
 
@@ -451,7 +452,10 @@ class TestCRUD:
 # ─────────────────────────────────────────────────────────────────────────
 
 class TestTransitions:
-    def test_submit_auto_issue_path(self, admin, project_setup):
+    def test_submit_auto_approve_path(self, admin, project_setup):
+        # R7.0 Option B: within-budget + approval_required=false now
+        # lands at `approved` (was `issued`). issued_at MUST be NULL —
+        # the explicit issue action is required to populate it.
         r = admin.post(
             f"{BASE_URL}/api/v1/projects/{project_setup['project_id']}/purchase-orders",
             json=_po_create_body(project_setup),  # approval_required defaults false
@@ -460,9 +464,10 @@ class TestTransitions:
         rs = admin.post(f"{BASE_URL}/api/v1/purchase-orders/{po_id}/submit")
         assert rs.status_code == 200, rs.text
         body = rs.json()
-        assert body["status"] == "issued"
+        assert body["status"] == "approved"
         assert body["submitted_at"] is not None
-        assert body["issued_at"] is not None
+        assert body["approved_at"] is not None
+        assert body["issued_at"] is None
 
     def test_submit_with_approval_required_goes_pending(self, admin, project_setup):
         r = admin.post(
@@ -495,12 +500,16 @@ class TestTransitions:
         assert rv2.json()["voided_reason"] == "supplier withdrew"
 
     def test_patch_issued_only_allows_header_annotation(self, admin, project_setup):
+        # R7.0 — submit now lands at `approved` (the edit_tier is FULL
+        # at approved). To exercise the issued-state edit-tier guard
+        # we now explicitly issue the PO before attempting the PATCH.
         r = admin.post(
             f"{BASE_URL}/api/v1/projects/{project_setup['project_id']}/purchase-orders",
             json=_po_create_body(project_setup),
         )
         po_id = r.json()["id"]
         admin.post(f"{BASE_URL}/api/v1/purchase-orders/{po_id}/submit")
+        admin.post(f"{BASE_URL}/api/v1/purchase-orders/{po_id}/issue")
         # Now issued — only notes/delivery_notes/external_reference allowed.
         ok = admin.patch(
             f"{BASE_URL}/api/v1/purchase-orders/{po_id}",

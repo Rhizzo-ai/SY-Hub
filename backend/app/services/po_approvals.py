@@ -133,19 +133,18 @@ def submit_po_with_budget_gate(
 ) -> tuple[PurchaseOrder, Optional[PurchaseOrderApproval]]:
     """Submit a Draft PO with the §4.2 budget gate.
 
-    Branches:
-      1. Within-budget AND PO.approval_required=false → auto-issue
-         (transition draft → issued, no approval row created).
-      2. Within-budget AND PO.approval_required=true  → auto-approve
-         (transition draft → approved, fresh PurchaseOrderApproval row
-         created already-resolved as 'approved' with system as
-         resolved_by NULL — but the spec says we capture a complete
-         approval row; we store the submitting user as both
-         submitted_by and resolved_by with resolution_notes='auto-approved
-         (within budget)' so the resolution_consistency CHECK holds
-         while staying transparent).
+    Branches (R7.0 Option B):
+      1. Within-budget AND PO.approval_required=false → auto-approve
+         (transition draft → approved, no approval row created). The
+         operator must then call the explicit `issue` action to move
+         approved → issued. R7.0 removed the legacy auto-issue collapse:
+         `approved`-but-not-`issued` is now the safety buffer (committed
+         in the books, supplier not yet told).
+      2. Within-budget AND PO.approval_required=true  → pending_approval
+         (user-driven approval requirement; approval row created).
       3. Over-budget → draft → pending_approval, fresh approval row
-         created with budget_snapshot + submission_reason.
+         created with budget_snapshot + submission_reason (the gate
+         trumps the approval_required flag).
 
     Returns (po, approval) — `approval` is None for case (1).
     """
@@ -164,10 +163,14 @@ def submit_po_with_budget_gate(
     approval_row: Optional[PurchaseOrderApproval] = None
 
     if not over_budget and not po.approval_required:
-        # Case 1 — within budget AND caller didn't flag approval_required:
-        # auto-issue (no approval row).
+        # Case 1 — within budget AND caller didn't flag approval_required.
+        # R7.0: lands at `approved`, NOT `issued`. The explicit issue
+        # endpoint is the only legitimate path to `issued` from here.
         target = po_transitions.submit(po, user.id)
-        assert target == "issued"
+        assert target == "approved", (
+            f"R7.0 Option B invariant broken: within-budget auto path "
+            f"must land at 'approved', got {target!r}"
+        )
         po.updated_by = user.id
         po.updated_at = datetime.now(timezone.utc)
         db.flush()
@@ -181,8 +184,8 @@ def submit_po_with_budget_gate(
             field_changes=field_diff(before, after),
             metadata={
                 "po_number": po.po_number,
-                "new_status": "issued",
-                "auto_issued": True,
+                "new_status": "approved",
+                "auto_approved": True,
                 "budget_gate": "within_budget",
             },
             request=request,
@@ -194,14 +197,15 @@ def submit_po_with_budget_gate(
     # caller explicitly flagged approval_required=true (user-driven
     # approval is always honoured, even within budget).
     target = po_transitions.submit(po, user.id)
-    # po_transitions.submit() with approval_required=false would
-    # auto-issue — but for the over-budget path we force PA regardless
-    # of approval_required (the gate trumps the flag).
-    if target == "issued":
-        # Rewind the auto-issue stamps; we want pending_approval.
+    # R7.0 — po_transitions.submit() with approval_required=false now
+    # auto-APPROVES (was: auto-issued in §R2). For the over-budget
+    # path we force PA regardless of approval_required: the gate
+    # trumps the flag. Rewind the auto-approve stamps if we landed
+    # there.
+    if target == "approved":
         po.status = "pending_approval"
-        po.issued_at = None
-        po.issued_by = None
+        po.approved_at = None
+        po.approved_by = None
     now = datetime.now(timezone.utc)
     approval_row = PurchaseOrderApproval(
         purchase_order_id=po.id,

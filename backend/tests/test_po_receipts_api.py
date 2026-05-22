@@ -231,8 +231,12 @@ def _create_po_with_lines(
 
 
 def _submit_and_issue(admin, engine, po_id: str) -> None:
-    """Walk PO from draft → issued. R3 auto-issues when within-budget
-    and approval_required=false, so submit alone gets us to 'issued'."""
+    """Walk PO from draft → issued.
+
+    R7.0 Option B: within-budget submit now lands at `approved` (not
+    `issued`). The fallback explicit-issue branch below handles this —
+    the helper is therefore already R7.0-correct without changes.
+    """
     r = admin.post(f"{BASE_URL}/api/v1/purchase-orders/{po_id}/submit", json={})
     assert r.status_code == 200, r.text
     with engine.connect() as c:
@@ -241,7 +245,8 @@ def _submit_and_issue(admin, engine, po_id: str) -> None:
             {"i": po_id},
         ).scalar()
     if status != "issued":
-        # Fallback: explicit issue path (R2 endpoint).
+        # Fallback: explicit issue path. Under R7.0 this is the ONLY
+        # path to issued for the within-budget auto-approve flow.
         r2 = admin.post(
             f"{BASE_URL}/api/v1/purchase-orders/{po_id}/issue", json={},
         )
