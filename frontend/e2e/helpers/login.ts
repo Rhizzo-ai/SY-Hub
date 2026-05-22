@@ -10,7 +10,7 @@ import { authenticator } from 'otplib';
 const PREVIEW_URL =
   process.env.REACT_APP_PREVIEW_URL
   || process.env.REACT_APP_BACKEND_URL
-  || 'https://e2e-smoke-r6.preview.emergentagent.com';
+  || 'https://sy-spot-check-r70.preview.emergentagent.com';
 
 const PASSWORD = process.env.TEST_USER_PASSWORD || 'TestUser-Dev-2026!';
 

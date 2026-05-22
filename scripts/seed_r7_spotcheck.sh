@@ -256,7 +256,7 @@ SQL
 
 PROJ="$PROJECT_ID"
 BID=$(eval "$PSQL" -c "SELECT id FROM budgets WHERE project_id='${PROJ}' AND is_current=true" | tr -d ' ')
-APP_URL="${REACT_APP_BACKEND_URL:-https://e2e-smoke-r6.preview.emergentagent.com}"
+APP_URL="${REACT_APP_BACKEND_URL:-https://sy-spot-check-r70.preview.emergentagent.com}"
 
 echo ""
 echo "─── Direct URLs ─────────────────────────────────────────────────────"
