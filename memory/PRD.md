@@ -22,7 +22,11 @@ Frontend / actuals / commitments / Xero are out of scope until later prompts.
 
 All four P0 (critical) findings from the Claude-Code audit, re-grounded
 to `main`. Working tree only; awaiting operator gate before push. No
-schema change. **Suite: 1012 / 1012 (warm DB), +13 vs the 999 baseline.**
+schema change. **Warm-DB suite: 920 passed, 2 pre-existing failures
+(`test_audit_log.py::TestCsvJsonExport`) + 93 pre-existing errors
+(`test_projects.py` FK in `appraisal_scenarios`) — verified pre-existing
+by stashing P0 deltas: same 2 failures persist. P0 file itself: 16/16
+green in isolation AND inside the full warm-DB run.**
 
 - **P0.1 — Appraisal row lock**: new `_lock_appraisal_for_update`
   helper takes `SELECT ... FOR UPDATE` on the appraisal row + every

@@ -313,102 +313,318 @@ class TestP0_2_ReceiptAuditActor:
 
         pm_id, pm_tenant = _user_id_and_tenant(db_engine, PM)
 
+        # Self-bootstrap an issued PO if none exists in the DB. The
+        # P0.2 audit-actor test is a financial-integrity proof — it
+        # must NEVER silently skip just because the spot-check seed
+        # isn't loaded. We insert the minimal chain (project →
+        # supplier → budget → PO → line → number-prefix) directly via
+        # SQL, then go through the lifecycle API as admin to land at
+        # 'issued', which bakes admin in as the header editor (the
+        # bug-shape this test exercises).
         with db_engine.connect() as conn:
             row = conn.execute(sa.text("""
-                SELECT po.id, po.po_number, po.status, po.project_id
+                SELECT po.id, po.po_number, po.status
                 FROM purchase_orders po
                 WHERE po.status IN ('approved', 'issued', 'partially_receipted')
                 ORDER BY (po.status = 'approved') DESC
                 LIMIT 1
             """)).first()
+
+        cleanup_ids = {}
         if row is None:
-            pytest.skip("No approved/issued POs seeded — run seed_r7_batch1_pos.py first")
-        po_id, po_number, po_status, _proj_id = row[0], row[1], row[2], row[3]
+            # Bootstrap the full chain from scratch. The financial-integrity
+            # proof must NEVER silently skip — and the full pytest suite
+            # clears projects/budgets/lines so we can't assume seed data.
+            with db_engine.connect() as conn:
+                ent_row = conn.execute(sa.text(
+                    "SELECT id, tenant_id FROM entities ORDER BY created_at LIMIT 1"
+                )).first()
+                assert ent_row, "no entities seeded — cannot bootstrap"
+                entity_id, tenant_id_for_po = ent_row[0], ent_row[1]
 
-        # If approved, issue it as admin so admin becomes header editor.
-        if po_status == "approved":
-            r = admin_s.post(f"{BASE_URL}/api/v1/purchase-orders/{po_id}/issue", json={})
-            if r.status_code not in (200, 204):
-                pytest.skip(f"PO issue failed ({r.status_code} {r.text[:200]})")
-        else:
-            # Force admin to be the header editor by touching the PO.
+                cc_row = conn.execute(sa.text(
+                    "SELECT id, code FROM cost_codes ORDER BY code LIMIT 1"
+                )).first()
+                assert cc_row, "no cost_codes seeded"
+                cost_code_id, cost_code_str = cc_row[0], cc_row[1]
+
+            cleanup_ids["project_id"] = uuid.uuid4()
+            cleanup_ids["appraisal_id"] = uuid.uuid4()
+            cleanup_ids["supplier_id"] = uuid.uuid4()
+            cleanup_ids["budget_id"] = uuid.uuid4()
+            cleanup_ids["budget_line_id"] = uuid.uuid4()
+            cleanup_ids["po_id"] = uuid.uuid4()
+            cleanup_ids["po_line_id"] = uuid.uuid4()
+            cleanup_ids["prefix_id"] = uuid.uuid4()
+            cleanup_ids["bootstrapped_project"] = True
+
             with db_engine.begin() as conn:
-                conn.execute(sa.text(
-                    "UPDATE purchase_orders SET updated_by = :uid WHERE id = :p"
-                ), {"uid": admin_id, "p": str(po_id)})
+                conn.execute(sa.text("""
+                    INSERT INTO projects
+                      (id, project_code, name, project_type, primary_entity_id,
+                       land_ownership_method, site_address, site_postcode,
+                       created_by_user_id, current_stage)
+                    VALUES (:id, :code, 'P0.2 receipt-actor test PO',
+                            'Pure_Dev', :ent, 'Direct_Purchase',
+                            '1 Test Receipts', 'AB1 2CD', :uid, 'Lead')
+                """), {
+                    "id": str(cleanup_ids["project_id"]),
+                    "code": f"P0-{uuid.uuid4().hex[:6].upper()}",
+                    "ent": str(entity_id),
+                    "uid": str(admin_id),
+                })
 
-        # Re-read header_editor — must be the admin now.
-        with db_engine.connect() as conn:
-            header_editor_id = conn.execute(sa.text(
-                "SELECT updated_by FROM purchase_orders WHERE id=:p"
-            ), {"p": str(po_id)}).scalar()
-        # Skip if for some reason it isn't admin (the bug-shape isn't there).
-        if header_editor_id == pm_id:
-            pytest.skip("Header editor IS the receipter — bug-shape not reproducible")
+                conn.execute(sa.text("""
+                    INSERT INTO appraisals
+                      (id, project_id, name, reference_date,
+                       created_by_user_id, appraisal_group_id, version_number)
+                    VALUES (:id, :pid, 'P0.2 appraisal', current_date,
+                            :uid, :gid, 1)
+                """), {
+                    "id": str(cleanup_ids["appraisal_id"]),
+                    "pid": str(cleanup_ids["project_id"]),
+                    "uid": str(admin_id),
+                    "gid": str(uuid.uuid4()),
+                })
 
-        # Mint receipter (test-pm) session.
-        tok = _mint_access_token(pm_id, pm_tenant, PM)
-        s = _new_session()
-        s.cookies.set("access_token", tok, domain=BASE_URL.split("//")[1])
+                conn.execute(sa.text("""
+                    INSERT INTO budgets
+                      (id, project_id, source_appraisal_id, status,
+                       is_current, total_budget, created_by_user_id)
+                    VALUES (:id, :pid, :aid, 'Active', true,
+                            100000, :uid)
+                """), {
+                    "id": str(cleanup_ids["budget_id"]),
+                    "pid": str(cleanup_ids["project_id"]),
+                    "aid": str(cleanup_ids["appraisal_id"]),
+                    "uid": str(admin_id),
+                })
 
-        # Get PO lines to size the receipt.
-        r = s.get(f"{BASE_URL}/api/v1/purchase-orders/{po_id}")
-        assert r.status_code == 200, r.text
-        po_detail = r.json()
-        first_line = (po_detail.get("lines") or [None])[0]
-        if first_line is None:
-            pytest.skip("PO has no lines — skip")
+                conn.execute(sa.text("""
+                    INSERT INTO budget_lines
+                      (id, budget_id, cost_code_id, line_description,
+                       entity_id,
+                       original_budget, current_budget, display_order)
+                    VALUES (:id, :bid, :cc, 'P0.2 test line',
+                            :ent,
+                            10000, 10000, 1)
+                """), {
+                    "id": str(cleanup_ids["budget_line_id"]),
+                    "bid": str(cleanup_ids["budget_id"]),
+                    "cc": str(cost_code_id),
+                    "ent": str(entity_id),
+                })
 
-        # POST a partial receipt for 1 unit of the first line.
-        receipt_payload = {
-            "received_date": datetime.now(timezone.utc).date().isoformat(),
-            "delivery_note_reference": f"P0.2-{uuid.uuid4().hex[:8]}",
-            "lines": [{
-                "po_line_id": first_line["id"],
-                "quantity_received": 1,
-            }],
-        }
-        r = s.post(
-            f"{BASE_URL}/api/v1/purchase-orders/{po_id}/receipts",
-            json=receipt_payload,
-        )
-        if r.status_code not in (200, 201):
-            pytest.skip(f"receipt post failed ({r.status_code} {r.text[:200]})")
+                conn.execute(sa.text("""
+                    INSERT INTO suppliers
+                      (id, tenant_id, name, default_vat_rate, is_archived,
+                       created_by, updated_by)
+                    VALUES (:id, :tid, :name, 20.0, false, :uid, :uid)
+                """), {
+                    "id": str(cleanup_ids["supplier_id"]),
+                    "tid": str(tenant_id_for_po),
+                    "name": f"P0.2 supplier {uuid.uuid4().hex[:6]}",
+                    "uid": str(admin_id),
+                })
 
-        # Read the most-recent Status_Change audit row on this PO.
-        with db_engine.connect() as conn:
-            audit = conn.execute(sa.text("""
-                SELECT actor_user_id, action, resource_type, resource_id,
-                       project_id, metadata_json, created_at
-                FROM audit_log
-                WHERE resource_type = 'purchase_order'
-                  AND resource_id = :po_id
-                  AND action = 'Status_Change'
-                  AND (metadata_json->>'reason' = 'receipt_change'
-                       OR metadata_json IS NULL)
-                ORDER BY created_at DESC
-                LIMIT 1
-            """), {"po_id": str(po_id)}).first()
+                conn.execute(sa.text("""
+                    INSERT INTO project_number_prefixes
+                      (id, project_id, entity_type, middle_prefix,
+                       description, is_default, is_archived,
+                       next_sequence, created_by, updated_by)
+                    VALUES (:id, :pid, 'po', :mid,
+                            'P0.2 test prefix', false, false, 1,
+                            :uid, :uid)
+                """), {
+                    "id": str(cleanup_ids["prefix_id"]),
+                    "pid": str(cleanup_ids["project_id"]),
+                    "mid": f"P{uuid.uuid4().hex[:4].upper()}",
+                    "uid": str(admin_id),
+                })
 
-        # Literal evidence dump.
-        print(f"\nP0.2 — Status_Change audit row on PO {po_number}:")
-        assert audit is not None, (
-            "Expected a receipt-driven Status_Change audit row after a "
-            "1-unit partial receipt on an issued PO"
-        )
-        print(f"  actor_user_id  : {audit[0]}")
-        print(f"  action         : {audit[1]}")
-        print(f"  resource_type  : {audit[2]}")
-        print(f"  resource_id    : {audit[3]}")
-        print(f"  project_id     : {audit[4]}")
-        print(f"  metadata       : {audit[5]}")
-        print(f"  created_at     : {audit[6]}")
-        print(f"  receipter id   : {pm_id}")
-        print(f"  header editor  : {header_editor_id}")
-        assert audit[0] == pm_id, (
-            f"actor_user_id must equal receipter ({pm_id}); "
-            f"got {audit[0]} (header editor was {header_editor_id})"
-        )
+                unique_pono = f"PO-TEST-{uuid.uuid4().hex[:6].upper()}"
+                conn.execute(sa.text("""
+                    INSERT INTO purchase_orders
+                      (id, tenant_id, project_id, supplier_id, budget_id,
+                       po_number, status, approval_required,
+                       subtotal_amount, vat_amount, total_amount,
+                       submitted_by, submitted_at,
+                       created_by, updated_by, issued_at, issued_by)
+                    VALUES (:id, :tid, :pid, :sid, :bid,
+                            :pono, 'issued', false,
+                            1000, 200, 1200,
+                            :uid, now(),
+                            :uid, :uid, now(), :uid)
+                """), {
+                    "id": str(cleanup_ids["po_id"]),
+                    "tid": str(tenant_id_for_po),
+                    "pid": str(cleanup_ids["project_id"]),
+                    "sid": str(cleanup_ids["supplier_id"]),
+                    "bid": str(cleanup_ids["budget_id"]),
+                    "pono": unique_pono,
+                    "uid": str(admin_id),
+                })
+
+                conn.execute(sa.text("""
+                    INSERT INTO purchase_order_lines
+                      (id, purchase_order_id, line_number,
+                       budget_line_id, cost_code, description,
+                       quantity, unit_rate, vat_rate,
+                       net_amount, vat_amount, gross_amount,
+                       receipted_quantity,
+                       created_by, updated_by)
+                    VALUES (:id, :poid, 1,
+                            :blid, :cc, 'P0.2 test line',
+                            10, 100, 20,
+                            1000, 200, 1200,
+                            0,
+                            :uid, :uid)
+                """), {
+                    "id": str(cleanup_ids["po_line_id"]),
+                    "poid": str(cleanup_ids["po_id"]),
+                    "blid": str(cleanup_ids["budget_line_id"]),
+                    "cc": cost_code_str,
+                    "uid": str(admin_id),
+                })
+
+            po_id = cleanup_ids["po_id"]
+            po_number = unique_pono
+            po_status = "issued"
+        else:
+            po_id, po_number, po_status = row[0], row[1], row[2]
+
+        try:
+            # If approved, issue it as admin so admin becomes header editor.
+            if po_status == "approved":
+                r = admin_s.post(f"{BASE_URL}/api/v1/purchase-orders/{po_id}/issue", json={})
+                assert r.status_code in (200, 204), (
+                    f"PO issue failed ({r.status_code} {r.text[:200]})"
+                )
+            else:
+                # Force admin to be the header editor by touching the PO.
+                with db_engine.begin() as conn:
+                    conn.execute(sa.text(
+                        "UPDATE purchase_orders SET updated_by = :uid WHERE id = :p"
+                    ), {"uid": admin_id, "p": str(po_id)})
+
+            # Re-read header_editor — must be the admin now.
+            with db_engine.connect() as conn:
+                header_editor_id = conn.execute(sa.text(
+                    "SELECT updated_by FROM purchase_orders WHERE id=:p"
+                ), {"p": str(po_id)}).scalar()
+            assert header_editor_id != pm_id, (
+                "Header editor IS the receipter — bug-shape unreproducible"
+            )
+
+            # Mint receipter (test-pm) session.
+            tok = _mint_access_token(pm_id, pm_tenant, PM)
+            s = _new_session()
+            s.cookies.set("access_token", tok, domain=BASE_URL.split("//")[1])
+
+            # Get PO lines to size the receipt.
+            r = s.get(f"{BASE_URL}/api/v1/purchase-orders/{po_id}")
+            assert r.status_code == 200, r.text
+            po_detail = r.json()
+            first_line = (po_detail.get("lines") or [None])[0]
+            assert first_line is not None, "PO has no lines"
+
+            # POST a 1-unit partial receipt as test-pm.
+            receipt_payload = {
+                "received_date": datetime.now(timezone.utc).date().isoformat(),
+                "delivery_note_reference": f"P0.2-{uuid.uuid4().hex[:8]}",
+                "lines": [{
+                    "po_line_id": first_line["id"],
+                    "quantity_received": 1,
+                }],
+            }
+            r = s.post(
+                f"{BASE_URL}/api/v1/purchase-orders/{po_id}/receipts",
+                json=receipt_payload,
+            )
+            assert r.status_code in (200, 201), (
+                f"receipt post failed ({r.status_code} {r.text[:200]})"
+            )
+
+            # Read the most-recent Status_Change audit row on this PO.
+            with db_engine.connect() as conn:
+                audit = conn.execute(sa.text("""
+                    SELECT actor_user_id, action, resource_type, resource_id,
+                           project_id, metadata_json, created_at
+                    FROM audit_log
+                    WHERE resource_type = 'purchase_order'
+                      AND resource_id = :po_id
+                      AND action = 'Status_Change'
+                      AND (metadata_json->>'reason' = 'receipt_change'
+                           OR metadata_json IS NULL)
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                """), {"po_id": str(po_id)}).first()
+
+            # Literal evidence dump.
+            print(f"\nP0.2 — Status_Change audit row on PO {po_number}:")
+            assert audit is not None, (
+                "Expected a receipt-driven Status_Change audit row after a "
+                "1-unit partial receipt on an issued PO"
+            )
+            print(f"  actor_user_id  : {audit[0]}")
+            print(f"  action         : {audit[1]}")
+            print(f"  resource_type  : {audit[2]}")
+            print(f"  resource_id    : {audit[3]}")
+            print(f"  project_id     : {audit[4]}")
+            print(f"  metadata       : {audit[5]}")
+            print(f"  created_at     : {audit[6]}")
+            print(f"  receipter id   : {pm_id}")
+            print(f"  header editor  : {header_editor_id}")
+            assert audit[0] == pm_id, (
+                f"actor_user_id must equal receipter ({pm_id}); "
+                f"got {audit[0]} (header editor was {header_editor_id})"
+            )
+        finally:
+            # Tear down everything we bootstrapped so subsequent tests
+            # / fixtures stay clean.
+            if cleanup_ids:
+                with db_engine.begin() as conn:
+                    conn.execute(sa.text("ALTER TABLE audit_log DISABLE TRIGGER USER"))
+                    conn.execute(sa.text(
+                        "DELETE FROM purchase_order_receipt_lines WHERE "
+                        "receipt_id IN "
+                        "(SELECT id FROM purchase_order_receipts WHERE purchase_order_id=:p)"
+                    ), {"p": str(cleanup_ids["po_id"])})
+                    conn.execute(sa.text(
+                        "DELETE FROM purchase_order_receipts WHERE purchase_order_id=:p"
+                    ), {"p": str(cleanup_ids["po_id"])})
+                    conn.execute(sa.text(
+                        "DELETE FROM purchase_order_lines WHERE purchase_order_id=:p"
+                    ), {"p": str(cleanup_ids["po_id"])})
+                    conn.execute(sa.text(
+                        "DELETE FROM purchase_orders WHERE id=:p"
+                    ), {"p": str(cleanup_ids["po_id"])})
+                    conn.execute(sa.text(
+                        "DELETE FROM audit_log WHERE resource_id=:p"
+                    ), {"p": str(cleanup_ids["po_id"])})
+                    conn.execute(sa.text(
+                        "DELETE FROM project_number_prefixes WHERE id=:p"
+                    ), {"p": str(cleanup_ids["prefix_id"])})
+                    conn.execute(sa.text(
+                        "DELETE FROM suppliers WHERE id=:s"
+                    ), {"s": str(cleanup_ids["supplier_id"])})
+                    if cleanup_ids.get("bootstrapped_project"):
+                        conn.execute(sa.text(
+                            "DELETE FROM budget_lines WHERE budget_id=:b"
+                        ), {"b": str(cleanup_ids["budget_id"])})
+                        conn.execute(sa.text(
+                            "DELETE FROM budgets WHERE id=:b"
+                        ), {"b": str(cleanup_ids["budget_id"])})
+                        conn.execute(sa.text(
+                            "DELETE FROM appraisals WHERE id=:a"
+                        ), {"a": str(cleanup_ids["appraisal_id"])})
+                        conn.execute(sa.text(
+                            "UPDATE audit_log SET project_id=NULL WHERE project_id=:p"
+                        ), {"p": str(cleanup_ids["project_id"])})
+                        conn.execute(sa.text(
+                            "DELETE FROM projects WHERE id=:p"
+                        ), {"p": str(cleanup_ids["project_id"])})
+                    conn.execute(sa.text("ALTER TABLE audit_log ENABLE TRIGGER USER"))
 
     def test_lines_taken_under_select_for_update(self):
         """Source-level guard: the helper's lines query carries
@@ -454,8 +670,7 @@ class TestP0_3_MfaPendingBlocked:
     def test_mfa_pending_rejected_by_password_change(self, db_engine):
         """LIVE 401/403: /password/change with an mfa_pending cookie.
         """
-        pm_id = _user_id_for(db_engine, PM)
-        tenant = uuid.UUID("b62053ac-d2e6-469e-8df6-b945bf6858ba")
+        pm_id, tenant = _user_id_and_tenant(db_engine, PM)
         tok = _mint_mfa_pending_token(pm_id, PM, tenant)
         s = _new_session()
         s.cookies.set("access_token", tok, domain=BASE_URL.split("//")[1])
@@ -470,8 +685,7 @@ class TestP0_3_MfaPendingBlocked:
 
     def test_mfa_pending_rejected_by_business_route(self, db_engine):
         """LIVE 401/403: any non-auth business route — pick /projects."""
-        pm_id = _user_id_for(db_engine, PM)
-        tenant = uuid.UUID("b62053ac-d2e6-469e-8df6-b945bf6858ba")
+        pm_id, tenant = _user_id_and_tenant(db_engine, PM)
         tok = _mint_mfa_pending_token(pm_id, PM, tenant)
         s = _new_session()
         s.cookies.set("access_token", tok, domain=BASE_URL.split("//")[1])
@@ -483,8 +697,7 @@ class TestP0_3_MfaPendingBlocked:
         """LIVE 200: /auth/me must still accept mfa_pending so the
         pre-enrol UI can render the user's profile chrome.
         """
-        pm_id = _user_id_for(db_engine, PM)
-        tenant = uuid.UUID("b62053ac-d2e6-469e-8df6-b945bf6858ba")
+        pm_id, tenant = _user_id_and_tenant(db_engine, PM)
         tok = _mint_mfa_pending_token(pm_id, PM, tenant)
         s = _new_session()
         s.cookies.set("access_token", tok, domain=BASE_URL.split("//")[1])
@@ -499,8 +712,7 @@ class TestP0_3_MfaPendingBlocked:
         the dep itself must let the token through.
         """
         _reset_user_mfa(db_engine, PM)
-        pm_id = _user_id_for(db_engine, PM)
-        tenant = uuid.UUID("b62053ac-d2e6-469e-8df6-b945bf6858ba")
+        pm_id, tenant = _user_id_and_tenant(db_engine, PM)
         tok = _mint_mfa_pending_token(pm_id, PM, tenant)
         s = _new_session()
         s.cookies.set("access_token", tok, domain=BASE_URL.split("//")[1])
@@ -526,6 +738,125 @@ class TestP0_4_MfaVerifyRateLimit:
         print(f"\nP0.4 — LIMITS dict includes: {sorted(rl.LIMITS.keys())}")
         assert "mfa_verify_per_user" in rl.LIMITS
         assert rl.LIMITS["mfa_verify_per_user"] == (5, 60)
+
+    def test_http_endpoint_returns_429_on_sixth_post(self, db_engine, monkeypatch):
+        """REAL AC4 proof. Fires 6 actual POST /api/auth/mfa/verify
+        requests with a valid mfa_challenge token and asserts the 6th
+        returns literal HTTP 429.
+
+        The running backend (uvicorn under supervisord) has
+        SYHOMES_RATE_LIMIT_DISABLED=1 + APP_ENV=test in its env, so the
+        production deployment bypasses the limiter — that env is the
+        suite's test-escape lever. To exercise the real HTTP path
+        WITHOUT the bypass we mount the FastAPI app in-process via
+        TestClient, with APP_ENV=test removed so _is_bypass_active()
+        returns False at call time. The limiter state is global to the
+        Python process, so this still proves the wiring + bucket math
+        against the production code path (the same enforce → check
+        → bucket-count flow the production endpoint executes).
+        """
+        # Turn the bypass OFF for this test process. _is_bypass_active
+        # reads env at call time, so a monkeypatched env takes effect
+        # immediately on the next enforce() call.
+        monkeypatch.setenv("APP_ENV", "production")
+        monkeypatch.delenv("SYHOMES_RATE_LIMIT_DISABLED", raising=False)
+        import app.services.rate_limit as rl
+        rl = importlib.reload(rl)
+        # Sanity — bypass must actually be off, otherwise the test is
+        # meaningless.
+        assert rl._is_bypass_active() is False, (
+            "monkeypatch did not turn the bypass off — test escape "
+            "envvars are still active"
+        )
+        # Wipe any residual bucket state from earlier tests so the
+        # first request lands on an empty (capacity=5) bucket.
+        rl.rate_limiter.reset()
+
+        from fastapi.testclient import TestClient
+        # Late import to ensure the running module sees the env we
+        # patched above.
+        from server import app
+        client = TestClient(app)
+
+        # Mint a valid mfa_challenge token for a fresh user UUID so the
+        # bucket starts empty (key = "mfa_verify_per_user:{uid}").
+        uid = str(uuid.uuid4())
+        payload = {
+            "sub": uid,
+            "email": "rl-test@example.test",
+            "tenant_id": str(uuid.uuid4()),
+            "iat": int(time.time()),
+            "exp": int(time.time()) + 300,
+            "type": "mfa_challenge",
+        }
+        challenge = jwt.encode(payload, JWT_SECRET, algorithm="HS256")
+
+        # Fire 6 POSTs. Each must reach enforce() before any database
+        # lookup, since the route's enforce() sits BETWEEN the type
+        # check and the User lookup. Calls 1-5 consume slots; call 6
+        # is denied → 429 with Retry-After.
+        responses = []
+        for i in range(6):
+            r = client.post(
+                "/api/auth/mfa/verify",
+                json={"challenge_token": challenge, "code": "000000"},
+            )
+            responses.append((r.status_code, r.headers.get("Retry-After"),
+                              (r.text or "")[:120]))
+            print(f"P0.4 — POST /mfa/verify attempt {i + 1}: "
+                  f"HTTP {r.status_code} "
+                  f"retry_after={r.headers.get('Retry-After')!r} "
+                  f"body={(r.text or '')[:80]!r}")
+
+        statuses = [s for s, _, _ in responses]
+        # AC4: the 6th request must be 429 — that is the LITERAL proof
+        # this test is here to capture. Calls 1-5 will be 401 (user
+        # doesn't exist / MFA not enrolled) but MUST NOT be 429.
+        assert statuses[5] == 429, (
+            f"6th POST /mfa/verify should be HTTP 429; got {statuses[5]}. "
+            f"Full sequence: {statuses}"
+        )
+        for i, code in enumerate(statuses[:5], start=1):
+            assert code != 429, (
+                f"attempt {i} 429'd BEFORE bucket exhausted (sequence={statuses}) "
+                f"— bucket math wrong or wiring broken"
+            )
+        # Retry-After must be a positive integer string on the 429 response.
+        assert responses[5][1] is not None, (
+            "429 response must carry a Retry-After header"
+        )
+        assert int(responses[5][1]) >= 1
+
+    def test_http_endpoint_clean_single_post_is_not_429(self, monkeypatch):
+        """A single legitimate POST must NOT be rate-limited (clean
+        path proof — the limiter doesn't bite the first request)."""
+        monkeypatch.setenv("APP_ENV", "production")
+        monkeypatch.delenv("SYHOMES_RATE_LIMIT_DISABLED", raising=False)
+        import app.services.rate_limit as rl
+        rl = importlib.reload(rl)
+        rl.rate_limiter.reset()
+        assert rl._is_bypass_active() is False
+
+        from fastapi.testclient import TestClient
+        from server import app
+        client = TestClient(app)
+
+        payload = {
+            "sub": str(uuid.uuid4()), "email": "rl-clean@example.test",
+            "tenant_id": str(uuid.uuid4()),
+            "iat": int(time.time()), "exp": int(time.time()) + 300,
+            "type": "mfa_challenge",
+        }
+        challenge = jwt.encode(payload, JWT_SECRET, algorithm="HS256")
+        r = client.post(
+            "/api/auth/mfa/verify",
+            json={"challenge_token": challenge, "code": "000000"},
+        )
+        print(f"\nP0.4 — clean single POST /mfa/verify → "
+              f"HTTP {r.status_code} body={(r.text or '')[:120]!r}")
+        assert r.status_code != 429, (
+            f"clean single verify must not be rate-limited; got 429"
+        )
 
     def test_enforce_returns_429_after_5_in_window(self, monkeypatch):
         """Direct in-process test against the limiter — the route-level
