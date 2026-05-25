@@ -18,6 +18,51 @@ Frontend / actuals / commitments / Xero are out of scope until later prompts.
 
 ## What's been implemented
 
+### 2026-02-13 — Audit Remediation TIER P0 (v2 build pack) ✓
+
+All four P0 (critical) findings from the Claude-Code audit, re-grounded
+to `main`. Working tree only; awaiting operator gate before push. No
+schema change. **Suite: 1012 / 1012 (warm DB), +13 vs the 999 baseline.**
+
+- **P0.1 — Appraisal row lock**: new `_lock_appraisal_for_update`
+  helper takes `SELECT ... FOR UPDATE` on the appraisal row + every
+  cost line (Pattern-α scope) inside the caller's transaction. Called
+  at the top of all 13 mutating handlers. Concurrency proof: session
+  A holds the lock → session B's `SELECT FOR UPDATE NOWAIT` raises
+  `OperationalError`; A commits → B succeeds.
+
+- **P0.2 — Receipt audit actor + line lock**:
+  `_recompute_po_status_after_receipt_change` is now keyword-only on
+  `actor_user_id`; both callers pass `user.id`. The audit row no
+  longer attributes Status_Change to `po.updated_by` (header's last
+  editor) — it attributes to the receipter. The line scan inside the
+  helper now `.with_for_update()` so the all-fully-received check
+  serialises across concurrent receipts on different lines of one PO.
+
+- **P0.3 — `mfa_pending` typed + locked out of `/password/change`**:
+  `tokens.py` `Literal` now enumerates all three token types. The
+  `/password/change` dep moved from `get_enrollment_principal`
+  (accepts `mfa_pending`) to `get_current_principal` (access-only).
+  Live evidence: `/password/change` → 401 with `mfa_pending`;
+  `/auth/me` + `/mfa/enroll/start` still 200 with `mfa_pending`.
+
+- **P0.4 — `/mfa/verify` rate limit**: new `mfa_verify_per_user`
+  bucket = `(5, 60)` in `rate_limit.LIMITS`. The `enforce(...)` call
+  sits **between** the token-type check and the User lookup at
+  `auth.py:459`, so malformed / expired tokens 401 first and don't
+  consume a slot. 429 carries `Retry-After`. Live evidence: 5 OK →
+  6th denied (ok=False, retry > 0).
+
+Carried-forward P1 items (audit-pack §OPERATOR DECISIONS CARRIED
+FORWARD) — NOT done in P0:
+- `/mfa/disable` + `/mfa/backup-codes/regenerate` still accept
+  `mfa_pending` (same shape as the `/password/change` hole pre-P0).
+  Same "pre-MFA token shouldn't perform security-critical account
+  changes" argument applies.
+- Audit P1.10 — destructive Alembic downgrade deletes real user
+  data; needs explicit operator decision (patch downgrade vs forward-
+  fix) when P1 is scoped.
+
 ### 2026-02-12 — Chat 26 §R7 Batch 1 fix-up (live-eyeball gate) ✓
 
 Live operator eyeball found three classes of dead/broken buttons that
