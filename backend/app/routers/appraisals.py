@@ -227,6 +227,38 @@ def _load_appraisal(
     return row
 
 
+def _lock_appraisal_for_update(db: Session, appraisal_id: uuid.UUID) -> None:
+    """P0.1 — Pattern-α per-appraisal row lock.
+
+    Takes `SELECT ... FOR UPDATE` on the single appraisal row plus every
+    cost line belonging to it, scoped to the caller's open transaction.
+    Concurrent mutating handlers that both target the same appraisal
+    serialise on the appraisal row before either runs the 8-step
+    recompute pipeline, so `total_cost` / `profit_total` cannot tear.
+
+    Must be called at the top of every mutating handler (every site in
+    appraisals.py that calls `appraisal_calc.recompute`). Read-only GET
+    handlers do NOT lock.
+
+    Scoping: locks ONLY this appraisal's row + its cost lines. Units
+    and finance facilities are tightly coupled to a single appraisal
+    and their writes already go through the appraisal-scoped handler,
+    which holds the appraisal row lock for the duration of the
+    transaction — that is sufficient to serialise unit/facility edits
+    too without adding noise to the lock set.
+    """
+    db.execute(
+        select(Appraisal.id)
+        .where(Appraisal.id == appraisal_id)
+        .with_for_update()
+    ).all()
+    db.execute(
+        select(AppraisalCostLine.id)
+        .where(AppraisalCostLine.appraisal_id == appraisal_id)
+        .with_for_update()
+    ).all()
+
+
 def _load_project(
     db: Session, project_id: uuid.UUID, user: User, perms: UserPermissions,
 ) -> Project:
@@ -584,7 +616,10 @@ def create_appraisal(
     db.add(a)
     db.flush()
     _apply_defaults_on_create(db, a, project, current)
-    # Initial recompute.
+    # Initial recompute. The row was just inserted; lock it now so any
+    # parallel mutator that arrives between flush and commit blocks
+    # behind us instead of racing the 8-step recompute pipeline.
+    _lock_appraisal_for_update(db, a.id)
     appraisal_calc.recompute(db, a)
 
     # 2.3 C2: ensure a Base-scenario anchor row exists for this group.
@@ -675,6 +710,7 @@ def update_appraisal(
     a.is_stale = True
     db.flush()
 
+    _lock_appraisal_for_update(db, a.id)  # P0.1
     appraisal_calc.recompute(db, a)
     after = {
         "name": a.name,
@@ -712,6 +748,7 @@ def recompute_appraisal(
 ):
     a = _load_appraisal(db, appraisal_id, current, perms)
     _ensure_editable(a)
+    _lock_appraisal_for_update(db, a.id)  # P0.1
     appraisal_calc.recompute(db, a)
     record_audit(
         db, action="Update", resource_type="appraisals",
@@ -748,6 +785,7 @@ def recalculate_rlv(
     a.rlv_computed_at = datetime.now(timezone.utc)
     # Re-run canonical recompute at the header's actual land price so
     # the KPIs don't reflect the solver's final probe price.
+    _lock_appraisal_for_update(db, a.id)  # P0.1
     appraisal_calc.recompute(db, a)
     record_audit(
         db, action="Update", resource_type="appraisals",
@@ -995,6 +1033,7 @@ def add_unit(
     db.add(u)
     db.flush()
     a.is_stale = True
+    _lock_appraisal_for_update(db, a.id)  # P0.1
     appraisal_calc.recompute(db, a)
     record_audit(
         db, action="Create", resource_type="appraisal_units",
@@ -1029,6 +1068,7 @@ def update_unit(
         setattr(u, k, v)
     db.flush()
     a.is_stale = True
+    _lock_appraisal_for_update(db, a.id)  # P0.1
     appraisal_calc.recompute(db, a)
     record_audit(
         db, action="Update", resource_type="appraisal_units",
@@ -1059,6 +1099,7 @@ def delete_unit(
     db.delete(u)
     db.flush()
     a.is_stale = True
+    _lock_appraisal_for_update(db, a.id)  # P0.1
     appraisal_calc.recompute(db, a)
     record_audit(
         db, action="Delete", resource_type="appraisal_units",
@@ -1090,6 +1131,7 @@ def add_cost_line(
     db.add(l)
     db.flush()
     a.is_stale = True
+    _lock_appraisal_for_update(db, a.id)  # P0.1
     appraisal_calc.recompute(db, a)
     record_audit(
         db, action="Create", resource_type="appraisal_cost_lines",
@@ -1125,6 +1167,7 @@ def update_cost_line(
         setattr(l, k, v)
     db.flush()
     a.is_stale = True
+    _lock_appraisal_for_update(db, a.id)  # P0.1
     appraisal_calc.recompute(db, a)
     record_audit(
         db, action="Update", resource_type="appraisal_cost_lines",
@@ -1157,6 +1200,7 @@ def delete_cost_line(
     db.delete(l)
     db.flush()
     a.is_stale = True
+    _lock_appraisal_for_update(db, a.id)  # P0.1
     appraisal_calc.recompute(db, a)
     record_audit(
         db, action="Delete", resource_type="appraisal_cost_lines",
@@ -1188,6 +1232,7 @@ def add_finance_facility(
     db.add(f)
     db.flush()
     a.is_stale = True
+    _lock_appraisal_for_update(db, a.id)  # P0.1
     appraisal_calc.recompute(db, a)
     record_audit(
         db, action="Create", resource_type="appraisal_finance_model",
@@ -1221,6 +1266,7 @@ def update_finance_facility(
         setattr(f, k, v)
     db.flush()
     a.is_stale = True
+    _lock_appraisal_for_update(db, a.id)  # P0.1
     appraisal_calc.recompute(db, a)
     record_audit(
         db, action="Update", resource_type="appraisal_finance_model",
@@ -1251,6 +1297,7 @@ def delete_finance_facility(
     db.delete(f)
     db.flush()
     a.is_stale = True
+    _lock_appraisal_for_update(db, a.id)  # P0.1
     appraisal_calc.recompute(db, a)
     record_audit(
         db, action="Delete", resource_type="appraisal_finance_model",

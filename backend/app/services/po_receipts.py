@@ -157,7 +157,7 @@ def _check_cumulative_within_ordered(
 # ──────────────────────────────────────────────────────────────────────────
 
 def _recompute_po_status_after_receipt_change(
-    db: Session, po: PurchaseOrder,
+    db: Session, po: PurchaseOrder, *, actor_user_id: uuid.UUID,
 ) -> Optional[str]:
     """Recompute and persist the post-receipt PO status. Returns the
     new status when it changes, else None.
@@ -165,12 +165,23 @@ def _recompute_po_status_after_receipt_change(
     Called after receipt INSERT (rolling forward) and after receipt
     DELETE (rolling back). The DB trigger has already updated each
     line's receipted_quantity by the time we run.
+
+    `actor_user_id` is the receipting user (the caller of create_receipt
+    or delete_receipt). It is recorded on the Status_Change audit row —
+    using `po.updated_by` here previously misattributed the status flip
+    to whoever last edited the PO header (P0.2 audit-trail correctness).
+
+    All PO lines are taken under `SELECT ... FOR UPDATE` before the
+    all-fully-received check so that two concurrent receipts on
+    different lines serialise the status flip (no double-fire of the
+    "everything received" transition).
     """
     db.flush()
     db.refresh(po)
     lines = db.scalars(
         select(PurchaseOrderLine)
         .where(PurchaseOrderLine.purchase_order_id == po.id)
+        .with_for_update()
         .execution_options(populate_existing=True)
     ).all()
     has_any_receipt = any(Decimal(l.receipted_quantity) > 0 for l in lines)
@@ -194,7 +205,7 @@ def _recompute_po_status_after_receipt_change(
         db, action="Status_Change",
         resource_type="purchase_order",
         resource_id=po.id,
-        actor_user_id=po.updated_by,
+        actor_user_id=actor_user_id,
         project_id=po.project_id,
         field_changes=[{"field": "status", "old": prev, "new": target}],
         metadata={"reason": "receipt_change", "from": prev, "to": target},
@@ -355,7 +366,9 @@ def create_receipt(
         ) from e
 
     # Trigger has now run — recompute and persist any status flip.
-    new_status = _recompute_po_status_after_receipt_change(db, po)
+    new_status = _recompute_po_status_after_receipt_change(
+        db, po, actor_user_id=user.id,
+    )
 
     # Audit
     record_audit(
@@ -506,7 +519,9 @@ def delete_receipt(
     db.delete(receipt)
     db.flush()  # cascades lines → recompute trigger fires
 
-    new_status = _recompute_po_status_after_receipt_change(db, po)
+    new_status = _recompute_po_status_after_receipt_change(
+        db, po, actor_user_id=user.id,
+    )
     return {
         "deleted_id": str(receipt_id),
         "po_status_after": po.status,

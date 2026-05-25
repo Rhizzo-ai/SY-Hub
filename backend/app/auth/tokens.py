@@ -30,7 +30,7 @@ def issue_access_token(
     user_id: uuid.UUID,
     email: str,
     tenant_id: uuid.UUID,
-    token_type: Literal["access", "mfa_challenge"] = "access",
+    token_type: Literal["access", "mfa_challenge", "mfa_pending"] = "access",
     lifetime_minutes: Optional[int] = None,
 ) -> str:
     now = datetime.now(timezone.utc)

@@ -459,6 +459,19 @@ def mfa_verify(
     if claims.get("type") != "mfa_challenge":
         raise HTTPException(status_code=401, detail="Invalid challenge token type")
 
+    # P0.4 — rate-limit verify attempts per user. Layered on top of
+    # per-account lockout. We key on claims["sub"] which is always
+    # present by here (the type-check above already confirmed a
+    # well-formed mfa_challenge token); malformed/expired tokens have
+    # already raised 401 and never consume a bucket slot.
+    ok_mfa, retry_mfa = enforce("mfa_verify_per_user", claims["sub"])
+    if not ok_mfa:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many attempts — try again shortly",
+            headers={"Retry-After": str(int(retry_mfa))},
+        )
+
     user = db.get(User, uuid.UUID(claims["sub"]))
     if user is None or not user.mfa_enabled or not user.mfa_secret_encrypted:
         raise HTTPException(status_code=401, detail="MFA not enrolled")
@@ -662,7 +675,12 @@ def regenerate_backup_codes(
 def password_change(
     payload: PasswordChangeRequest,
     request: Request,
-    principal: Principal = Depends(get_enrollment_principal),
+    # P0.3 — moved from get_enrollment_principal to get_current_principal so
+    # an `mfa_pending` token (issued AFTER password, BEFORE MFA enrol) cannot
+    # change the password. mfa_pending holders already proved the current
+    # password, so the verify_password gate at line 669 doesn't help. Only
+    # a fully session-bound `access` token may now reach this endpoint.
+    principal: Principal = Depends(get_current_principal),
     db: Session = Depends(get_db),
 ):
     current = principal.user

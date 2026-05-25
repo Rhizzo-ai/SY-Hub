@@ -75,6 +75,12 @@ rate_limiter = RateLimiter()
 LIMITS = {
     "login_per_ip":            (10, 60),        # 10/min per IP
     "login_per_email":         (5, 60),         # 5/min per email
+    # P0.4 — MFA verify rate-limit. Layered ON TOP of per-account
+    # lockout (threshold 5) so a holder of a valid 5-min mfa_challenge
+    # cannot grind TOTP codes. Keyed on the user id from claims["sub"]
+    # rather than IP — IP is trivially rotatable for an attacker who
+    # already holds the challenge token, but the user id is fixed.
+    "mfa_verify_per_user":     (5, 60),         # 5/min per user
     "pw_reset_request_per_email": (3, 3600),    # 3/hour per email
     "pw_reset_request_per_ip":    (10, 3600),   # 10/hour per IP
     "pw_reset_complete_per_ip":   (10, 3600),   # 10/hour per IP
