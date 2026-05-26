@@ -52,11 +52,14 @@ Permissions 102 / roles 10 unchanged. Alembic head unchanged at
 - **R4 — `deps.py:144` docstring fixed** — no longer lists
   `/password/change` (or any of the now-moved security-critical
   endpoints).
-- **R5 — P1.10 destructive migration IDENTIFIED, NO fix written.**
-  `alembic/versions/0027_default_line_items_backfill.py` downgrade
-  `DELETE`s `budget_line_items` by content-heuristic. The migration's
-  own comment admits the heuristic over-deletes. **AWAITING OPERATOR
-  DECISION** (Option 1 patch / Option 2 forward-fix only).
+- **R5 — P1.10 destructive Alembic downgrade — Option 1 (NotImplementedError)
+  APPLIED (operator decision, 2026-02-13).**
+  `0027_default_line_items_backfill.py` downgrade replaced with `raise
+  NotImplementedError(...)` + module-docstring note. NO new migration.
+  0025 round-trip test retargeted to `0027_default_line_items_backfill`
+  so it stops AT (does not execute) 0027's downgrade. Runbook entry at
+  `/app/docs/SY_Homes_Future_Tasks.md` §24. The `alembic downgrade --sql`
+  CI canary remains backlog.
 - **R6 — `CHANGELOG.md` entries spliced** for both Chat 26 (§R7.0b +
   §R7 Batch 1) and Audit Remediation TIER P0 and TIER P1.
 - **P0 + P1 test file: 25/25 green.**

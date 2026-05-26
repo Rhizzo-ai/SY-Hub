@@ -23,10 +23,12 @@ Audit:
 Greenfield databases (no pre-existing budget_lines) — this is a no-op.
 
 Downgrade:
-  - Removes the 4 zero-amount default items we inserted, identified by
-    their exact descriptions + amount=0 + display_order 0..3. Items added
-    via R1.2 service path on a line that had OTHER existing items will
-    NOT match because those lines were skipped on upgrade. Safe.
+  - DELIBERATELY NON-REVERSIBLE (P1.R5 Option 1). Raises
+    NotImplementedError. See `downgrade()` body for the why; in short,
+    the heuristic used to identify "backfilled defaults" also matches
+    user-edited £0 line items, so an automated downgrade would destroy
+    real operator data. Forward-fix only — never run `alembic downgrade`
+    below 0027 in prod.
 """
 from __future__ import annotations
 
@@ -113,17 +115,17 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # Remove the exact zero-amount defaults we inserted. We can't
-    # distinguish "0027-backfilled defaults" from "R1.2 service-created
-    # defaults on greenfield lines" so this downgrade removes BOTH —
-    # which is correct: rolling back past 0027 conceptually means
-    # "default items did not exist yet", so service-path defaults on
-    # lines created post-R1.2 must also go.
-    op.execute("""
-        DELETE FROM budget_line_items
-        WHERE amount = 0
-          AND display_order BETWEEN 0 AND 3
-          AND description IN (
-              'Materials', 'Labour', 'Equipment', 'Subcontractor'
-          )
-    """)
+    # P1.R5 Option 1 (operator decision, 2026-02-13) — DELIBERATELY
+    # non-reversible. The prior implementation used a content heuristic
+    # (`amount=0 AND display_order BETWEEN 0 AND 3 AND description IN
+    # ('Materials','Labour','Equipment','Subcontractor')`) which would
+    # also destroy user-edited £0 line items that happen to match the
+    # shape (e.g. a real "Labour" allocation awaiting a supplier quote).
+    # Audit hard-constraint #5: a downgrade must not delete user data.
+    # Forward-fix only — never run `alembic downgrade` below 0027 in
+    # prod. See `/app/docs/SY_Homes_Future_Tasks.md` §24 for the runbook
+    # note and tracking entry.
+    raise NotImplementedError(
+        "0027 is a backfill — downgrade would destroy user-edited "
+        "budget_line_items (hard-constraint #5). Forward-fix instead."
+    )

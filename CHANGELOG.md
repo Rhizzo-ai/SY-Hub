@@ -123,20 +123,20 @@ below). No schema change. Permissions 102 / roles 10 unchanged.
   in P0.3) or `/mfa/disable` / `/mfa/backup-codes/regenerate` (moved in
   R1). Rewritten to call out that security-critical account changes
   are explicitly NOT in the `mfa_pending` reach.
-- **R5 — P1.10 destructive Alembic downgrade — OPERATOR DECISION
-  PENDING. Migration identified:
-  `alembic/versions/0027_default_line_items_backfill.py`.** Its
-  downgrade does
-  `DELETE FROM budget_line_items WHERE amount = 0 AND display_order
-  BETWEEN 0 AND 3 AND description IN ('Materials','Labour','Equipment',
-  'Subcontractor')`. The migration's own comment admits the heuristic
-  cannot distinguish "0027-backfilled defaults" from
-  "R1.2 service-created defaults on greenfield lines" — and would also
-  destroy any **user-edited** £0 line item happening to match the
-  shape (e.g. a real "Labour" allocation awaiting quote). NO fix
-  written until operator picks Option 1 (patch downgrade to be
-  non-destructive / raise NotImplementedError) or Option 2
-  (forward-fix only — document loudly, never downgrade in prod).
+- **R5 — P1.10 destructive Alembic downgrade — Option 1 (NotImplementedError)
+  APPLIED (operator decision, 2026-02-13).**
+  `alembic/versions/0027_default_line_items_backfill.py` downgrade
+  replaced with `raise NotImplementedError("0027 is a backfill —
+  downgrade would destroy user-edited budget_line_items
+  (hard-constraint #5). Forward-fix instead.")` Module docstring
+  updated to flag the deliberate non-reversibility. NO new migration
+  — head stays `0034_audit_sendback`. The 0025 round-trip test
+  (`tests/test_migration_0025_actuals.py`) retargeted from
+  `0024_budgets` → `0027_default_line_items_backfill` so it walks
+  back to but does not execute 0027's downgrade. Runbook + tracking
+  in `/app/docs/SY_Homes_Future_Tasks.md` §24. The
+  `alembic downgrade --sql` CI canary suggested at R5 time is backlog,
+  not this batch.
 - **R6 — This entry.**
 - **State at file time.** P0 + P1 file: 25/25 green. Whole backend
   warm-DB: see STOP report.

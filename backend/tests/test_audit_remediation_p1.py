@@ -391,3 +391,63 @@ class TestP1_R4_DocstringFix:
         )
         print(f"\nP1.R4 — get_enrollment_principal docstring is clean of "
               f"/password/change")
+
+
+
+# ======================================================================
+# R5 — Destructive Alembic downgrade — Option 1 (NotImplementedError)
+# ======================================================================
+
+class TestP1_R5_DowngradeNonReversible:
+    """0027 was a backfill whose downgrade DELETEd `budget_line_items`
+    by content heuristic — which would also destroy user-edited £0
+    items matching the shape. Operator decision (2026-02-13): make the
+    downgrade DELIBERATELY non-reversible via NotImplementedError so
+    nobody can accidentally trigger a data-loss downgrade.
+    """
+
+    def test_downgrade_raises_not_implemented_error(self):
+        """Calling 0027's downgrade() directly must raise
+        NotImplementedError. Argument-less call shape mirrors how
+        alembic invokes the function.
+        """
+        import importlib.util
+        path = "/app/backend/alembic/versions/0027_default_line_items_backfill.py"
+        spec = importlib.util.spec_from_file_location("mig_0027", path)
+        assert spec is not None and spec.loader is not None
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+
+        with pytest.raises(NotImplementedError) as exc:
+            mod.downgrade()
+        msg = str(exc.value)
+        print(f"\nP1.R5 — 0027 downgrade() raised NotImplementedError: {msg!r}")
+        assert "user-edited" in msg, (
+            "NotImplementedError message must call out that user data "
+            "would be destroyed"
+        )
+        assert "Forward-fix" in msg, (
+            "message must point operators at the forward-fix path"
+        )
+
+    def test_no_destructive_delete_in_0027_downgrade(self):
+        """Source-level guard — the prior `DELETE FROM budget_line_items`
+        must NOT be present in the downgrade body. Drift here would
+        silently re-introduce the trapdoor.
+        """
+        path = "/app/backend/alembic/versions/0027_default_line_items_backfill.py"
+        with open(path) as f:
+            src = f.read()
+        marker = "def downgrade"
+        start = src.index(marker)
+        # The file ends at downgrade (no later defs), so take to EOF.
+        body = src[start:]
+        assert "DELETE FROM budget_line_items" not in body, (
+            "0027 downgrade must NOT contain `DELETE FROM "
+            "budget_line_items` (operator decision P1.R5 Option 1)"
+        )
+        assert "raise NotImplementedError" in body, (
+            "0027 downgrade must raise NotImplementedError"
+        )
+        print(f"\nP1.R5 — 0027 downgrade body verified clean of "
+              f"destructive DELETE; raises NotImplementedError")

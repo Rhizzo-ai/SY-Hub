@@ -624,4 +624,47 @@ isolating the underlying coupling first.
 When de-quarantining, remove the xfail decorator AND remove the entry
 from this list in the same commit.
 
-## 24. (placeholder — future entries appended here)
+## 24. P1.R5 — 0027 downgrade deliberately non-reversible (2026-02-13)
+
+Operator decision (Option 1 / NotImplementedError variant) on the
+audit's P1.10 finding. `alembic/versions/0027_default_line_items_backfill.py`
+upgraded to a backfill that ships 4 default `budget_line_items` per
+zero-item `budget_line`. Its previous downgrade used a content-shape
+heuristic (`amount=0 AND display_order BETWEEN 0 AND 3 AND description
+IN ('Materials','Labour','Equipment','Subcontractor')`) which would
+also destroy **user-edited** £0 line items matching the shape — e.g.
+an operator-created "Labour" allocation awaiting a supplier quote.
+
+**State**:
+- `0027.downgrade()` now raises `NotImplementedError` with a message
+  citing hard-constraint #5 and pointing at forward-fix.
+- No new migration. Alembic head remains `0034_audit_sendback`.
+- `tests/test_migration_0025_actuals.py::test_downgrade_upgrade_round_trip_preserves_schema`
+  retargeted from `0024_budgets` → `0027_default_line_items_backfill`
+  so the round-trip walks back to (but does not run) 0027's downgrade.
+  The deeper 0024-baseline round-trip assertion is **blocked by R5 by
+  design**.
+
+**Runbook (do NOT delete without revisiting R5)**:
+- Production: NEVER run `alembic downgrade` to any revision strictly
+  below 0027 (i.e. `0026_ai_capture_costs_perm` or earlier). The
+  intentional `NotImplementedError` will abort the downgrade chain
+  with the migration partially applied (Postgres transactions DDL
+  rolls back the failed step, but subsequent migrations have already
+  been undone — the DB ends up in an in-between state).
+- Forward-fix instead: write a new migration that resolves whatever
+  schema problem motivated wanting to undo 0027 (e.g. retire the
+  default items via a marker column, then drop them).
+- Sandbox / CI: round-trip tests must target `0027_default_line_items_backfill`
+  or above. The 0025 round-trip retargeting (above) is the only
+  existing case; future migrations must follow the same pattern.
+
+**Backlog (carried to R7/follow-on)**:
+- `alembic downgrade --sql` CI canary — dump SQL for every reversible
+  migration's downgrade; fail the build if any line matches a
+  destructive pattern (`DELETE FROM`, `DROP COLUMN`, `TRUNCATE`)
+  without a paired "data-preservation note" comment. Prevents a
+  future backfill from shipping with a 0027-shaped trapdoor before
+  this list catches it.
+
+## 25. (placeholder — future entries appended here)
