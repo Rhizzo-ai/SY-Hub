@@ -12,6 +12,135 @@ Each entry: date, prompt reference (if applicable), change, rationale.
 ## Entries
 
 
+## Chat 26 — R7.0b backend send-back + R7 Batch 1 frontend (2026-02-12)
+
+R7.0b ships first as the backend send-back path; R7 Batch 1 is a
+frontend-only follow-up against it.
+
+- **R7.0b — `approved → draft` send-back (backend).** Migration
+  `0034_audit_sendback` (audit_action enum gains `SendBack`). Money
+  invariant: send-back drops `committed_value` via the existing
+  `trg_po_status_commitments`. Permissions 102 / roles 10 unchanged.
+- **R7 Batch 1 (frontend, no backend deltas).**
+  - Project-Detail Budgets tab-link (`tab-budgets` testid, gated by
+    `budgets.view || is_super_admin`).
+  - `<POActionButtons/>` — slim per-status × per-persona matrix.
+    Edit/Delete/Receipt/Void deferred to Batch 2; their testids are
+    asserted ABSENT on every state × persona by `DEFERRED_TESTIDS`
+    regression guard (8 × 4 × 7 = 32 assertions per CI run; when a
+    deferred button comes back in Batch 2, the testid must be removed
+    from `DEFERRED_TESTIDS` in the same commit).
+  - `<POApprovalPanel/>` — over-budget snapshot table; approve /
+    reject with optional / required reason; self-approval guard
+    mirrors `SelfApprovalForbidden`; send-back lives only in
+    `<POActionButtons/>` on the `approved` row, NOT here.
+  - Send-back API/hook wiring — `lib/api/purchaseOrders.js` +
+    `hooks/purchaseOrders.js`; budget-line cache invalidation on
+    commitment-changing verbs deferred to R7.6.
+- **Tests.** Frontend Jest 357 → **387 passing** (incl. 32-assertion
+  regression guard on the deferred buttons). Backend unchanged.
+
+
+## Audit Remediation TIER P0 (2026-02-13)
+
+Four critical findings from the Claude Code independent audit, applied
+against the post-Chat-26 `main`. Working-tree only at file time;
+operator-gated push.
+
+- **P0.1 — Per-appraisal row lock at 13 mutating recompute sites
+  (`app/routers/appraisals.py`).** New `_lock_appraisal_for_update`
+  helper takes `SELECT … FOR UPDATE` on the appraisal row + its cost
+  lines inside the caller's transaction. Called at the top of every
+  handler that runs `appraisal_calc.recompute`. Concurrency proof:
+  two-session test (session A holds, session B `SELECT FOR UPDATE
+  NOWAIT` raises `OperationalError`; A commits → B acquires).
+- **P0.2 — Receipt audit actor = receipting user; all PO lines locked
+  before status flip (`app/services/po_receipts.py`).**
+  `_recompute_po_status_after_receipt_change` signature now requires
+  keyword-only `actor_user_id`; both callers pass `user.id`. The audit
+  row's `actor_user_id` is the receipter, not `po.updated_by` (header's
+  last editor). The all-fully-received check `.with_for_update()`s
+  every PO line so concurrent receipts on different lines of one PO
+  serialise the status flip.
+- **P0.3 — `mfa_pending` typed + locked out of `/password/change`
+  (`app/auth/tokens.py` + `app/routers/auth.py`).** The token-type
+  Literal now enumerates `access | mfa_challenge | mfa_pending`.
+  `/password/change` moved from `get_enrollment_principal` (which
+  accepts `mfa_pending`) to `get_current_principal` (access-only).
+  Live evidence: `/password/change` → 401 with `mfa_pending`;
+  `/auth/me` + `/mfa/enroll/start` still 200/4xx-but-not-401.
+- **P0.4 — `/mfa/verify` rate-limit (`app/services/rate_limit.py` +
+  `app/routers/auth.py`).** New bucket `mfa_verify_per_user = (5, 60)`.
+  `enforce(…)` sits BETWEEN the token-type check and the User lookup,
+  so malformed/expired tokens 401 first and don't consume a slot. 429
+  carries `Retry-After`. Real HTTP proof: 5 OK → 6th HTTP 429.
+- **State at file time.** P0 test file: 16/16 green. Alembic head
+  unchanged (`0034_audit_sendback`). Permissions 102 / roles 10.
+- **Verified.** Emergent self-report + count reconciliation + Claude
+  Code source-level independent pass (13-handler lock table) +
+  triage read of `main`.
+
+## Audit Remediation TIER P1 (2026-02-13)
+
+Six findings re-grounded against `main` post-P0. R0 reconciliation
+gate closed; R1–R6 built. **R5 HALTED** for operator decision (see
+below). No schema change. Permissions 102 / roles 10 unchanged.
+
+- **R1 — Two `mfa_pending` holes closed
+  (`app/routers/auth.py`).** `/mfa/disable` and
+  `/mfa/backup-codes/regenerate` moved from `get_enrollment_user` to
+  `get_current_user`. Same hole class as P0.3 on `/password/change`:
+  `mfa_pending` is issued post-password / pre-MFA; allowing it to
+  disable MFA or regenerate backup codes bypasses the MFA gate for
+  security-critical account changes. `verify_password` + `verify_totp`
+  gates left in place as defence in depth. Real HTTP proof:
+  `mfa_pending` → 401 on both; `access` token → 204 / 400 (past the
+  dep).
+- **R2 — 3 order-dependent flaky tests quarantined.** Marked
+  `@pytest.mark.xfail(strict=False)` with named-debt reason. Tracked
+  in `/app/docs/SY_Homes_Future_Tasks.md` §23:
+  `test_audit_log.py::TestCsvJsonExport::test_csv_export_shape`,
+  `…::test_json_export_shape`,
+  `test_sessions_history_reset.py::TestLoginHistoryRecords::test_login_success_creates_row`.
+  Steady-state pytest count is now clean of these.
+- **R3 — Source-row lock on `create_new_version`
+  (`app/services/appraisal_revisions.py` + new
+  `app/services/appraisal_locks.py`).** Layering choice: **Option A**
+  (extract shared helper) — 3 files exactly, within the build pack's
+  scope limit. New `appraisal_locks.lock_appraisal_for_update(db, id)`
+  is the single source of truth for the appraisal-row `SELECT FOR
+  UPDATE`. The P0.1 router helper now delegates to it (its cost-line
+  lock stays inline). `create_new_version` calls it BEFORE
+  `source.is_current = False`, so two concurrent new-version calls
+  on the same Approved source can no longer interleave past the
+  partial unique `uq_appraisals_current_per_project_scenario`.
+  `create_scenario` was confirmed NOT to flip `source.is_current` (per
+  docstring contract); no lock added per "don't lock for symmetry".
+  Two-session proof: session A holds, session B `NOWAIT` raises
+  `OperationalError`, A commits → B acquires.
+- **R4 — Stale `deps.py:144` docstring fix.** `get_enrollment_principal`
+  no longer lists `/password/change` (moved to `get_current_principal`
+  in P0.3) or `/mfa/disable` / `/mfa/backup-codes/regenerate` (moved in
+  R1). Rewritten to call out that security-critical account changes
+  are explicitly NOT in the `mfa_pending` reach.
+- **R5 — P1.10 destructive Alembic downgrade — OPERATOR DECISION
+  PENDING. Migration identified:
+  `alembic/versions/0027_default_line_items_backfill.py`.** Its
+  downgrade does
+  `DELETE FROM budget_line_items WHERE amount = 0 AND display_order
+  BETWEEN 0 AND 3 AND description IN ('Materials','Labour','Equipment',
+  'Subcontractor')`. The migration's own comment admits the heuristic
+  cannot distinguish "0027-backfilled defaults" from
+  "R1.2 service-created defaults on greenfield lines" — and would also
+  destroy any **user-edited** £0 line item happening to match the
+  shape (e.g. a real "Labour" allocation awaiting quote). NO fix
+  written until operator picks Option 1 (patch downgrade to be
+  non-destructive / raise NotImplementedError) or Option 2
+  (forward-fix only — document loudly, never downgrade in prod).
+- **R6 — This entry.**
+- **State at file time.** P0 + P1 file: 25/25 green. Whole backend
+  warm-DB: see STOP report.
+
 ## Chat 22 follow-up — psycopg3 driver URL fix + yarn.lock recommit (2026-05-18)
 
 CI run #2 (after the initial Chat 22 Save-to-GitHub, commit `ec8ffec`) failed

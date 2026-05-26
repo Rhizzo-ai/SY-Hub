@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from app.models.appraisals import Appraisal
 from app.models.appraisal_governance import AppraisalRevision
 from app.services import appraisal_calc
+from app.services.appraisal_locks import lock_appraisal_for_update
 from app.services.appraisal_versioning import (
     clone_as_new_version, mark_superseded,
 )
@@ -82,6 +83,13 @@ def create_new_version(
         )
 
     was_approved = source.status == "Approved"
+
+    # P1.R3 — lock the source row BEFORE flipping is_current = False.
+    # Two concurrent new-version calls on the same Approved source
+    # would otherwise interleave between the flip and the clone, two
+    # current versions, or trip uq_appraisals_current_per_project_scenario.
+    # Shared with the P0.1 router helper via app/services/appraisal_locks.
+    lock_appraisal_for_update(db, source.id)
 
     # 1. flip source is_current = false FIRST.
     source.is_current = False

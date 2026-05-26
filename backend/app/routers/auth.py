@@ -603,7 +603,11 @@ def mfa_enroll_confirm(
 def mfa_disable(
     payload: MfaDisableRequest,
     request: Request,
-    current: User = Depends(get_enrollment_user),
+    # P1.R1 — moved from get_enrollment_user to get_current_user so an
+    # `mfa_pending` token (issued AFTER password, BEFORE MFA) cannot
+    # DISABLE MFA. Same hole class as the P0.3 fix on /password/change.
+    # verify_password below stays as defence in depth.
+    current: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     if not current.password_hash or not verify_password(payload.current_password, current.password_hash):
@@ -649,7 +653,10 @@ def mfa_disable(
 def regenerate_backup_codes(
     payload: RegenerateBackupCodesRequest,
     request: Request,
-    current: User = Depends(get_enrollment_user),
+    # P1.R1 — moved from get_enrollment_user to get_current_user so an
+    # `mfa_pending` token cannot REGENERATE backup codes. verify_password
+    # + verify_totp gates below stay as defence in depth.
+    current: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     if not current.mfa_enabled or not current.mfa_secret_encrypted:

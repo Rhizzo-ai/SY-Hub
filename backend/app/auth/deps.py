@@ -145,10 +145,15 @@ def get_enrollment_principal(
 
     Used by endpoints that an enforced-role user must be able to reach while
     they still haven't completed MFA enrolment (e.g. /auth/me, /mfa/enroll/*,
-    /password/change, /logout).
+    /logout).
 
     Does NOT enforce session idle-timeout because mfa_pending tokens aren't
     backed by a user_session row — they're short-lived JWTs (15 min).
+
+    Security-critical account changes (password change, MFA disable,
+    backup-code regenerate) are NOT in this list — they moved to
+    `get_current_principal` / `get_current_user` in P0.3 and P1.R1 so
+    a pre-MFA token cannot perform them.
     """
     token = _extract_token(request, authorization)
     if not token:

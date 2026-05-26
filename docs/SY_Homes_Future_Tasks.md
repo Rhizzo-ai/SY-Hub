@@ -600,4 +600,28 @@ polish pass, not patched in R6 v2.
   Same class as the Phase 1.2 login footer in `AppShell.jsx:60`-area —
   fold both into a copy-sweep ticket. Do NOT touch in R6 v2.
 
-## 23. (placeholder — future entries appended here)
+## 23. P1.R2 — Quarantined order-dependent flaky tests (2026-02-13)
+
+Three tests fail or pass depending on test-execution order due to
+shared-DB state. Quarantined with `@pytest.mark.xfail(strict=False, ...)`
+during P1.R2 so they no longer pollute the steady-state count. The
+debt is real and tracked here — do NOT delete the xfail without
+isolating the underlying coupling first.
+
+- `tests/test_audit_log.py::TestCsvJsonExport::test_csv_export_shape`
+- `tests/test_audit_log.py::TestCsvJsonExport::test_json_export_shape`
+  - Both fail when prior audit-mutation tests have already advanced
+    the audit_log; the exports return rows whose shape the assertions
+    didn't anticipate. Fix likely needs a tighter filter (e.g. by
+    project_id or created_at window) or a DB-state reset before the
+    class runs.
+- `tests/test_sessions_history_reset.py::TestLoginHistoryRecords::test_login_success_creates_row`
+  - Reads `user_login_history` cumulative count; preceding tests
+    inflate the row count and break the `after == before + 1`
+    invariant. Fix likely needs `before/after` snapshots scoped to a
+    unique session id, not to the entire history row.
+
+When de-quarantining, remove the xfail decorator AND remove the entry
+from this list in the same commit.
+
+## 24. (placeholder — future entries appended here)

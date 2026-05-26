@@ -18,6 +18,49 @@ Frontend / actuals / commitments / Xero are out of scope until later prompts.
 
 ## What's been implemented
 
+### 2026-02-13 — Audit Remediation TIER P1 (v1 build pack) ✓ (R5 HALTED)
+
+R0 reconciliation → R1–R6 built. R5 (destructive Alembic downgrade)
+HALTED for operator decision per build-pack contract. No schema change.
+Permissions 102 / roles 10 unchanged. Alembic head unchanged at
+`0034_audit_sendback`. **Warm-DB suite: 928 passed, 3 xpassed, 0 failed,
+93 errors (all `test_projects.py`, pre-existing).**
+
+- **R0 — Reconciliation gate.** Pre-P0 tree at `130ccfc`: cold run 999
+  passed clean / warm run 906 passed + 93 errors (all
+  `test_projects.py` — same 93 as post-P0). Confirms the 93 errors are
+  pre-existing, not P0-induced. The 2 audit_log failures I'd flagged
+  earlier were transient state pollution — today's runs show 0 failures.
+- **R1 — `mfa_pending` blocked from `/mfa/disable` and
+  `/mfa/backup-codes/regenerate`.** Both swapped from
+  `Depends(get_enrollment_user)` → `Depends(get_current_user)`.
+  `verify_password` / `verify_totp` gates stay as defence in depth.
+  Live evidence: 401 "Invalid token type" with `mfa_pending`; 204 (or
+  400 "MFA not enrolled") with `access` — proving the dep passes the
+  legitimate token through.
+- **R2 — 3 order-dependent flaky tests quarantined** with
+  `@pytest.mark.xfail(strict=False, reason=…)` + entry in
+  `Future_Tasks.md` §23.
+- **R3 — Source-row lock on `create_new_version`.** Layering: Option A
+  (shared service helper). NEW `app/services/appraisal_locks.py` exports
+  `lock_appraisal_for_update(db, id)`. The P0.1 router helper now
+  delegates to it. `create_new_version` calls it BEFORE
+  `source.is_current = False`. `create_scenario` audited — does NOT
+  flip source's `is_current`, so no lock added (per build-pack rule).
+  Two-session proof: A holds → B `NOWAIT` → `OperationalError`; A
+  commits → B acquires.
+- **R4 — `deps.py:144` docstring fixed** — no longer lists
+  `/password/change` (or any of the now-moved security-critical
+  endpoints).
+- **R5 — P1.10 destructive migration IDENTIFIED, NO fix written.**
+  `alembic/versions/0027_default_line_items_backfill.py` downgrade
+  `DELETE`s `budget_line_items` by content-heuristic. The migration's
+  own comment admits the heuristic over-deletes. **AWAITING OPERATOR
+  DECISION** (Option 1 patch / Option 2 forward-fix only).
+- **R6 — `CHANGELOG.md` entries spliced** for both Chat 26 (§R7.0b +
+  §R7 Batch 1) and Audit Remediation TIER P0 and TIER P1.
+- **P0 + P1 test file: 25/25 green.**
+
 ### 2026-02-13 — Audit Remediation TIER P0 (v2 build pack) ✓
 
 All four P0 (critical) findings from the Claude-Code audit, re-grounded

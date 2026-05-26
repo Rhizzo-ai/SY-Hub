@@ -146,10 +146,13 @@ class TestMfaEnrollmentFlow:
 # ============================================================
 
 class TestBackupCodes:
-    def test_regenerate_backup_codes_requires_mfa_enabled(self):
-        # Login as a non-enrolled enforced-role user — endpoint should reject
-        # with 400 because MFA is not enrolled. Both the mfa_pending cookie
-        # and a real access cookie reach the enrolment dep.
+    def test_regenerate_backup_codes_rejects_mfa_pending(self):
+        # P1.R1 — /mfa/backup-codes/regenerate moved from
+        # get_enrollment_user to get_current_user so an `mfa_pending`
+        # token (issued post-password / pre-MFA) can no longer reach
+        # the handler. The old contract was "400 MFA not enrolled" via
+        # the in-handler check; the new contract is "401 Invalid token
+        # type" at the dep, which is strictly stronger.
         _db_reset_mfa(TEST_DIRECTOR_EMAIL)
         s = _new_session()
         login = s.post(f"{BASE_URL}/api/auth/login", json={
@@ -163,8 +166,8 @@ class TestBackupCodes:
             f"{BASE_URL}/api/auth/mfa/backup-codes/regenerate",
             json={"current_password": TEST_PASSWORD, "current_totp": "123456"},
         )
-        assert r.status_code == 400
-        assert "MFA not enrolled" in r.json()["detail"]
+        assert r.status_code == 401, r.text
+        assert "Invalid token type" in r.json()["detail"]
 
     def test_regenerate_backup_codes_returns_10_new_codes(self):
         """Fresh enrol via cookies flow, then regenerate."""

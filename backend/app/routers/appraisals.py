@@ -62,7 +62,7 @@ from app.models.reference_data import (
     APPRAISAL_SETTING_TYPES, AppraisalDefaultSetting, SDLT_CATEGORIES,
 )
 from app.models.user import User
-from app.services import appraisal_calc, rlv_solver
+from app.services import appraisal_calc, appraisal_locks, rlv_solver
 from app.services.appraisal_versioning import (
     TransitionError, assert_transition, clone_as_new_version,
     is_editable, mark_superseded, next_version_for_project,
@@ -246,12 +246,14 @@ def _lock_appraisal_for_update(db: Session, appraisal_id: uuid.UUID) -> None:
     which holds the appraisal row lock for the duration of the
     transaction — that is sufficient to serialise unit/facility edits
     too without adding noise to the lock set.
+
+    P1.R3 — the row-lock part is extracted to
+    `app.services.appraisal_locks.lock_appraisal_for_update` so the
+    governance services (`create_new_version`) can take the same lock
+    without importing a router-private symbol. The cost-line lock stays
+    inline here — it's a router-recompute concern, not a governance one.
     """
-    db.execute(
-        select(Appraisal.id)
-        .where(Appraisal.id == appraisal_id)
-        .with_for_update()
-    ).all()
+    appraisal_locks.lock_appraisal_for_update(db, appraisal_id)
     db.execute(
         select(AppraisalCostLine.id)
         .where(AppraisalCostLine.appraisal_id == appraisal_id)
