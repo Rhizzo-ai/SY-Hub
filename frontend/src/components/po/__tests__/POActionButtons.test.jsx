@@ -1,27 +1,33 @@
 /**
- * <POActionButtons/> tests — Chat 26 §R7.2 (Batch 1).
+ * <POActionButtons/> tests — Chat 26 §R7.2 (Batch 1) + R7 Batch 2.
  *
- * Slim Batch-1 action set per the corrected build pack scope. Edit /
- * Delete / Edit (issued) / + Receipt / Void are intentionally deferred
- * to Batch 2 (no target routes, or no reason-dialog system) — assert
- * here that they render on NO status × persona combination, so a
- * regression that quietly re-mounts a dead button breaks CI.
+ * Batch 2 has re-enabled every previously-deferred button. The
+ * DEFERRED_TESTIDS array is intentionally empty; the empty-loop
+ * regression-guard block was REMOVED (zero iterations would have
+ * been trivially green) and replaced with positive per-button render
+ * assertions in the relevant status describe blocks below.
  *
- *   draft               → Submit
+ *   draft               → Edit, Submit, Delete
  *   pending_approval    → Approve, Reject              (self-approval guard)
- *   approved            → Issue, Send back             (send-back NOT guarded)
- *   issued              → Close
- *   partially_receipted → Close
- *   receipted           → Close
+ *   approved            → Edit, Issue, Send back, Void
+ *   issued              → Edit (annotation), Receipt, Close, Void
+ *   partially_receipted → Edit (annotation), Receipt, Close, Void
+ *   receipted           → Edit (annotation), Close
  *   closed / voided     → (none)
  *
  * Personas mirror the seeded RBAC roles:
  *   - FULL PM     — pos.create + pos.edit + pos.delete + pos.submit
  *                   + pos.receipt + pos.close + pos.void
- *                   (NB: no pos.approve)
- *   - APPROVER    — pos.approve (+ pos.issue, pos.void, pos.edit)
+ *                   (NB: no pos.approve, no pos.edit_issued, no pos.issue)
+ *   - APPROVER    — pos.approve + pos.issue + pos.void + pos.edit
+ *                   + pos.close + pos.edit_issued
  *   - READ-ONLY   — pos.view only
  *   - SUBMITTER   — APPROVER perms + IS the PO's submitted_by
+ *
+ * `edit_tier` (lowercase string from backend services/po_authz.py):
+ *   - 'full'                     → po-actions-edit-btn (draft / approved)
+ *   - 'header_annotation_only'   → po-actions-edit-issued-btn (issued+)
+ *   - 'read_only'                → no edit button
  */
 import { screen, fireEvent, waitFor } from '@testing-library/react';
 import POActionButtons from '../POActionButtons';
@@ -30,60 +36,104 @@ import { renderWithProviders } from '../../../test/renderWithProviders';
 jest.mock('../../../context/AuthContext', () => ({ useAuth: jest.fn() }));
 jest.mock('../../../hooks/purchaseOrders', () => ({
   usePoTransition: jest.fn(),
+  useCreateReceipt: jest.fn(),
+  useDeletePO: jest.fn(),
+  usePatchPO: jest.fn(),
 }));
 jest.mock('sonner', () => ({
-  toast: { success: jest.fn(), error: jest.fn() },
+  toast: { success: jest.fn(), error: jest.fn(), info: jest.fn() },
 }));
 
 const { useAuth } = require('../../../context/AuthContext');
-const { usePoTransition } = require('../../../hooks/purchaseOrders');
+const {
+  usePoTransition, useCreateReceipt, useDeletePO, usePatchPO,
+} = require('../../../hooks/purchaseOrders');
 const { toast } = require('sonner');
 
-const ME_PM       = { id: 'user-pm', permissions: ['pos.view', 'pos.create', 'pos.edit', 'pos.delete', 'pos.submit', 'pos.receipt', 'pos.close', 'pos.void'] };
-const ME_APPROVER = { id: 'user-app', permissions: ['pos.view', 'pos.approve', 'pos.issue', 'pos.void', 'pos.edit', 'pos.close'] };
+// R7 Batch 2 — full permission sets (incl. pos.edit_issued for the
+// APPROVER persona so the issued/partial/receipted edit-issued
+// assertions render).
+const ME_PM = {
+  id: 'user-pm',
+  permissions: [
+    'pos.view', 'pos.create', 'pos.edit', 'pos.delete', 'pos.submit',
+    'pos.receipt', 'pos.close', 'pos.void',
+  ],
+};
+const ME_APPROVER = {
+  id: 'user-app',
+  permissions: [
+    'pos.view', 'pos.approve', 'pos.issue', 'pos.void',
+    'pos.edit', 'pos.edit_issued', 'pos.close', 'pos.receipt',
+  ],
+};
 const ME_READONLY = { id: 'user-ro', permissions: ['pos.view'] };
 
-// Buttons explicitly deferred to Batch 2. Asserting all five render
-// on NO status × persona combination is the regression guard.
-const DEFERRED_TESTIDS = [
-  'po-actions-edit-btn',
-  'po-actions-delete-btn',
-  'po-actions-edit-issued-btn',
-  'po-actions-receipt-btn',
-  'po-actions-receipt-partial-btn',
-  'po-actions-void-btn',
-  'po-actions-void-issued-btn',
-];
+// R7 Batch 2 — ALL previously deferred testids are now wired. The
+// array is intentionally empty; the loop-over-array guard block was
+// removed (it would have been a vacuous green pass). Each re-enabled
+// button has its own positive render assertion below.
+const DEFERRED_TESTIDS = [];
 
-function makePO({ status, submitted_by = 'user-someone', edit_tier = 'full', id = 'po-1' } = {}) {
+function makePO({
+  status,
+  submitted_by = 'user-someone',
+  edit_tier = 'full',
+  id = 'po-1',
+} = {}) {
   return { id, status, submitted_by, edit_tier };
 }
 
-function setMockTransition({ mutateAsync = jest.fn().mockResolvedValue({}), isPending = false } = {}) {
+function setMockTransition({
+  mutateAsync = jest.fn().mockResolvedValue({}),
+  isPending = false,
+} = {}) {
   usePoTransition.mockReturnValue({ mutateAsync, isPending });
 }
 
-
-describe('<POActionButtons/> R7.2 — slim Batch-1 action matrix', () => {
-  beforeEach(() => {
-    jest.clearAllMocks();
-    setMockTransition();
+beforeEach(() => {
+  jest.clearAllMocks();
+  setMockTransition();
+  useCreateReceipt.mockReturnValue({
+    mutateAsync: jest.fn().mockResolvedValue({}), isPending: false,
   });
+  useDeletePO.mockReturnValue({
+    mutateAsync: jest.fn().mockResolvedValue({}), isPending: false,
+  });
+  usePatchPO.mockReturnValue({
+    mutateAsync: jest.fn().mockResolvedValue({}), isPending: false,
+  });
+});
+
+
+describe('<POActionButtons/> — R7 Batch 2 full action matrix', () => {
 
   // ── draft ──────────────────────────────────────────────────────────
   describe('draft', () => {
-    test('FULL PM sees Submit only (Edit / Delete deferred to Batch 2)', () => {
+    test('FULL PM sees Edit + Submit + Delete', () => {
       useAuth.mockReturnValue({ me: ME_PM });
-      renderWithProviders(<POActionButtons po={makePO({ status: 'draft' })} />);
+      renderWithProviders(
+        <POActionButtons po={makePO({ status: 'draft', edit_tier: 'full' })} />,
+      );
+      expect(screen.getByTestId('po-actions-edit-btn')).toBeInTheDocument();
       expect(screen.getByTestId('po-actions-submit-btn')).toBeInTheDocument();
-      expect(screen.queryByTestId('po-actions-edit-btn')).not.toBeInTheDocument();
-      expect(screen.queryByTestId('po-actions-delete-btn')).not.toBeInTheDocument();
+      expect(screen.getByTestId('po-actions-delete-btn')).toBeInTheDocument();
     });
 
     test('READ-ONLY persona sees no buttons', () => {
       useAuth.mockReturnValue({ me: ME_READONLY });
       renderWithProviders(<POActionButtons po={makePO({ status: 'draft' })} />);
       expect(screen.queryByTestId('po-actions-submit-btn')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('po-actions-edit-btn')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('po-actions-delete-btn')).not.toBeInTheDocument();
+    });
+
+    test('Edit is hidden when edit_tier=read_only (e.g. pending)', () => {
+      useAuth.mockReturnValue({ me: ME_PM });
+      renderWithProviders(
+        <POActionButtons po={makePO({ status: 'draft', edit_tier: 'read_only' })} />,
+      );
+      expect(screen.queryByTestId('po-actions-edit-btn')).not.toBeInTheDocument();
     });
   });
 
@@ -93,7 +143,11 @@ describe('<POActionButtons/> R7.2 — slim Batch-1 action matrix', () => {
       useAuth.mockReturnValue({ me: ME_APPROVER });
       renderWithProviders(
         <POActionButtons
-          po={makePO({ status: 'pending_approval', submitted_by: 'someone-else' })}
+          po={makePO({
+            status: 'pending_approval',
+            submitted_by: 'someone-else',
+            edit_tier: 'read_only',
+          })}
         />,
       );
       expect(screen.getByTestId('po-actions-approve-btn')).toBeInTheDocument();
@@ -104,7 +158,11 @@ describe('<POActionButtons/> R7.2 — slim Batch-1 action matrix', () => {
       useAuth.mockReturnValue({ me: ME_APPROVER });
       renderWithProviders(
         <POActionButtons
-          po={makePO({ status: 'pending_approval', submitted_by: 'user-app' })}
+          po={makePO({
+            status: 'pending_approval',
+            submitted_by: 'user-app',
+            edit_tier: 'read_only',
+          })}
         />,
       );
       expect(screen.queryByTestId('po-actions-approve-btn')).not.toBeInTheDocument();
@@ -115,7 +173,7 @@ describe('<POActionButtons/> R7.2 — slim Batch-1 action matrix', () => {
     test('FULL PM (no pos.approve) sees neither Approve nor Reject', () => {
       useAuth.mockReturnValue({ me: ME_PM });
       renderWithProviders(
-        <POActionButtons po={makePO({ status: 'pending_approval' })} />,
+        <POActionButtons po={makePO({ status: 'pending_approval', edit_tier: 'read_only' })} />,
       );
       expect(screen.queryByTestId('po-actions-approve-btn')).not.toBeInTheDocument();
       expect(screen.queryByTestId('po-actions-reject-btn')).not.toBeInTheDocument();
@@ -136,7 +194,7 @@ describe('<POActionButtons/> R7.2 — slim Batch-1 action matrix', () => {
         <POActionButtons
           po={makePO({
             status: 'pending_approval',
-            edit_tier: 'read_only', // ← live backend value for this status
+            edit_tier: 'read_only',
             submitted_by: 'someone-else',
           })}
         />,
@@ -148,23 +206,32 @@ describe('<POActionButtons/> R7.2 — slim Batch-1 action matrix', () => {
 
   // ── approved (R7.0b) ───────────────────────────────────────────────
   describe('approved (R7.0b row)', () => {
-    test('APPROVER sees Issue + Send back (Void deferred to Batch 2)', () => {
+    test('APPROVER sees Edit + Issue + Send back + Void', () => {
       useAuth.mockReturnValue({ me: ME_APPROVER });
       renderWithProviders(
         <POActionButtons
-          po={makePO({ status: 'approved', submitted_by: 'someone-else' })}
+          po={makePO({
+            status: 'approved',
+            submitted_by: 'someone-else',
+            edit_tier: 'full',
+          })}
         />,
       );
+      expect(screen.getByTestId('po-actions-edit-btn')).toBeInTheDocument();
       expect(screen.getByTestId('po-actions-issue-btn')).toBeInTheDocument();
       expect(screen.getByTestId('po-actions-send-back-btn')).toBeInTheDocument();
-      expect(screen.queryByTestId('po-actions-void-btn')).not.toBeInTheDocument();
+      expect(screen.getByTestId('po-actions-void-btn')).toBeInTheDocument();
     });
 
     test('SUBMITTER can still send back their own approved PO (no self-guard on send-back)', () => {
       useAuth.mockReturnValue({ me: ME_APPROVER });
       renderWithProviders(
         <POActionButtons
-          po={makePO({ status: 'approved', submitted_by: 'user-app' })}
+          po={makePO({
+            status: 'approved',
+            submitted_by: 'user-app',
+            edit_tier: 'full',
+          })}
         />,
       );
       expect(screen.getByTestId('po-actions-send-back-btn')).toBeInTheDocument();
@@ -176,7 +243,7 @@ describe('<POActionButtons/> R7.2 — slim Batch-1 action matrix', () => {
       useAuth.mockReturnValue({ me: ME_APPROVER });
       renderWithProviders(
         <POActionButtons
-          po={makePO({ status: 'approved', submitted_by: 'someone-else' })}
+          po={makePO({ status: 'approved', submitted_by: 'someone-else', edit_tier: 'full' })}
         />,
       );
       fireEvent.click(screen.getByTestId('po-actions-send-back-btn'));
@@ -197,45 +264,83 @@ describe('<POActionButtons/> R7.2 — slim Batch-1 action matrix', () => {
     test('READ-ONLY persona on approved PO sees no buttons', () => {
       useAuth.mockReturnValue({ me: ME_READONLY });
       renderWithProviders(
-        <POActionButtons po={makePO({ status: 'approved' })} />,
+        <POActionButtons po={makePO({ status: 'approved', edit_tier: 'full' })} />,
       );
       expect(screen.queryByTestId('po-actions-issue-btn')).not.toBeInTheDocument();
       expect(screen.queryByTestId('po-actions-send-back-btn')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('po-actions-void-btn')).not.toBeInTheDocument();
     });
   });
 
   // ── issued / partially_receipted / receipted ──────────────────────
   describe('issued', () => {
-    test('APPROVER sees Close only (Receipt / Edit-issued / Void deferred)', () => {
+    test('APPROVER sees Edit (annotation) + Receipt + Close + Void', () => {
       useAuth.mockReturnValue({ me: ME_APPROVER });
       renderWithProviders(
-        <POActionButtons po={makePO({ status: 'issued' })} />,
+        <POActionButtons
+          po={makePO({
+            status: 'issued',
+            edit_tier: 'header_annotation_only',
+          })}
+        />,
       );
+      expect(screen.getByTestId('po-actions-edit-issued-btn')).toBeInTheDocument();
+      expect(screen.getByTestId('po-actions-receipt-btn')).toBeInTheDocument();
       expect(screen.getByTestId('po-actions-close-issued-btn')).toBeInTheDocument();
-      expect(screen.queryByTestId('po-actions-receipt-btn')).not.toBeInTheDocument();
+      expect(screen.getByTestId('po-actions-void-issued-btn')).toBeInTheDocument();
+      // edit-btn (full) hidden on annotation-only tier.
+      expect(screen.queryByTestId('po-actions-edit-btn')).not.toBeInTheDocument();
+    });
+
+    test('FULL PM (no pos.edit_issued, no pos.void perms with the right tier) → only Close + Receipt', () => {
+      useAuth.mockReturnValue({ me: ME_PM });
+      renderWithProviders(
+        <POActionButtons
+          po={makePO({ status: 'issued', edit_tier: 'header_annotation_only' })}
+        />,
+      );
+      // edit-issued-btn requires pos.edit_issued, which ME_PM lacks.
       expect(screen.queryByTestId('po-actions-edit-issued-btn')).not.toBeInTheDocument();
-      expect(screen.queryByTestId('po-actions-void-issued-btn')).not.toBeInTheDocument();
+      expect(screen.getByTestId('po-actions-receipt-btn')).toBeInTheDocument();
+      expect(screen.getByTestId('po-actions-close-issued-btn')).toBeInTheDocument();
+      expect(screen.getByTestId('po-actions-void-issued-btn')).toBeInTheDocument();
     });
   });
 
   describe('partially_receipted', () => {
-    test('FULL PM sees Close only (Receipt deferred)', () => {
-      useAuth.mockReturnValue({ me: ME_PM });
+    test('APPROVER sees Edit-issued + Receipt + Close + Void', () => {
+      useAuth.mockReturnValue({ me: ME_APPROVER });
       renderWithProviders(
-        <POActionButtons po={makePO({ status: 'partially_receipted' })} />,
+        <POActionButtons
+          po={makePO({
+            status: 'partially_receipted',
+            edit_tier: 'header_annotation_only',
+          })}
+        />,
       );
+      expect(screen.getByTestId('po-actions-edit-issued-btn')).toBeInTheDocument();
+      expect(screen.getByTestId('po-actions-receipt-partial-btn')).toBeInTheDocument();
       expect(screen.getByTestId('po-actions-close-partial-btn')).toBeInTheDocument();
-      expect(screen.queryByTestId('po-actions-receipt-partial-btn')).not.toBeInTheDocument();
+      expect(screen.getByTestId('po-actions-void-issued-btn')).toBeInTheDocument();
     });
   });
 
   describe('receipted', () => {
-    test('FULL PM sees Close', () => {
-      useAuth.mockReturnValue({ me: ME_PM });
+    test('APPROVER sees Edit-issued + Close (no more Receipt, no Void)', () => {
+      useAuth.mockReturnValue({ me: ME_APPROVER });
       renderWithProviders(
-        <POActionButtons po={makePO({ status: 'receipted' })} />,
+        <POActionButtons
+          po={makePO({
+            status: 'receipted',
+            edit_tier: 'header_annotation_only',
+          })}
+        />,
       );
+      expect(screen.getByTestId('po-actions-edit-issued-btn')).toBeInTheDocument();
       expect(screen.getByTestId('po-actions-close-btn')).toBeInTheDocument();
+      expect(screen.queryByTestId('po-actions-receipt-btn')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('po-actions-receipt-partial-btn')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('po-actions-void-issued-btn')).not.toBeInTheDocument();
     });
   });
 
@@ -244,44 +349,152 @@ describe('<POActionButtons/> R7.2 — slim Batch-1 action matrix', () => {
     test.each(['closed', 'voided'])('%s renders no action buttons', (status) => {
       useAuth.mockReturnValue({ me: ME_PM });
       const { container } = renderWithProviders(
-        <POActionButtons po={makePO({ status })} />,
+        <POActionButtons po={makePO({ status, edit_tier: 'read_only' })} />,
       );
       const actions = container.querySelector('[data-testid="po-actions"]');
       expect(actions.children.length).toBe(0);
     });
   });
 
-  // ── deferred-button regression guard ──────────────────────────────
-  //
-  // The fastest way for a Batch-2 PR to silently leak a dead button is
-  // to wire it back into <POActionButtons/> before its route / dialog
-  // ships. This iterates every reachable state × every persona we
-  // model and asserts none of the deferred testids ever render. If
-  // Batch 2 brings these back, the assertion in the relevant per-status
-  // test above should be flipped at the same time.
-  describe('deferred-to-Batch-2 buttons must render on NO state × persona', () => {
-    const STATES = [
-      'draft', 'pending_approval', 'approved', 'issued',
+  // ── Delete is DRAFT-ONLY (mirrors backend 422 on non-draft) ───────
+  describe('Delete — draft only (backend 422 discipline)', () => {
+    const NON_DRAFT_STATES = [
+      'pending_approval', 'approved', 'issued',
       'partially_receipted', 'receipted', 'closed', 'voided',
     ];
-    const PERSONAS = [
-      ['FULL PM',     ME_PM],
-      ['APPROVER',    ME_APPROVER],
-      ['READ-ONLY',   ME_READONLY],
-      ['SUBMITTER',   { ...ME_APPROVER, id: 'user-app' }],
-    ];
-    for (const [pname, me] of PERSONAS) {
-      for (const status of STATES) {
-        test(`${pname} × ${status} — none of the deferred buttons render`, () => {
-          useAuth.mockReturnValue({ me });
-          renderWithProviders(
-            <POActionButtons po={makePO({ status, submitted_by: me.id ?? 'x' })} />,
-          );
-          for (const tid of DEFERRED_TESTIDS) {
-            expect(screen.queryByTestId(tid)).not.toBeInTheDocument();
-          }
-        });
-      }
+    for (const status of NON_DRAFT_STATES) {
+      test(`${status} — delete-btn does NOT render (mirrors 422)`, () => {
+        useAuth.mockReturnValue({ me: ME_PM });
+        renderWithProviders(
+          <POActionButtons
+            po={makePO({ status, edit_tier: status === 'closed' || status === 'voided' ? 'read_only' : 'header_annotation_only' })}
+          />,
+        );
+        expect(screen.queryByTestId('po-actions-delete-btn')).not.toBeInTheDocument();
+      });
     }
+    test('draft + canDeletePO → delete-btn renders behind confirm dialog', () => {
+      useAuth.mockReturnValue({ me: ME_PM });
+      renderWithProviders(
+        <POActionButtons po={makePO({ status: 'draft', edit_tier: 'full' })} />,
+      );
+      const btn = screen.getByTestId('po-actions-delete-btn');
+      fireEvent.click(btn);
+      expect(screen.getByTestId('po-delete-dialog')).toBeInTheDocument();
+      expect(screen.getByTestId('po-delete-cancel')).toBeInTheDocument();
+      expect(screen.getByTestId('po-delete-confirm')).toBeInTheDocument();
+    });
+  });
+
+  // ── R7.6 — Void requires a reason (clones reject-dialog shape) ───
+  describe('Void confirm-dialog — required reason (R7.6)', () => {
+    test('void-btn (approved) opens dialog; confirm disabled until reason entered', async () => {
+      const mutateAsync = jest.fn().mockResolvedValue({});
+      setMockTransition({ mutateAsync });
+      useAuth.mockReturnValue({ me: ME_APPROVER });
+      renderWithProviders(
+        <POActionButtons po={makePO({ status: 'approved', edit_tier: 'full' })} />,
+      );
+      fireEvent.click(screen.getByTestId('po-actions-void-btn'));
+      const confirm = await screen.findByTestId('po-void-confirm');
+      expect(confirm).toBeDisabled();
+      const ta = screen.getByTestId('po-void-reason');
+      fireEvent.change(ta, { target: { value: '   ' } });
+      expect(confirm).toBeDisabled();
+      fireEvent.change(ta, { target: { value: 'duplicate PO' } });
+      expect(confirm).not.toBeDisabled();
+      fireEvent.click(confirm);
+      await waitFor(() => {
+        expect(mutateAsync).toHaveBeenCalledWith({ reason: 'duplicate PO' });
+      });
+      expect(toast.success).toHaveBeenCalledWith('PO voided');
+    });
+
+    test('void-issued-btn (issued) opens the same void dialog', async () => {
+      useAuth.mockReturnValue({ me: ME_APPROVER });
+      renderWithProviders(
+        <POActionButtons
+          po={makePO({ status: 'issued', edit_tier: 'header_annotation_only' })}
+        />,
+      );
+      fireEvent.click(screen.getByTestId('po-actions-void-issued-btn'));
+      expect(await screen.findByTestId('po-void-dialog')).toBeInTheDocument();
+      expect(screen.getByTestId('po-void-reason')).toBeInTheDocument();
+    });
+  });
+
+  // ── R7.4 — Receipt form opens / posts to the createReceipt hook ─
+  describe('Receipt form (R7.4)', () => {
+    test('receipt-btn opens receipt dialog (issued)', () => {
+      useAuth.mockReturnValue({ me: ME_PM });
+      renderWithProviders(
+        <POActionButtons
+          po={makePO({ status: 'issued', edit_tier: 'header_annotation_only' })}
+        />,
+      );
+      fireEvent.click(screen.getByTestId('po-actions-receipt-btn'));
+      expect(screen.getByTestId('po-receipt-dialog')).toBeInTheDocument();
+      expect(screen.getByTestId('po-receipt-date')).toBeInTheDocument();
+      expect(screen.getByTestId('po-receipt-cancel')).toBeInTheDocument();
+    });
+
+    test('receipt-partial-btn opens receipt dialog (partial)', () => {
+      useAuth.mockReturnValue({ me: ME_PM });
+      renderWithProviders(
+        <POActionButtons
+          po={makePO({ status: 'partially_receipted', edit_tier: 'header_annotation_only' })}
+        />,
+      );
+      fireEvent.click(screen.getByTestId('po-actions-receipt-partial-btn'));
+      expect(screen.getByTestId('po-receipt-dialog')).toBeInTheDocument();
+    });
+  });
+
+  // ── Edit tier gating ───────────────────────────────────────────────
+  describe('Edit-tier gating (full vs annotation-only)', () => {
+    test('edit_tier=full + pos.edit → edit-btn (NOT edit-issued-btn)', () => {
+      useAuth.mockReturnValue({ me: ME_APPROVER });
+      renderWithProviders(
+        <POActionButtons po={makePO({ status: 'approved', edit_tier: 'full' })} />,
+      );
+      expect(screen.getByTestId('po-actions-edit-btn')).toBeInTheDocument();
+      expect(screen.queryByTestId('po-actions-edit-issued-btn')).not.toBeInTheDocument();
+    });
+
+    test('edit_tier=header_annotation_only + pos.edit_issued → edit-issued-btn (NOT edit-btn)', () => {
+      useAuth.mockReturnValue({ me: ME_APPROVER });
+      renderWithProviders(
+        <POActionButtons
+          po={makePO({ status: 'issued', edit_tier: 'header_annotation_only' })}
+        />,
+      );
+      expect(screen.getByTestId('po-actions-edit-issued-btn')).toBeInTheDocument();
+      expect(screen.queryByTestId('po-actions-edit-btn')).not.toBeInTheDocument();
+    });
+
+    test('edit_tier=read_only → neither edit-btn renders', () => {
+      useAuth.mockReturnValue({ me: ME_APPROVER });
+      renderWithProviders(
+        <POActionButtons po={makePO({ status: 'closed', edit_tier: 'read_only' })} />,
+      );
+      expect(screen.queryByTestId('po-actions-edit-btn')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('po-actions-edit-issued-btn')).not.toBeInTheDocument();
+    });
+
+    test('annotation-only tier WITHOUT pos.edit_issued → edit-issued-btn hidden', () => {
+      // ME_PM lacks pos.edit_issued.
+      useAuth.mockReturnValue({ me: ME_PM });
+      renderWithProviders(
+        <POActionButtons
+          po={makePO({ status: 'issued', edit_tier: 'header_annotation_only' })}
+        />,
+      );
+      expect(screen.queryByTestId('po-actions-edit-issued-btn')).not.toBeInTheDocument();
+    });
+  });
+
+  // ── DEFERRED_TESTIDS — must remain empty (AC1) ────────────────────
+  test('AC1 — DEFERRED_TESTIDS array is empty (all Batch-2 testids wired)', () => {
+    expect(DEFERRED_TESTIDS).toEqual([]);
   });
 });

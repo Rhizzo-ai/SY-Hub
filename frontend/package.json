@@ -74,6 +74,7 @@
     "e2e:debug": "PWDEBUG=1 playwright test",
     "e2e:codegen": "playwright codegen $REACT_APP_PREVIEW_URL",
     "e2e:smoke": "playwright test --grep @smoke",
+    "e2e:po-batch2": "playwright test --grep @po-batch2",
     "e2e:report": "playwright show-report"
   },
   "browserslist": {

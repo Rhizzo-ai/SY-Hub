@@ -18,6 +18,57 @@ Frontend / actuals / commitments / Xero are out of scope until later prompts.
 
 ## What's been implemented
 
+### 2026-02-27 — R7 Batch 2 (frontend) ✓ COMPLETE
+
+R7 Batch 2 turns the seven Batch-1-deferred PO action testids back on
+behind real forms / confirm dialogs / optimistic mutations. ONE STOP
+at end per build pack `SY_Hub_R7_Batch2_BuildPack_v2.md`.
+
+- **R7.4 — Receipt form.** New `POReceiptDialog` posts to
+  `useCreateReceipt` (line qtys + received_date + delivery_note_ref +
+  notes). Wired behind `po-actions-receipt-btn` (issued) and
+  `po-actions-receipt-partial-btn` (partial). `useCreateReceipt` now
+  coarse-invalidates `['budgets']` on success (AC5 — receipt moves
+  committed → actual).
+- **R7.5 — Per-project approvals dashboard tab.** New
+  `POApprovalsTab` mounted as a tab on `PurchaseOrderList`
+  (`?tab=approvals`). Uses `useProjectPOs(projectId, { params: {
+  status: 'pending_approval' } })` + client-side filter fallback. Row
+  Review affordance deep-links to `/purchase-orders/{id}?tab=approvals`
+  (Batch-1 `POApprovalPanel` takes it from there). All-projects view
+  parked at §CARRIED FORWARD.
+- **R7.6 — Confirm-dialog + Void + optimistic layer.** New
+  `POVoidDialog` (required-reason, clones reject-dialog shape) wired
+  behind `po-actions-void-btn` (approved) and
+  `po-actions-void-issued-btn` (issued/partial). Rebuilt
+  `usePoTransition` with `onMutate`/`onError`/`onSettled`: void +
+  sendBack apply an optimistic `status` patch (rollback on error);
+  void/sendBack/issue/approve/close all coarse-invalidate `['budgets']`
+  on settle.
+- **Edit + Delete (Option A — header-only).** New `POEditDialog`
+  (header-only PATCH; bound to backend `edit_tier` enum: `full` /
+  `header_annotation_only` / `read_only` from
+  `services/po_authz.py:EditPermission`). New `PODeleteDialog`
+  (draft-only, mirrors backend 422 on non-draft). `po-actions-edit-btn`
+  gates on `edit_tier === 'full'` + `pos.edit`;
+  `po-actions-edit-issued-btn` gates on `edit_tier ===
+  'header_annotation_only'` + `pos.edit_issued`;
+  `po-actions-delete-btn` mounts only on draft.
+- **AC1 — `DEFERRED_TESTIDS` array EMPTY, regression-guard block
+  DELETED.** All 7 previously-deferred testids are wired; the
+  empty-loop guard would have been vacuously green and was removed
+  per the pack. Each re-enabled button has a per-status positive
+  render assertion.
+- **Tests.** Jest 387/387 green (unchanged from baseline — net of
+  the 32 removed deferred-loop iterations vs new R7.4/R7.5/R7.6/Edit/
+  Delete assertions). Five new E2E specs (`po-receipt.pm`,
+  `po-approvals.pm`, `po-void.pm`, `po-edit.pm`, `po-delete.pm`)
+  tagged `@po-batch2` + `@smoke`. New `yarn e2e:po-batch2` script.
+- **Bundle.** main 395.24 kB gz (cap 437 kB → 41.76 kB headroom).
+  `suppliers-po` chunk 14.57 kB gz.
+
+
+
 ### 2026-02-13 — Audit Remediation TIER P1 (v1 build pack) ✓ (R5 HALTED)
 
 R0 reconciliation → R1–R6 built. R5 (destructive Alembic downgrade)

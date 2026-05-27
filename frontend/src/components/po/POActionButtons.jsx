@@ -1,51 +1,42 @@
 /**
- * <POActionButtons/> — Chat 26 §R7.2 (Batch 1).
+ * <POActionButtons/> — R7 Batch 2 (wires Edit / Delete / Receipt / Void).
  *
- * Single source of truth for PO lifecycle action buttons. Replaces the
- * inline action area previously living in <PurchaseOrderDetail/>.
+ * Single source of truth for PO lifecycle action buttons. R7 Batch 1
+ * shipped the workflow-only set (Submit / Approve / Reject / Issue /
+ * Send back / Close); Batch 2 now turns the remaining seven testids
+ * (DEFERRED_TESTIDS) back on:
  *
- * BATCH-1 SCOPE (workflow-only).
+ *   - po-actions-receipt-btn          (issued)            → §R7.4
+ *   - po-actions-receipt-partial-btn  (partially_receipted) → §R7.4
+ *   - po-actions-void-btn             (approved)          → §R7.6
+ *   - po-actions-void-issued-btn      (issued / partial)  → §R7.6
+ *   - po-actions-edit-btn             (draft, edit_tier='full')
+ *   - po-actions-edit-issued-btn      (issued+, edit_tier='header_annotation_only')
+ *   - po-actions-delete-btn           (draft only)
  *
- * Action matrix — `po.status × perm × self-approval`:
+ * Workflow gating remains status × perm × self-approval. Edit gating
+ * is additionally driven by the backend's `edit_tier` enum (lowercase
+ * strings: `full` | `header_annotation_only` | `read_only`), per
+ * services/po_authz.py:EditPermission. Delete is draft-only because
+ * the backend returns 422 on non-draft (DELETE contract).
  *
- *   draft               → Submit
+ * `edit_tier === 'full'` AND status==='draft' → edit-btn.
+ * `edit_tier === 'header_annotation_only'`    → edit-issued-btn.
+ * (Service maps `approved` to `full` too — that's still an edit-btn
+ * surface; the issued/partial/receipted set is the only header-only
+ * tier, so the testid split mirrors that.)
+ *
+ * Action matrix:
+ *   draft               → Edit, Submit, Delete
  *   pending_approval    → Approve, Reject              (self-approval guard)
- *   approved            → Issue, Send back             (send-back NOT guarded)
- *   issued              → Close
- *   partially_receipted → Close
- *   receipted           → Close
+ *   approved            → Edit, Issue, Send back, Void
+ *   issued              → Edit (annotation), Receipt, Close, Void
+ *   partially_receipted → Edit (annotation), Receipt, Close
+ *   receipted           → Edit (annotation), Close
  *   closed / voided     → (none)
  *
- * Intentionally deferred to Batch 2 (do NOT render dead buttons):
- *
- *   - Edit / Delete (draft) — no /edit nor /delete routes exist in
- *     App.js; the Links would land on the App.js catch-all
- *     ('not-found-page'). Edit / Delete forms ship with Batch 2.
- *   - Edit (issued)         — same: no route.
- *   - + Receipt             — receipt form is R7.4 / Batch 2.
- *   - Void                  — backend requires non-empty `reason`
- *     (POVoidBody, min_length=1). A reason dialog needs the R7.6 /
- *     Batch 2 confirm-dialog system. Without it the click 422s.
- *
- * The capability helpers (`canEditPO`, `canDeletePO`, `canEditIssuedPO`,
- * `canReceiptPO`, `canVoidPO`) are imported but not currently used —
- * Batch 2 wires the buttons back in once their target routes / dialogs
- * exist. Leaving the imports here keeps the diff localised to a couple
- * of lines per button when those batches land.
- *
- * `edit_tier` (lowercase string from backend) gates EDITING ONLY.
- * Workflow transitions (Submit / Approve / Reject / Issue / Send back /
- * Close) are gated by status × perm, independent of edit_tier. With
- * Edit / Delete already removed from Batch 1, edit_tier currently has
- * no observable effect on the rendered set — kept as a placeholder so
- * Batch 2 only has to flip the deferred conditionals back on.
- *
- * Self-approval guard mirrors backend `SelfApprovalForbidden`: when
- * `po.submitted_by === me.id`, Approve + Reject hide. Send back is NOT
- * subject to this rule (correction path).
- *
- * Toast policy (Batch 1): plain mutate + Sonner success/error.
- * Optimistic + confirm-dialog polish is R7.6 / Batch 2.
+ * Self-approval guard mirrors backend `SelfApprovalForbidden`. Send
+ * back is NOT subject to it (correction path).
  */
 import React, { useState } from 'react';
 import { toast } from 'sonner';
@@ -53,8 +44,8 @@ import { toast } from 'sonner';
 import { useAuth } from '@/context/AuthContext';
 import { usePoTransition } from '@/hooks/purchaseOrders';
 import {
-  canApprovePO, canClosePO,
-  canIssuePO, canRejectPO, canSubmitPO,
+  canApprovePO, canClosePO, canDeletePO, canEditPO, canEditIssuedPO,
+  canIssuePO, canReceiptPO, canRejectPO, canSubmitPO, canVoidPO,
 } from '@/lib/poCapability';
 import { isSubmitter } from '@/lib/poSubmitter';
 
@@ -64,14 +55,15 @@ import {
 import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
 
+import POReceiptDialog from '@/components/po/POReceiptDialog';
+import POVoidDialog    from '@/components/po/POVoidDialog';
+import POEditDialog    from '@/components/po/POEditDialog';
+import PODeleteDialog  from '@/components/po/PODeleteDialog';
+
 // Send-back is gated on `pos.edit OR pos.approve` (matches the backend
 // guard on POST /purchase-orders/{id}/send-back, R7.0b). Inlined here
 // since canEditPO/canApprovePO are the live imports above.
 function canSendBackPO(me) {
-  // Use canApprovePO as the primary gate — anyone who can approve can
-  // send back. The OR-with-pos.edit fallback covers PMs who can author
-  // POs but not approve; they're still allowed to recall an approved PO.
-  // (Mirrors the backend's _require check in the send-back endpoint.)
   if (canApprovePO(me)) return true;
   return Array.isArray(me?.permissions) && me.permissions.includes('pos.edit');
 }
@@ -99,6 +91,12 @@ export default function POActionButtons({ po }) {
   const [rejectOpen, setRejectOpen] = useState(false);
   const [rejectReason, setRejectReason] = useState('');
 
+  // Batch 2 dialog open-state.
+  const [receiptOpen, setReceiptOpen] = useState(false);
+  const [voidOpen, setVoidOpen]       = useState(false);
+  const [editOpen, setEditOpen]       = useState(false);
+  const [deleteOpen, setDeleteOpen]   = useState(false);
+
   const callTxn = async (m, body = {}, successMsg = 'Done') => {
     try {
       await m.mutateAsync(body);
@@ -121,14 +119,48 @@ export default function POActionButtons({ po }) {
   const isPartial     = status === 'partially_receipted';
   const isReceipted   = status === 'receipted';
 
+  // R7 Batch 2 — edit_tier gating. Lowercase enum from
+  // services/po_authz.py:EditPermission.
+  const editTier = po?.edit_tier ?? 'read_only';
+  const isEditFull            = editTier === 'full';
+  const isEditAnnotationOnly  = editTier === 'header_annotation_only';
+
+  // Edit gate = internal user + project access + edit perm, then tier.
+  // The first two are enforced server-side and reflected in `edit_tier`
+  // (a user without project access never receives a non-read_only
+  // tier — the GET 404s on the PO entirely). So the frontend gate is
+  // tier × perm only.
+  const showEditBtn       = isEditFull           && canEditPO(me);
+  const showEditIssuedBtn = isEditAnnotationOnly && canEditIssuedPO(me);
+
   const sendBackNotesTrimmed = sendBackNotes.trim();
   const rejectReasonTrimmed = rejectReason.trim();
 
   return (
     <>
       <div className="flex flex-wrap gap-2" data-testid="po-actions">
-        {/* draft → Submit only. Edit / Delete deferred to Batch 2 (no
-            /edit nor /delete routes exist yet). */}
+
+        {/* ── Edit (header-only) — draft / approved → edit-btn ─── */}
+        {showEditBtn && (
+          <button
+            type="button"
+            onClick={() => setEditOpen(true)}
+            className={BTN_OUTLINE}
+            data-testid="po-actions-edit-btn"
+          >Edit</button>
+        )}
+
+        {/* ── Edit (annotation-only) — issued+ → edit-issued-btn ─ */}
+        {showEditIssuedBtn && (
+          <button
+            type="button"
+            onClick={() => setEditOpen(true)}
+            className={BTN_OUTLINE}
+            data-testid="po-actions-edit-issued-btn"
+          >Edit</button>
+        )}
+
+        {/* draft → Submit + Delete (Edit handled above). */}
         {isDraft && canSubmitPO(me) && (
           <button
             type="button"
@@ -137,6 +169,14 @@ export default function POActionButtons({ po }) {
             className={BTN_PRIMARY}
             data-testid="po-actions-submit-btn"
           >Submit</button>
+        )}
+        {isDraft && canDeletePO(me) && (
+          <button
+            type="button"
+            onClick={() => setDeleteOpen(true)}
+            className={BTN_DANGER}
+            data-testid="po-actions-delete-btn"
+          >Delete</button>
         )}
 
         {/* pending_approval — Approve / Reject hide when current user is
@@ -167,9 +207,7 @@ export default function POActionButtons({ po }) {
           >Reject</button>
         )}
 
-        {/* approved → Issue / Send back. Void deferred to Batch 2 (the
-            backend requires a non-empty reason; the dialog system that
-            collects it ships with R7.6). */}
+        {/* approved → Issue / Send back / Void. */}
         {isApproved && canIssuePO(me) && (
           <button
             type="button"
@@ -187,8 +225,25 @@ export default function POActionButtons({ po }) {
             data-testid="po-actions-send-back-btn"
           >Send back</button>
         )}
+        {isApproved && canVoidPO(me) && (
+          <button
+            type="button"
+            onClick={() => setVoidOpen(true)}
+            className={BTN_DANGER}
+            data-testid="po-actions-void-btn"
+          >Void</button>
+        )}
 
-        {/* issued → Close. Edit-issued + Receipt + Void deferred. */}
+        {/* issued → Receipt + Close. (Void-issued rendered once below
+            for the issued / partial set.) */}
+        {isIssued && canReceiptPO(me) && (
+          <button
+            type="button"
+            onClick={() => setReceiptOpen(true)}
+            className={BTN_PRIMARY}
+            data-testid="po-actions-receipt-btn"
+          >+ Receipt</button>
+        )}
         {isIssued && canClosePO(me) && (
           <button
             type="button"
@@ -199,7 +254,15 @@ export default function POActionButtons({ po }) {
           >Close</button>
         )}
 
-        {/* partially_receipted → Close. Receipt deferred. */}
+        {/* partially_receipted → Receipt + Close. */}
+        {isPartial && canReceiptPO(me) && (
+          <button
+            type="button"
+            onClick={() => setReceiptOpen(true)}
+            className={BTN_PRIMARY}
+            data-testid="po-actions-receipt-partial-btn"
+          >+ Receipt</button>
+        )}
         {isPartial && canClosePO(me) && (
           <button
             type="button"
@@ -210,7 +273,19 @@ export default function POActionButtons({ po }) {
           >Close</button>
         )}
 
-        {/* receipted */}
+        {/* Void-issued — single render for issued OR partial (no double
+            testid). Receipted POs are NOT voidable (the backend
+            rejects with 409 / wrong-status); we mirror that here. */}
+        {(isIssued || isPartial) && canVoidPO(me) && (
+          <button
+            type="button"
+            onClick={() => setVoidOpen(true)}
+            className={BTN_DANGER}
+            data-testid="po-actions-void-issued-btn"
+          >Void</button>
+        )}
+
+        {/* receipted → Close. */}
         {isReceipted && canClosePO(me) && (
           <button
             type="button"
@@ -301,6 +376,33 @@ export default function POActionButtons({ po }) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* ── R7.4 Receipt dialog ──────────────────────────────────── */}
+      <POReceiptDialog
+        open={receiptOpen}
+        onOpenChange={setReceiptOpen}
+        po={po}
+      />
+
+      {/* ── R7.6 Void dialog (required reason) ───────────────────── */}
+      <POVoidDialog
+        open={voidOpen}
+        onOpenChange={setVoidOpen}
+        po={po}
+      />
+
+      {/* ── Edit / Delete dialogs ────────────────────────────────── */}
+      <POEditDialog
+        open={editOpen}
+        onOpenChange={setEditOpen}
+        po={po}
+      />
+      <PODeleteDialog
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        po={po}
+        projectId={po?.project_id}
+      />
     </>
   );
 }

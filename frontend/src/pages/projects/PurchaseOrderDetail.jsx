@@ -13,7 +13,7 @@
  * caller lacks pos.view_sensitive.
  */
 import React, { useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 
 import { useAuth } from '@/context/AuthContext';
 import { usePO, useReceipts } from '@/hooks/purchaseOrders';
@@ -31,7 +31,12 @@ export default function PurchaseOrderDetail() {
   const { id: projectId, po_id: poId } = useParams();
   const { me } = useAuth();
   const canSensitive = canViewSensitivePO(me);
-  const [tab, setTab] = useState('lines');
+  const [searchParams] = useSearchParams();
+  // R7.5 — honour ?tab=approvals deep-link from the per-project
+  // approvals dashboard.
+  const initialTab = TABS.includes(searchParams.get('tab'))
+    ? searchParams.get('tab') : 'lines';
+  const [tab, setTab] = useState(initialTab);
 
   const { data: po, isLoading, isError } = usePO(poId);
   const { data: receipts } = useReceipts(poId, { enabled: tab === 'receipts' });

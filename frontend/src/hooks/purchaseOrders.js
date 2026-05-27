@@ -140,26 +140,94 @@ export function usePatchPO(poId) {
   });
 }
 
+// R7 Batch 2 — Delete a draft PO. Backend enforces 422 on non-draft,
+// the UI mounts the button only on draft (mirrors that contract).
+// Invalidates the global PO list namespace so the now-deleted row
+// disappears from any cached project list.
+export function useDeletePO(poId) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => poApi.deletePO(poId),
+    onSuccess: () => {
+      qc.removeQueries({ queryKey: poKeys.detail(poId) });
+      qc.invalidateQueries({ queryKey: poKeys.all });
+    },
+  });
+}
+
+// R7.6 — verbs that change *commitment* on the budget line(s) this PO
+// touches. After settle we coarse-invalidate `['budgets']` so the
+// Budgets grid's committed column refreshes alongside the PO detail.
+// (The transition hook does not have budgetId/lineId on hand, so the
+// coarse precedent from budgets.js:245 is the right shape.)
+//
+//   - void      — releases committed → 0
+//   - sendBack  — releases committed → 0 (returns to draft)
+//   - issue     — moves draft → committed (commitment first appears)
+//   - approve   — over-budget approval path also flips committed
+//   - close     — terminal; committed → frozen
+//
+// `receipt` is its own hook (`useCreateReceipt` below).
+const COMMITMENT_VERBS = new Set(['void', 'sendBack', 'issue', 'approve', 'close']);
+
+// R7.6 — verbs that benefit from an optimistic PO-detail patch while
+// the request is in flight. Each entry returns the patch to apply on
+// the cached `po` object so the status pill + action set update
+// instantly. On error we roll back; on settle we invalidate.
+//
+// We deliberately keep the set narrow (void / sendBack only): these
+// are the destructive / corrective verbs where the perceived
+// latency is most jarring. issue / approve / close still benefit from
+// the budgets-cache invalidation above but go through the plain
+// onSuccess path because a botched optimistic status flip on those
+// would surface scary intermediate UI.
+const OPTIMISTIC_STATUS_PATCH = {
+  void: () => ({ status: 'voided' }),
+  sendBack: () => ({ status: 'draft' }),
+};
+
 export function usePoTransition(poId, verb) {
   const qc = useQueryClient();
   const fn = {
     submit: () => poApi.submitPO(poId),
     approve: (body) => poApi.approvePO(poId, body),
     reject: (body) => poApi.rejectPO(poId, body),
-    // R7.0b — approved → draft. NB: budget-line cache invalidation
-    // for commitment-changing verbs (send-back joins approve/issue/
-    // void) is R7.6/Batch 2; the R6 grid's committed column may lag
-    // a send-back until refetch — acceptable at the batch boundary.
+    // R7.0b — approved → draft. R7.6 — sendBack is now a commitment-
+    // changing verb; the coarse `['budgets']` invalidation below
+    // refreshes the R6 grid's committed column on settle.
     sendBack: (body) => poApi.sendBackPO(poId, body),
     issue: () => poApi.issuePO(poId),
     void: (body) => poApi.voidPO(poId, body),
     close: () => poApi.closePO(poId),
   }[verb];
+
+  const isCommitmentVerb = COMMITMENT_VERBS.has(verb);
+  const patchFn = OPTIMISTIC_STATUS_PATCH[verb];
+
   return useMutation({
     mutationFn: fn,
-    onSuccess: () => {
+    // R7.6 — optimistic PO-detail patch (void / sendBack only). Mirrors
+    // the budgets.js:137-156 / 169-200 onMutate/onError/onSettled shape.
+    onMutate: patchFn ? async () => {
+      await qc.cancelQueries({ queryKey: poKeys.detail(poId) });
+      const prev = qc.getQueryData(poKeys.detail(poId));
+      if (prev) {
+        qc.setQueryData(poKeys.detail(poId), { ...prev, ...patchFn() });
+      }
+      return { prev };
+    } : undefined,
+    onError: patchFn ? (_err, _vars, ctx) => {
+      if (ctx?.prev) qc.setQueryData(poKeys.detail(poId), ctx.prev);
+    } : undefined,
+    onSettled: () => {
       qc.invalidateQueries({ queryKey: poKeys.detail(poId) });
       qc.invalidateQueries({ queryKey: poKeys.all });
+      if (isCommitmentVerb) {
+        // AC5 — refresh the Budgets grid's committed column. Coarse
+        // invalidation is intentional: the hook has no budgetId/lineId
+        // and budgets.js:245 sets the in-repo precedent.
+        qc.invalidateQueries({ queryKey: ['budgets'] });
+      }
     },
   });
 }
@@ -194,6 +262,11 @@ export function useCreateReceipt(poId) {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: poKeys.detail(poId) });
       qc.invalidateQueries({ queryKey: poKeys.receipts(poId) });
+      // R7.6 / AC5 — a receipt moves committed → actual, so the Budgets
+      // grid's committed column is stale until refreshed. Coarse
+      // invalidation mirrors the budgets.js:245 precedent (no
+      // budgetId/lineId on hand here).
+      qc.invalidateQueries({ queryKey: ['budgets'] });
     },
   });
 }
