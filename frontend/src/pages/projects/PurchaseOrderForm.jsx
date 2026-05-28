@@ -25,8 +25,8 @@ function blankLine() {
 export default function PurchaseOrderForm() {
   const { id: projectId } = useParams();
   const navigate = useNavigate();
-  const { user } = useAuth();
-  const canSensitive = canViewSensitivePO(user);
+  const { me } = useAuth();
+  const canSensitive = canViewSensitivePO(me);
 
   const [supplierId, setSupplierId] = useState('');
   const [budgetId, setBudgetId] = useState('');
@@ -40,7 +40,7 @@ export default function PurchaseOrderForm() {
     if (!issueDate) setIssueDate(new Date().toISOString().slice(0, 10));
   }, [issueDate]);
 
-  if (!canCreatePO(user)) {
+  if (!canCreatePO(me)) {
     return <div className="p-6 text-sm" data-testid="po-form-forbidden">
       You do not have permission to create purchase orders.
     </div>;

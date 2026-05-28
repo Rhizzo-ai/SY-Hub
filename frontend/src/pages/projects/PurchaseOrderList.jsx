@@ -32,19 +32,19 @@ const TABS = ['all', 'approvals'];
 
 export default function PurchaseOrderList() {
   const { id: projectId } = useParams();
-  const { user } = useAuth();
+  const { me } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const status = searchParams.get('status') || '';
   const tab = searchParams.get('tab') === 'approvals' ? 'approvals' : 'all';
 
-  const canSensitive = canViewSensitivePO(user);
+  const canSensitive = canViewSensitivePO(me);
   const { data, isLoading, isError } = useProjectPOs(projectId, {
     params: status ? { status } : undefined,
     enabled: tab === 'all',
   });
   const rows = data?.items ?? [];
 
-  if (!canViewPOs(user)) {
+  if (!canViewPOs(me)) {
     return <div className="p-6 text-sm" data-testid="po-list-forbidden">
       You do not have permission to view purchase orders.
     </div>;
@@ -66,7 +66,7 @@ export default function PurchaseOrderList() {
     <div className="p-6 space-y-4" data-testid="po-list">
       <header className="flex items-center justify-between">
         <h1 className="text-xl font-semibold">Purchase orders</h1>
-        {canCreatePO(user) && (
+        {canCreatePO(me) && (
           <Link
             to={`/projects/${projectId}/purchase-orders/new`}
             className="px-3 py-1.5 rounded bg-sy-teal-600 text-white text-sm"
