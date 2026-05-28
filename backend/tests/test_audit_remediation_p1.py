@@ -30,8 +30,11 @@ import requests
 import sqlalchemy as sa
 from dotenv import load_dotenv
 
+from pathlib import Path
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_BACKEND = _REPO_ROOT / "backend"
 
-load_dotenv("/app/backend/.env")
+load_dotenv(str(_BACKEND / ".env"))
 
 BASE_URL = (
     os.environ.get("REACT_APP_BACKEND_URL", "").rstrip("/")
@@ -178,7 +181,7 @@ class TestP1_R1_MfaPendingHoles:
         get_current_user (NOT get_enrollment_user). Drift here would
         silently re-open the hole.
         """
-        path = "/app/backend/app/routers/auth.py"
+        path = str(_BACKEND / "app" / "routers" / "auth.py")
         with open(path) as f:
             src = f.read()
         # Find each handler block and assert the right dep.
@@ -214,7 +217,7 @@ class TestP1_R3_GovernanceSourceLock:
         """Source-level guard — create_new_version must call the shared
         lock helper BEFORE flipping source.is_current = False.
         """
-        path = "/app/backend/app/services/appraisal_revisions.py"
+        path = str(_BACKEND / "app" / "services" / "appraisal_revisions.py")
         with open(path) as f:
             src = f.read()
         marker = "def create_new_version"
@@ -243,7 +246,7 @@ class TestP1_R3_GovernanceSourceLock:
         (per the docstring at appraisal_scenarios.py). If a future commit
         adds such a flip, this test fails so the contract is preserved.
         """
-        path = "/app/backend/app/services/appraisal_scenarios.py"
+        path = str(_BACKEND / "app" / "services" / "appraisal_scenarios.py")
         with open(path) as f:
             src = f.read()
         marker = "def create_scenario"
@@ -374,7 +377,7 @@ class TestP1_R4_DocstringFix:
     """
 
     def test_enrollment_principal_docstring_does_not_list_password_change(self):
-        path = "/app/backend/app/auth/deps.py"
+        path = str(_BACKEND / "app" / "auth" / "deps.py")
         with open(path) as f:
             src = f.read()
         marker = "def get_enrollment_principal"
@@ -412,7 +415,7 @@ class TestP1_R5_DowngradeNonReversible:
         alembic invokes the function.
         """
         import importlib.util
-        path = "/app/backend/alembic/versions/0027_default_line_items_backfill.py"
+        path = str(_BACKEND / "alembic" / "versions" / "0027_default_line_items_backfill.py")
         spec = importlib.util.spec_from_file_location("mig_0027", path)
         assert spec is not None and spec.loader is not None
         mod = importlib.util.module_from_spec(spec)
@@ -435,7 +438,7 @@ class TestP1_R5_DowngradeNonReversible:
         must NOT be present in the downgrade body. Drift here would
         silently re-introduce the trapdoor.
         """
-        path = "/app/backend/alembic/versions/0027_default_line_items_backfill.py"
+        path = str(_BACKEND / "alembic" / "versions" / "0027_default_line_items_backfill.py")
         with open(path) as f:
             src = f.read()
         marker = "def downgrade"

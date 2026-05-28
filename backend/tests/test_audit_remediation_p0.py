@@ -23,8 +23,11 @@ import requests
 import sqlalchemy as sa
 from dotenv import load_dotenv
 
+from pathlib import Path
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_BACKEND = _REPO_ROOT / "backend"
 
-load_dotenv("/app/backend/.env")
+load_dotenv(str(_BACKEND / ".env"))
 
 BASE_URL = (
     os.environ.get("REACT_APP_BACKEND_URL", "").rstrip("/")
@@ -132,7 +135,7 @@ class TestP0_1_AppraisalLockHelper:
         `_lock_appraisal_for_update`. The build pack lists 13 sites;
         we assert >=13 to allow Batch-2 sites to add more.
         """
-        path = "/app/backend/app/routers/appraisals.py"
+        path = str(_BACKEND / "app" / "routers" / "appraisals.py")
         with open(path) as f:
             lines = f.readlines()
         recompute_idxs = [
@@ -631,7 +634,7 @@ class TestP0_2_ReceiptAuditActor:
         `.with_for_update()` so concurrent receipts on different lines
         of one PO serialise the status-flip decision.
         """
-        path = "/app/backend/app/services/po_receipts.py"
+        path = str(_BACKEND / "app" / "services" / "po_receipts.py")
         with open(path) as f:
             src = f.read()
         # Find the helper body and assert with_for_update is inside it.
@@ -660,7 +663,7 @@ class TestP0_3_MfaPendingBlocked:
         three token types. Drift here would silently re-allow
         unconstrained string token_type calls.
         """
-        path = "/app/backend/app/auth/tokens.py"
+        path = str(_BACKEND / "app" / "auth" / "tokens.py")
         with open(path) as f:
             src = f.read()
         assert (
@@ -892,7 +895,7 @@ class TestP0_4_MfaVerifyRateLimit:
         type-check and the user lookup so malformed tokens 401 first
         and don't consume a bucket slot.
         """
-        path = "/app/backend/app/routers/auth.py"
+        path = str(_BACKEND / "app" / "routers" / "auth.py")
         with open(path) as f:
             src = f.read()
         # Find the /mfa/verify route body.
