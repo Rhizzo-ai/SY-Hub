@@ -98,6 +98,25 @@ export default function POEditDialog({ open, onOpenChange, po }) {
     }
   };
 
+  // R7-polish §R3 — defense-in-depth short-circuit. <POActionButtons/>
+  // already gates the Edit button on `edit_tier !== 'read_only'`, so
+  // in normal flow this branch is unreachable. We still render an
+  // inert marker (no form, no inputs, no mutations) if a caller forces
+  // `open` while the backend reports the PO as read-only — keeps the
+  // contract symmetric with `read_only` PATCH 403 responses from the
+  // backend and protects against future regressions where the parent
+  // forgets the gate. The early-return sits AFTER all hooks (rules of
+  // hooks). See PurchaseOrderList.jsx:47-51 for the same shape.
+  if (open && tier === 'read_only') {
+    return (
+      <div
+        data-testid="po-edit-readonly-shortcircuit"
+        style={{ display: 'none' }}
+        aria-hidden="true"
+      />
+    );
+  }
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl" data-testid="po-edit-dialog">

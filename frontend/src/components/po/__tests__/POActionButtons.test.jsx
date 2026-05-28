@@ -1,11 +1,13 @@
 /**
  * <POActionButtons/> tests — Chat 26 §R7.2 (Batch 1) + R7 Batch 2.
  *
- * Batch 2 has re-enabled every previously-deferred button. The
- * DEFERRED_TESTIDS array is intentionally empty; the empty-loop
- * regression-guard block was REMOVED (zero iterations would have
- * been trivially green) and replaced with positive per-button render
- * assertions in the relevant status describe blocks below.
+ * Batch 2 has re-enabled every previously-deferred button. The AC1
+ * guard at the bottom of this file is now a self-anchoring positive
+ * check (snapshot of `data-testid="po-*-btn"` literals extracted
+ * from POActionButtons.jsx + a parametric existence test per
+ * testid) — replaces the prior vacuous `DEFERRED_TESTIDS === []`
+ * assertion. Per-button positive render assertions live in the
+ * relevant status describe blocks below.
  *
  *   draft               → Edit, Submit, Delete
  *   pending_approval    → Approve, Reject              (self-approval guard)
@@ -70,10 +72,9 @@ const ME_APPROVER = {
 const ME_READONLY = { id: 'user-ro', permissions: ['pos.view'] };
 
 // R7 Batch 2 — ALL previously deferred testids are now wired. The
-// array is intentionally empty; the loop-over-array guard block was
-// removed (it would have been a vacuous green pass). Each re-enabled
-// button has its own positive render assertion below.
-const DEFERRED_TESTIDS = [];
+// AC1 guard at the bottom of this file pins the live testid set by
+// reading POActionButtons.jsx source at test time (snapshot +
+// per-testid existence check) — see "AC1 — positive guard" block.
 
 function makePO({
   status,
@@ -493,8 +494,30 @@ describe('<POActionButtons/> — R7 Batch 2 full action matrix', () => {
     });
   });
 
-  // ── DEFERRED_TESTIDS — must remain empty (AC1) ────────────────────
-  test('AC1 — DEFERRED_TESTIDS array is empty (all Batch-2 testids wired)', () => {
-    expect(DEFERRED_TESTIDS).toEqual([]);
+  // ── AC1 — positive guard: every wired action `-btn` testid in source
+  // is captured in the snapshot. R7-polish replaces the previous
+  // `expect(DEFERRED_TESTIDS).toEqual([])` tautology (vacuous green
+  // when DEFERRED_TESTIDS=[]) with a self-anchoring snapshot derived
+  // from POActionButtons.jsx itself, plus a parametric existence
+  // check per testid. Adding / removing a wired `-btn` testid forces
+  // a reviewed snapshot diff.
+  const POActionButtonsSource = require('fs').readFileSync(
+    require.resolve('../POActionButtons.jsx'),
+    'utf8',
+  );
+  const WIRED_TESTIDS = [
+    ...POActionButtonsSource.matchAll(/data-testid="(po-[a-z-]+-btn)"/g),
+  ]
+    .map((m) => m[1])
+    .sort();
+
+  test('AC1 — wired action `-btn` testid set matches snapshot', () => {
+    expect(WIRED_TESTIDS).toMatchSnapshot();
+  });
+
+  describe.each(WIRED_TESTIDS)('AC1 — wired action testid: %s', (testid) => {
+    test('is present in POActionButtons source', () => {
+      expect(POActionButtonsSource).toContain(`data-testid="${testid}"`);
+    });
   });
 });

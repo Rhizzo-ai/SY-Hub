@@ -162,13 +162,19 @@ export function useDeletePO(poId) {
 // coarse precedent from budgets.js:245 is the right shape.)
 //
 //   - void      — releases committed → 0
-//   - sendBack  — releases committed → 0 (returns to draft)
-//   - issue     — moves draft → committed (commitment first appears)
-//   - approve   — over-budget approval path also flips committed
-//   - close     — terminal; committed → frozen
+//   - sendBack  — approved → draft; trigger drops committed → 0
+//   - approve   — pending_approval → approved; commitment first appears
+//   - close     — issued/receipted → closed; releases committed → 0
+//
+// R7-polish — `issue` removed: approved → issued is a status flip
+// between two states both inside the commitment-inclusion set
+// (approved, issued, partially_receipted, receipted) per
+// 0032_po_approvals.py fn_budget_line_recompute_commitments, so the
+// trigger leaves committed_value unchanged. Invalidating `['budgets']`
+// on issue was dead weight.
 //
 // `receipt` is its own hook (`useCreateReceipt` below).
-const COMMITMENT_VERBS = new Set(['void', 'sendBack', 'issue', 'approve', 'close']);
+const COMMITMENT_VERBS = new Set(['void', 'sendBack', 'approve', 'close']);
 
 // R7.6 — verbs that benefit from an optimistic PO-detail patch while
 // the request is in flight. Each entry returns the patch to apply on

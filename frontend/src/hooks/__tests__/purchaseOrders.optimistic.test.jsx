@@ -2,7 +2,7 @@
  * R7.6 optimistic layer tests — usePoTransition + useCreateReceipt.
  *
  * Asserts:
- *   - Commitment-changing verbs (void, sendBack, issue, approve, close)
+ *   - Commitment-changing verbs (void, sendBack, approve, close)
  *     invalidate `['budgets']` on settle (AC5).
  *   - Void's optimistic patch flips po.status to 'voided' on onMutate
  *     and rolls back to the prior snapshot when the mutation rejects.

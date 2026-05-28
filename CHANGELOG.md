@@ -12,6 +12,58 @@ Each entry: date, prompt reference (if applicable), change, rationale.
 ## Entries
 
 
+## Chat 28 — R7-polish-mini v2 (audit-pass polish; no functional surface) (2026-05-28)
+
+Five-item polish pass cleaning up audit-flagged smells in the R7 Batch 2
+deliverable. No new schemas, no new perms/roles, no new endpoints.
+Working-tree only at file time; operator-gated push.
+
+- **R1 — `COMMITMENT_VERBS` dead-weight pruned**
+  (`frontend/src/hooks/purchaseOrders.js`). `issue` removed from the
+  invalidation set. Rationale: `approved → issued` is a status flip
+  between two states both inside the commitment-inclusion set
+  `(approved, issued, partially_receipted, receipted)` per
+  `0032_po_approvals.py` `fn_budget_line_recompute_commitments`, so
+  `trg_po_status_commitments` leaves `committed_value` unchanged. The
+  `['budgets']` invalidation on issue was a no-op cost. Surviving set:
+  `{void, sendBack, approve, close}`. Receipt is its own hook.
+- **R2 — `DEFERRED_TESTIDS === []` tautology replaced**
+  (`frontend/src/components/po/__tests__/POActionButtons.test.jsx`).
+  After Batch 2 wired every button, the empty-array assertion compiled
+  to a vacuous green pass. Replaced with a self-anchoring positive
+  guard: the test reads `POActionButtons.jsx` source at test time,
+  extracts every `data-testid="po-*-btn"` literal via regex, snapshots
+  the sorted set, and runs a `describe.each` per-testid existence
+  check. Adding or removing a wired `-btn` forces a reviewed snapshot
+  diff. The `DEFERRED_TESTIDS` constant is removed.
+- **R3 — `POEditDialog` `read_only` defense-in-depth short-circuit**
+  (`frontend/src/components/po/POEditDialog.jsx`). `<POActionButtons/>`
+  already gates the Edit button on `edit_tier !== 'read_only'`, so the
+  parent-side gate is the primary contract. Added an inert
+  early-return after all hooks (rules-of-hooks safe) rendering
+  `data-testid="po-edit-readonly-shortcircuit"` if a caller forces
+  `open` while `tier === 'read_only'`. Symmetric with the backend's
+  `read_only`-tier PATCH 403; protects against future regressions if
+  the parent gate is dropped.
+- **R4 — Chat 26 closing-summary errata note**
+  (`docs/chat-summaries/chat-26-closing.md`). Appended an Errata
+  section flagging the `DEFERRED_TESTIDS` pattern (line 30 +
+  Engineering-invariants §1) as superseded by R2 above. Original intent
+  (catch partial-wires; force a deliberate audit-trail commit) is
+  preserved; only the implementation moved from "assert absent" to
+  "snapshot present."
+- **R5 — CHANGELOG entry written** (this entry).
+
+**Tests.** Frontend Jest delta in POActionButtons suite: 35 → **50**
+(net +15 — removed 1 tautology, added 1 snapshot test + 15
+`describe.each` parametric per-testid existence checks; one new
+snapshot file at `__snapshots__/POActionButtons.test.jsx.snap`).
+`purchaseOrders.optimistic.test.jsx` unchanged at 6 passing. Full
+`(POEdit|POAction|purchaseOrders|POVoid|PODelete|POApproval|POReceipt)`
+filter at file time: 5 suites, **74 passed, 0 failed, 1 snapshot**.
+Backend pytest not touched.
+
+
 ## Chat 26 — R7.0b backend send-back + R7 Batch 1 frontend (2026-02-12)
 
 R7.0b ships first as the backend send-back path; R7 Batch 1 is a
@@ -171,7 +223,7 @@ with two new issues. Both fixed in-place; no new Build Pack.
   incompatible with a wildcard CORS_ORIGINS. ... Currently CORS_ORIGINS=''`.
   The CI env block hadn't set `CORS_ORIGINS` — locally it lives in
   `backend/.env`. Added `CORS_ORIGINS:
-  "https://batch-2-checkout.preview.emergentagent.com"` to the backend
+  "https://build-pack-r7.preview.emergentagent.com"` to the backend
   job env block in `.github/workflows/ci.yml` (value copied verbatim from
   `backend/.env`) plus a 6-line explanatory comment noting that CORS is
   never exercised in CI (pytest speaks server-to-server, no browser

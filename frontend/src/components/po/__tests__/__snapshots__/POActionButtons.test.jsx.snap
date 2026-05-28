@@ -1,0 +1,21 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`<POActionButtons/> — R7 Batch 2 full action matrix AC1 — wired action \`-btn\` testid set matches snapshot 1`] = `
+Array [
+  "po-actions-approve-btn",
+  "po-actions-close-btn",
+  "po-actions-close-issued-btn",
+  "po-actions-close-partial-btn",
+  "po-actions-delete-btn",
+  "po-actions-edit-btn",
+  "po-actions-edit-issued-btn",
+  "po-actions-issue-btn",
+  "po-actions-receipt-btn",
+  "po-actions-receipt-partial-btn",
+  "po-actions-reject-btn",
+  "po-actions-send-back-btn",
+  "po-actions-submit-btn",
+  "po-actions-void-btn",
+  "po-actions-void-issued-btn",
+]
+`;

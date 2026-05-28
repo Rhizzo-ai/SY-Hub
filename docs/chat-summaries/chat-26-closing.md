@@ -53,3 +53,17 @@ Backend pytest:    unchanged from Chat 25 baseline
 ## Backfill note
 
 Written in Chat 28 (2026-05-27) from the well-detailed CHANGELOG Chat 26 entry. No information loss anticipated vs a same-day write — the CHANGELOG entry is unusually thorough.
+
+---
+
+## Errata — superseded by Chat 28 R7-polish-mini §R2
+
+The `DEFERRED_TESTIDS` regression-guard pattern described above (Repo-state §POActionButtons paragraph, line 30, and Engineering-invariants §1, line 38) was a tautology after Batch 2 wired every previously-deferred button. With `DEFERRED_TESTIDS = []`, the `forEach`-over-empty-array assertion compiled to zero iterations — a vacuously-green test.
+
+Replaced in Chat 28 R7-polish-mini §R2 by a self-anchoring positive guard in `src/components/po/__tests__/POActionButtons.test.jsx`:
+
+- The test reads `POActionButtons.jsx` source at test time, extracts every `data-testid="po-*-btn"` literal via regex, sorts the set, and snapshots it.
+- A `describe.each(WIRED_TESTIDS)` block adds a per-testid existence assertion.
+- Adding or removing a wired `-btn` forces a reviewed snapshot diff; the deferred-pattern's "remove from DEFERRED_TESTIDS" rule is no longer the mechanism.
+
+The original guard's stated intent (catch partial-wires; force a deliberate audit-trail commit when a deferred button is enabled) survives. Only the implementation moved from "assert absent" to "snapshot present." Reference: `docs/build-packs/r7-polish-mini-v2.md` §R2.
