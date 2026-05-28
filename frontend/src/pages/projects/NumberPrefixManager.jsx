@@ -20,9 +20,9 @@ const TABS = ['PO', 'Bill'];
 
 export default function NumberPrefixManager() {
   const { id: projectId } = useParams();
-  const { user } = useAuth();
+  const { me } = useAuth();
   const [tab, setTab] = useState('PO');
-  const canEdit = canEditPrefixes(user);
+  const canEdit = canEditPrefixes(me);
 
   const { data, isLoading, isError } = usePrefixes(projectId, {
     params: { document_type: tab },
@@ -30,7 +30,7 @@ export default function NumberPrefixManager() {
   const createMut = useCreatePrefix(projectId);
   const patchMut = usePatchPrefix(projectId);
 
-  if (!canViewPrefixes(user)) {
+  if (!canViewPrefixes(me)) {
     return <div className="p-6 text-sm" data-testid="prefix-manager-forbidden">
       You do not have permission to view number prefixes.
     </div>;

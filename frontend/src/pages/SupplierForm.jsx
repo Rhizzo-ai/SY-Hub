@@ -38,9 +38,9 @@ export default function SupplierForm() {
   const { id } = useParams();
   const navigate = useNavigate();
   const isEdit = !!id;
-  const { user } = useAuth();
-  const canSensitive = canViewSensitiveSupplier(user);
-  const canSubmit = isEdit ? canEditSupplier(user) : canCreateSupplier(user);
+  const { me } = useAuth();
+  const canSensitive = canViewSensitiveSupplier(me);
+  const canSubmit = isEdit ? canEditSupplier(me) : canCreateSupplier(me);
 
   const { data: existing } = useSupplier(id, { enabled: isEdit });
   const create = useCreateSupplier();

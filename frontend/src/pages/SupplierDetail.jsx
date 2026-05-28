@@ -19,9 +19,9 @@ import SensitiveValue from '@/components/po/SensitiveValue';
 
 export default function SupplierDetail() {
   const { id } = useParams();
-  const { user } = useAuth();
+  const { me } = useAuth();
   const navigate = useNavigate();
-  const canSensitive = canViewSensitiveSupplier(user);
+  const canSensitive = canViewSensitiveSupplier(me);
 
   const { data: s, isLoading, isError } = useSupplier(id);
   const archive = useArchiveSupplier();
@@ -43,14 +43,14 @@ export default function SupplierDetail() {
           <div className="text-xs text-sy-grey-600">{s.status} · CIS {s.cis_status ?? 'None'}</div>
         </div>
         <div className="flex gap-2">
-          {canEditSupplier(user) && (
+          {canEditSupplier(me) && (
             <Link
               to={`/suppliers/${s.id}/edit`}
               className="px-3 py-1.5 rounded border text-sm"
               data-testid="supplier-detail-edit-btn"
             >Edit</Link>
           )}
-          {canArchiveSupplier(user) && s.status !== 'Archived' && (
+          {canArchiveSupplier(me) && s.status !== 'Archived' && (
             <button
               type="button" onClick={onArchive}
               className="px-3 py-1.5 rounded border text-sm text-red-700"

@@ -41,14 +41,14 @@ describe('<POApprovalsTab/> — R7.5 per-project approvals dashboard', () => {
   beforeEach(() => { jest.clearAllMocks(); });
 
   test('forbidden persona sees the perm-gated copy', () => {
-    useAuth.mockReturnValue({ user: ME_NO_VIEW });
+    useAuth.mockReturnValue({ me: ME_NO_VIEW });
     useProjectPOs.mockReturnValue({ data: { items: [] }, isLoading: false });
     renderWithProviders(<POApprovalsTab />);
     expect(screen.getByTestId('po-approvals-forbidden')).toBeInTheDocument();
   });
 
   test('renders only pending_approval rows (client-side filter fallback)', () => {
-    useAuth.mockReturnValue({ user: ME_APPROVER });
+    useAuth.mockReturnValue({ me: ME_APPROVER });
     useProjectPOs.mockReturnValue({
       data: {
         items: [
@@ -69,14 +69,14 @@ describe('<POApprovalsTab/> — R7.5 per-project approvals dashboard', () => {
   });
 
   test('empty list renders the "no POs awaiting approval" state', () => {
-    useAuth.mockReturnValue({ user: ME_APPROVER });
+    useAuth.mockReturnValue({ me: ME_APPROVER });
     useProjectPOs.mockReturnValue({ data: { items: [] }, isLoading: false });
     renderWithProviders(<POApprovalsTab />);
     expect(screen.getByTestId('po-approvals-empty')).toBeInTheDocument();
   });
 
   test('approver persona — Review affordance on each row', () => {
-    useAuth.mockReturnValue({ user: ME_APPROVER });
+    useAuth.mockReturnValue({ me: ME_APPROVER });
     useProjectPOs.mockReturnValue({
       data: { items: [makeRow({ id: 'a' })] },
       isLoading: false,
@@ -87,7 +87,7 @@ describe('<POApprovalsTab/> — R7.5 per-project approvals dashboard', () => {
   });
 
   test('read-only persona — sees list but no Review affordance', () => {
-    useAuth.mockReturnValue({ user: ME_READONLY });
+    useAuth.mockReturnValue({ me: ME_READONLY });
     useProjectPOs.mockReturnValue({
       data: { items: [makeRow({ id: 'a' })] },
       isLoading: false,
@@ -99,14 +99,14 @@ describe('<POApprovalsTab/> — R7.5 per-project approvals dashboard', () => {
   });
 
   test('loading state renders po-approvals-loading', () => {
-    useAuth.mockReturnValue({ user: ME_APPROVER });
+    useAuth.mockReturnValue({ me: ME_APPROVER });
     useProjectPOs.mockReturnValue({ isLoading: true });
     renderWithProviders(<POApprovalsTab />);
     expect(screen.getByTestId('po-approvals-loading')).toBeInTheDocument();
   });
 
   test('error state renders po-approvals-error', () => {
-    useAuth.mockReturnValue({ user: ME_APPROVER });
+    useAuth.mockReturnValue({ me: ME_APPROVER });
     useProjectPOs.mockReturnValue({ isError: true });
     renderWithProviders(<POApprovalsTab />);
     expect(screen.getByTestId('po-approvals-error')).toBeInTheDocument();

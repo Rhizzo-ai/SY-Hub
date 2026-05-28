@@ -14,7 +14,7 @@ import { useAuth } from '@/context/AuthContext';
 import { canCreateSupplier, canViewSuppliers } from '@/lib/poCapability';
 
 export default function SupplierList() {
-  const { user } = useAuth();
+  const { me } = useAuth();
   const [statusFilter, setStatusFilter] = useState('Active');
   const [search, setSearch] = useState('');
 
@@ -24,7 +24,7 @@ export default function SupplierList() {
 
   const rows = useMemo(() => data?.items ?? [], [data]);
 
-  if (!canViewSuppliers(user)) {
+  if (!canViewSuppliers(me)) {
     return (
       <div className="p-6 text-sm" data-testid="supplier-list-forbidden">
         You do not have permission to view suppliers.
@@ -36,7 +36,7 @@ export default function SupplierList() {
     <div className="p-6 space-y-4" data-testid="supplier-list">
       <header className="flex items-center justify-between">
         <h1 className="text-xl font-semibold">Suppliers</h1>
-        {canCreateSupplier(user) && (
+        {canCreateSupplier(me) && (
           <Link
             to="/suppliers/new"
             className="px-3 py-1.5 rounded bg-sy-teal-600 text-white text-sm"

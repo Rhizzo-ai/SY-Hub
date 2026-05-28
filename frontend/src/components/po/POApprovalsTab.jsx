@@ -39,9 +39,9 @@ import { fmtGBP } from '@/lib/poFormat';
 
 export default function POApprovalsTab() {
   const { id: projectId } = useParams();
-  const { user } = useAuth();
-  const canSensitive = canViewSensitivePO(user);
-  const canApprove   = canApprovePO(user);
+  const { me } = useAuth();
+  const canSensitive = canViewSensitivePO(me);
+  const canApprove   = canApprovePO(me);
 
   // Pass the status filter through. Backend already honours
   // `status_in` via the `/purchase-orders?project_id=X&status=...`
@@ -51,7 +51,7 @@ export default function POApprovalsTab() {
     params: { status: 'pending_approval' },
   });
 
-  if (!canViewPOs(user)) {
+  if (!canViewPOs(me)) {
     return (
       <div className="text-sm" data-testid="po-approvals-forbidden">
         You do not have permission to view purchase orders.
