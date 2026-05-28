@@ -5,6 +5,7 @@ Mounted under /api/v1/purchase-orders.
 Endpoints:
   GET    /purchase-orders                               pos.view
   POST   /projects/{project_id}/purchase-orders         pos.create
+  GET    /projects/{project_id}/purchase-orders         pos.view
   GET    /purchase-orders/{po_id}                       pos.view
   PATCH  /purchase-orders/{po_id}                       pos.edit | pos.edit_issued
   DELETE /purchase-orders/{po_id}                       pos.delete (draft only)
@@ -356,6 +357,49 @@ def create_endpoint(
     db.commit()
     db.refresh(po)
     return svc.serialise(po, include_sensitive=include_sensitive)
+
+
+@router.get("/projects/{project_id}/purchase-orders")
+def list_project_pos_endpoint(
+    project_id: uuid.UUID,
+    supplier_id: Optional[uuid.UUID] = Query(None),
+    status: Optional[List[str]] = Query(None, alias="status"),
+    q: Optional[str] = Query(None, min_length=1, max_length=200),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    pair: tuple[Principal, UserPermissions] = Depends(_perm_dep),
+    db: Session = Depends(get_db),
+):
+    """Project-scoped PO list — thin wrapper over `svc.list_pos(...)`
+    with `project_id` bound from the PATH.
+
+    Mirrors `GET /purchase-orders` (line 154) byte-for-byte aside from
+    the path-bound project_id. Closes a latent Chat 24 R5 gap: the
+    frontend `listProjectPOs` (lib/api/purchaseOrders.js) has always
+    hit this URL — Batch 1 + Batch 2 wired UIs against it. Pattern α
+    project-visibility filtering is handled inside `svc.list_pos`
+    (visible_project_ids), so an unknown / invisible project surfaces
+    as 200 + empty list (mirrors the un-scoped handler's behaviour
+    for non-matching filters — see AC4).
+    """
+    principal, perms = pair
+    _require(perms, "pos.view")
+    include_sensitive = perms.has("pos.view_sensitive")
+
+    rows, total = svc.list_pos(
+        db, user=principal.user, perms=perms,
+        project_id=project_id, supplier_id=supplier_id,
+        status_in=status, q=q,
+        limit=limit, offset=offset,
+    )
+    return {
+        "items": [
+            svc.serialise(p, include_sensitive=include_sensitive) for p in rows
+        ],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
 
 
 # ─────────────────────────────────────────────────────────────────────────

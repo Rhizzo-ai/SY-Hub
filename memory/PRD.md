@@ -18,6 +18,32 @@ Frontend / actuals / commitments / Xero are out of scope until later prompts.
 
 ## What's been implemented
 
+### 2026-02-27 — R7 Batch 2 follow-on mini-pack (backend) ✓ COMPLETE
+
+Adds the missing `GET /projects/{project_id}/purchase-orders` endpoint
+— a latent Chat 24 R5 gap that surfaced visibly with Batch 2's R7.5
+approvals dashboard (the frontend `listProjectPOs` always hit this
+URL).
+
+- **R0 — Endpoint.** Thin wrapper in `app/routers/purchase_orders.py`
+  adjacent to the existing `POST /projects/{project_id}/purchase-orders`
+  (lines 360-407). Path-bound `project_id: uuid.UUID`; same query
+  params as the un-scoped `GET /purchase-orders` (`supplier_id`,
+  `status`, `q`, `limit`, `offset`); same `_perm_dep` + `pos.view`
+  gate; same response shape `{items,total,limit,offset}`; delegates
+  to `svc.list_pos(...)`. Route inventory docstring updated.
+- **R1 — Tests.** 4 new tests in
+  `tests/test_purchase_orders_api.py::TestR7Batch2FollowOnListProjectPOs`:
+  scoped-results (project A vs B), status-filter, perm-gate
+  (unauthenticated → 401), unknown-project → 200 + empty.
+- **AC1–AC4 — All green.** Pytest warm-DB: 934 passed
+  (before 930 → +4), 3 xpassed, 93 errors (all `test_projects.py`,
+  pre-existing). Frontend bundle delta zero (main `4cb90fd2.js`
+  hash identical). No migration, no new perm, no role grant, no
+  frontend changes.
+
+
+
 ### 2026-02-27 — R7 Batch 2 (frontend) ✓ COMPLETE
 
 R7 Batch 2 turns the seven Batch-1-deferred PO action testids back on

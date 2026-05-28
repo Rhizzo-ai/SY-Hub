@@ -816,3 +816,151 @@ class TestR55BudgetPOs:
         r = admin.get(f"{BASE_URL}/api/v1/budgets/{uuid.uuid4()}/purchase-orders")
         assert r.status_code == 404, r.text
         assert r.status_code != 403
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# R7 Batch 2 follow-on — GET /projects/{project_id}/purchase-orders
+#
+# Thin wrapper over `svc.list_pos(...)` with `project_id` bound from the
+# PATH. Closes the latent Chat 24 R5 gap surfaced by the R7.5 approvals
+# dashboard (the frontend `listProjectPOs` has always hit this URL).
+# ─────────────────────────────────────────────────────────────────────────
+
+class TestR7Batch2FollowOnListProjectPOs:
+    """`GET /api/v1/projects/{project_id}/purchase-orders` (R7 Batch 2
+    follow-on mini-pack). Mirrors the un-scoped list endpoint with
+    `project_id` taken from the PATH; same perm gate (`pos.view`),
+    same response shape, same query params (supplier_id, status, q,
+    limit, offset).
+    """
+
+    def _make_po(self, admin, setup):
+        r = admin.post(
+            f"{BASE_URL}/api/v1/projects/{setup['project_id']}/purchase-orders",
+            json=_po_create_body(setup),
+        )
+        assert r.status_code == 201, r.text
+        return r.json()["id"]
+
+    def test_list_project_pos_endpoint_returns_scoped_results(
+        self, admin, engine, project_setup,
+    ):
+        # Seed 2 POs on project_setup (project A).
+        po_a1 = self._make_po(admin, project_setup)
+        po_a2 = self._make_po(admin, project_setup)
+
+        # Seed a second project (B) on the same tenant + create 1 PO on it.
+        eid = _entity_id(engine, ADMIN_EMAIL)
+        project_b_id = _create_project(admin, eid)
+        b_budget_id, b_line_id = _seed_budget_and_lines(
+            engine, admin, project_b_id,
+        )
+        b_supplier_id = _create_supplier(admin, uuid.uuid4().hex[:6].upper())
+        b_setup = {
+            "project_id": project_b_id,
+            "budget_id": b_budget_id,
+            "budget_line_id": b_line_id,
+            "supplier_id": b_supplier_id,
+        }
+        po_b1 = self._make_po(admin, b_setup)
+
+        try:
+            # GET project A → exactly 2 items, both ours.
+            r = admin.get(
+                f"{BASE_URL}/api/v1/projects/{project_setup['project_id']}/purchase-orders"
+            )
+            assert r.status_code == 200, r.text
+            body = r.json()
+            assert body["total"] == 2
+            assert body["limit"] == 50 and body["offset"] == 0
+            ids = {it["id"] for it in body["items"]}
+            assert ids == {po_a1, po_a2}, ids
+            # Project B's PO must NOT appear in project A's list.
+            assert po_b1 not in ids
+        finally:
+            # Cleanup project B teardown (project_setup teardown handles A).
+            with engine.begin() as c:
+                c.execute(text("DELETE FROM purchase_orders WHERE project_id=:p"),
+                          {"p": project_b_id})
+                c.execute(text("DELETE FROM budgets WHERE project_id=:p"),
+                          {"p": project_b_id})
+                c.execute(text("DELETE FROM appraisals WHERE project_id=:p"),
+                          {"p": project_b_id})
+                c.execute(text("DELETE FROM projects WHERE id=:p"),
+                          {"p": project_b_id})
+                c.execute(text("DELETE FROM suppliers WHERE id=:s"),
+                          {"s": b_supplier_id})
+
+    def test_list_project_pos_endpoint_honours_status_filter(
+        self, admin, project_setup,
+    ):
+        # Two draft POs + one transitioned to approved (via submit
+        # auto-approve path on an entity with approval_required=false).
+        # Use the existing approved row for the status filter; the two
+        # drafts must NOT appear when we ask for status=approved.
+        po_draft_1 = self._make_po(admin, project_setup)
+        po_draft_2 = self._make_po(admin, project_setup)
+        po_for_approve = self._make_po(admin, project_setup)
+        rs = admin.post(
+            f"{BASE_URL}/api/v1/purchase-orders/{po_for_approve}/submit"
+        )
+        assert rs.status_code == 200, rs.text
+        assert rs.json()["status"] == "approved"
+
+        # Filter: status=approved → only po_for_approve.
+        r = admin.get(
+            f"{BASE_URL}/api/v1/projects/{project_setup['project_id']}/purchase-orders",
+            params={"status": "approved"},
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["total"] == 1
+        assert body["items"][0]["id"] == po_for_approve
+        assert body["items"][0]["status"] == "approved"
+
+        # Filter: status=draft → two drafts (po_draft_1, po_draft_2).
+        r2 = admin.get(
+            f"{BASE_URL}/api/v1/projects/{project_setup['project_id']}/purchase-orders",
+            params={"status": "draft"},
+        )
+        assert r2.status_code == 200, r2.text
+        ids = {it["id"] for it in r2.json()["items"]}
+        assert ids == {po_draft_1, po_draft_2}, ids
+
+    def test_list_project_pos_endpoint_requires_pos_view(
+        self, project_setup,
+    ):
+        # No seeded test persona in this env LACKS `pos.view` (the
+        # `read_only` role already grants it — see seed_rbac.py:332).
+        # The strongest credential-gate assertion available here is
+        # therefore that an unauthenticated request returns 401: the
+        # endpoint is NOT public. Authenticated `pos.view` callers
+        # already pass at 200 in the previous two tests, which together
+        # prove the gate is at `pos.view`-level (no escalation beyond).
+        import httpx
+        # Bare client — no cookies.
+        with httpx.Client(timeout=10.0) as anon:
+            r = anon.get(
+                f"{BASE_URL}/api/v1/projects/{project_setup['project_id']}/purchase-orders"
+            )
+        # FastAPI's session-auth dep raises 401 when the cookie is
+        # missing. (If perms ever fell off the user, the same dep
+        # surface would respond 403 — both prove the endpoint isn't
+        # open.)
+        assert r.status_code in (401, 403), r.text
+
+    def test_list_project_pos_endpoint_unknown_project_returns_empty(
+        self, admin,
+    ):
+        # A random UUID surfaces as 200 + empty list (the un-scoped
+        # endpoint's behaviour for non-matching filters; Pattern α
+        # visibility filtering inside svc.list_pos drops it).
+        r = admin.get(
+            f"{BASE_URL}/api/v1/projects/{uuid.uuid4()}/purchase-orders"
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["items"] == []
+        assert body["total"] == 0
+        assert body["limit"] == 50
+        assert body["offset"] == 0
