@@ -12,6 +12,31 @@ Each entry: date, prompt reference (if applicable), change, rationale.
 ## Entries
 
 
+## Chat 29 close — CI findings (2026-05-28)
+
+- **CI findings.** 17 backend test failures in CI under
+  `backend/tests/test_audit_remediation_p0.py` +
+  `backend/tests/test_audit_remediation_p1.py`, root-caused to
+  hard-coded `/app/backend/...` absolute paths that work only inside
+  Emergent's container. **Pre-existing** (predates Chat 29 — the
+  affected test files were added in `020a8e3` "Audit Remediation TIER
+  P0 (v2 build pack): four critical fixes" + auto-commit `700f184`,
+  both pre-Chat-28; CI's backend job has been red on this surface
+  since). Logged as Phase 2 backlog #15. **Local pytest unaffected**
+  — 1 004 passed / 3 xpassed at Chat 29 close. Fix shape (~30 min,
+  backend-test-only): replace every `path = "/app/backend/..."`
+  literal with `Path(__file__).resolve().parents[2] / "app" / ...`.
+  Deferred to Track 2 wrap-up audit (Chat 30+) or a Claude Code
+  checkpoint pass. Not blocking — local pytest has caught real
+  regressions throughout Tracks 2 + 3.
+- **Polish-pass push.** R7-polish-mini-v2 (logged below as the "Chat
+  28 — R7-polish-mini v2" entry) auto-committed as `243c841` +
+  `965b3ff`, pushed as `c69f43e` after operator diff review.
+- **Frontend Jest at close.** 61 suites, 405 passed, 1 snapshot —
+  literal `yarn craco test --watchAll=false` output captured in
+  `docs/chat-summaries/chat-29-closing.md` §B.
+
+
 ## Chat 28 — R7-polish-mini v2 (audit-pass polish; no functional surface) (2026-05-28)
 
 Five-item polish pass cleaning up audit-flagged smells in the R7 Batch 2

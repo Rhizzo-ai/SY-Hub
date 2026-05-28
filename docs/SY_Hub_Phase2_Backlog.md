@@ -430,3 +430,48 @@ test_post_attachment_immediately_visible_in_list` (green at HEAD) and the
 chat-19B `actuals-attachments.pm.spec.ts:Delete attachment` E2E has been
 un-skipped. See `docs/chat-summaries/chat-19c-closing.md` §"B36 RCA — not
 reproducible" for the full RCA and the hypothesised silent fix.
+
+
+## 15. CI path portability — `test_audit_remediation_p0.py` + `_p1.py` hard-coded `/app/...` absolute paths
+
+**Status:** pre-existing. Surfaced during the Chat 29 polish-pass CI
+run as 17 failures. **NOT** introduced by Chat 29 commits — repo CI
+has been red on the backend job since the test files were first
+committed (`020a8e3` "Audit Remediation TIER P0 (v2 build pack): four
+critical fixes" + the follow-on auto-commit `700f184`,
+pre-Chat-28).
+
+**Symptom.** Tests open files via absolute paths like
+`/app/backend/app/routers/appraisals.py`. Works inside Emergent's
+container (repo mounted at `/app`); fails on the GitHub Actions
+runner (checkout at `/home/runner/work/SY-Hub/SY-Hub/`) with
+`FileNotFoundError`.
+
+**Affected tests (17 total).** All `FileNotFoundError` +
+downstream auth-401 cascades in
+`backend/tests/test_audit_remediation_p0.py` +
+`backend/tests/test_audit_remediation_p1.py`. Literal offending
+literals at `_p0.py:135` (`appraisals.py`), `:634`
+(`po_receipts.py`), `:663` (`auth/tokens.py`), `:895`
+(`routers/auth.py`), plus the partner cases in `_p1.py`.
+
+**Fix (~30 min, frontend-touching nil, backend-test-only).**
+Replace every `path = "/app/backend/..."` literal with a
+`__file__`-relative resolution. The test files live at
+`backend/tests/`, so `parents[2]` resolves to `/app` (or whatever
+the repo root is on the runner):
+
+```python
+from pathlib import Path
+REPO_ROOT = Path(__file__).resolve().parents[2]
+path = REPO_ROOT / "app" / "routers" / "appraisals.py"
+```
+
+Run pytest locally to confirm 1004 → 1021 passing (re-enables the
+17), then push.
+
+**Owner.** Defer to the Track 2 wrap-up audit (Chat 30+) with MD /
+Louise, OR to a Claude Code checkpoint pass. **Not blocking** —
+local pytest has caught real regressions throughout Tracks 2 + 3.
+
+**Tracked in:** `docs/chat-summaries/chat-29-closing.md` §C.
