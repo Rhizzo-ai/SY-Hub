@@ -487,3 +487,6 @@ credentials.json
 *.pem
 *.key
 .credentials
+
+# Playwright AI-capture inbound fixtures (test artefacts)
+backend/var/inbound/

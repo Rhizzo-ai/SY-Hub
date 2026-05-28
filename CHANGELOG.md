@@ -15,8 +15,9 @@ Each entry: date, prompt reference (if applicable), change, rationale.
 ## Chat 28 — R7-polish-mini v2 (audit-pass polish; no functional surface) (2026-05-28)
 
 Five-item polish pass cleaning up audit-flagged smells in the R7 Batch 2
-deliverable. No new schemas, no new perms/roles, no new endpoints.
-Working-tree only at file time; operator-gated push.
+deliverable, plus two follow-on doc cleanups. No new schemas, no new
+perms/roles, no new endpoints. Working-tree only at file time;
+operator-gated push.
 
 - **R1 — `COMMITMENT_VERBS` dead-weight pruned**
   (`frontend/src/hooks/purchaseOrders.js`). `issue` removed from the
@@ -45,22 +46,49 @@ Working-tree only at file time; operator-gated push.
   `open` while `tier === 'read_only'`. Symmetric with the backend's
   `read_only`-tier PATCH 403; protects against future regressions if
   the parent gate is dropped.
-- **R4 — Chat 26 closing-summary errata note**
+- **R4 — Approve/close `['budgets']` invalidation PIN TESTS**
+  (new file `frontend/src/hooks/__tests__/purchaseOrders.budgetsInvalidation.test.jsx`).
+  Two contract tests that pin the surviving commitment verbs after
+  R1's prune. Uses a version-agnostic `calledWithBudgetsKey(spy)`
+  matcher that tolerates both TanStack v4 positional
+  (`invalidateQueries(['budgets'])`) and v5 options-object
+  (`invalidateQueries({ queryKey: ['budgets'] })`) call shapes, so
+  internal refactors of the call signature don't break the pin — only
+  an actual loss of the `['budgets']` invalidation does. STOP-gated
+  on failure with a loud `[R7-polish §R4 PIN FAIL]` error that dumps
+  the full `invalidateQueries` call log for triage. Mutation-verified:
+  pruning `approve` or `close` from `COMMITMENT_VERBS` fails the
+  corresponding test with the expected message.
+- **R5 — `.gitignore` the inbound fixtures** (`/.gitignore`). Appended
+  `backend/var/inbound/` under a new section comment
+  `# Playwright AI-capture inbound fixtures (test artefacts)`.
+  Already-committed PDFs left in place (per pack); only newly
+  created e2e capture artefacts under that directory will now be
+  ignored. Verified: `git check-ignore backend/var/inbound/test.pdf`
+  echoes the path (rc=0). `git ls-files backend/var/inbound/`
+  unchanged at 18 tracked files.
+- **R6 (add-on, doc) — Chat 26 closing-summary errata note**
   (`docs/chat-summaries/chat-26-closing.md`). Appended an Errata
   section flagging the `DEFERRED_TESTIDS` pattern (line 30 +
   Engineering-invariants §1) as superseded by R2 above. Original intent
   (catch partial-wires; force a deliberate audit-trail commit) is
   preserved; only the implementation moved from "assert absent" to
-  "snapshot present."
-- **R5 — CHANGELOG entry written** (this entry).
+  "snapshot present." (Not in the original pack — added during the
+  R2 audit trail.)
+- **R7 (add-on, doc) — this CHANGELOG entry.**
 
-**Tests.** Frontend Jest delta in POActionButtons suite: 35 → **50**
-(net +15 — removed 1 tautology, added 1 snapshot test + 15
-`describe.each` parametric per-testid existence checks; one new
-snapshot file at `__snapshots__/POActionButtons.test.jsx.snap`).
-`purchaseOrders.optimistic.test.jsx` unchanged at 6 passing. Full
-`(POEdit|POAction|purchaseOrders|POVoid|PODelete|POApproval|POReceipt)`
-filter at file time: 5 suites, **74 passed, 0 failed, 1 snapshot**.
+**Tests.** Frontend Jest deltas:
+
+| Suite | Pre | Post | Δ |
+|---|---|---|---|
+| `POActionButtons` | 35 | **50** | +15 (1 snapshot + 15 parametric) |
+| `purchaseOrders.optimistic` | 6 | 6 | 0 |
+| `purchaseOrders.budgetsInvalidation` (new) | — | **2** | +2 |
+
+Full `(POEdit|POAction|purchaseOrders|POVoid|PODelete|POApproval|POReceipt)`
+filter at file time: **6 suites, 76 passed, 0 failed, 1 snapshot**.
+One new snapshot file at
+`frontend/src/components/po/__tests__/__snapshots__/POActionButtons.test.jsx.snap`.
 Backend pytest not touched.
 
 
