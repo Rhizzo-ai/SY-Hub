@@ -12,7 +12,7 @@ Each entry: date, prompt reference (if applicable), change, rationale.
 ## Entries
 
 
-## Chat 30 — Backlog #15 CI portability fix (test-only) (2026-05-30)
+## Chat 30 — Backlog #15 CI portability fix (test-only) (2026-05-28)
 
 Three test-portability bugs in `backend/tests/test_audit_remediation_p0.py`
 + `test_audit_remediation_p1.py` fixed:
