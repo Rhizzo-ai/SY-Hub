@@ -434,6 +434,10 @@ reproducible" for the full RCA and the hypothesised silent fix.
 
 ## 15. CI path portability — `test_audit_remediation_p0.py` + `_p1.py` hard-coded `/app/...` absolute paths
 
+**RESOLVED Chat 30** — fixed via two test-only pushes (`77e3eb3`
+path-relative refactor 17→7; `acaa9a0` role-based admin lookup +
+cookie-domain fix 7→0). CI #33 green. Zero product code.
+
 **Status:** pre-existing. Surfaced during the Chat 29 polish-pass CI
 run as 17 failures. **NOT** introduced by Chat 29 commits — repo CI
 has been red on the backend job since the test files were first

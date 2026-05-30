@@ -12,6 +12,28 @@ Each entry: date, prompt reference (if applicable), change, rationale.
 ## Entries
 
 
+## Chat 30 — Backlog #15 CI portability fix (test-only) (2026-05-30)
+
+Three test-portability bugs in `backend/tests/test_audit_remediation_p0.py`
++ `test_audit_remediation_p1.py` fixed:
+
+- Hard-coded `/app/...` absolute paths → `Path(__file__)`-relative
+  resolution via a `_BACKEND = Path(__file__).resolve().parents[2] /
+  "backend"` anchor (commit `77e3eb3`, 17→7 CI failures).
+- Hard-coded admin email `rhys@syhomes.co.uk` → role-based
+  `super_admin` lookup joining `user_roles` (`status='Active'`) → `roles`
+  (`code='super_admin'`). Robust against pod-vs-CI bootstrap email
+  differences (commit `acaa9a0`).
+- Cookie attachment with `domain=BASE_URL.split("//")[1]` (which
+  produced an invalid domain-with-port like `localhost:8001` on the CI
+  runner, causing `requests` to drop the cookie → 401 cascade) →
+  `domain=` kwarg omitted entirely, matching the working pattern at
+  `test_sessions_history_reset.py:130/147` (commit `acaa9a0`,
+  7→0 CI failures).
+
+CI red→green (CI #33). R7 / Track 2 formally closed.
+
+
 ## Chat 29 close — CI findings (2026-05-28)
 
 - **CI findings.** 17 backend test failures in CI under
