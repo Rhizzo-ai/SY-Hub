@@ -173,9 +173,13 @@ class TestP0_1_AppraisalLockHelper:
 
         # Seed: directly insert the minimal project + appraisal we need.
         with db_engine.begin() as conn:
-            admin = conn.execute(sa.text(
-                "SELECT id FROM users WHERE email='rhys@syhomes.co.uk'"
-            )).scalar()
+            admin = conn.execute(sa.text("""
+                SELECT u.id FROM users u
+                JOIN user_roles ur ON ur.user_id = u.id AND ur.status = 'Active'
+                JOIN roles r ON r.id = ur.role_id
+                WHERE r.code = 'super_admin'
+                ORDER BY u.created_at LIMIT 1
+            """)).scalar()
             entity = conn.execute(sa.text(
                 "SELECT id FROM entities ORDER BY created_at LIMIT 1"
             )).scalar()
@@ -311,8 +315,7 @@ class TestP0_2_ReceiptAuditActor:
         admin_id, admin_tenant = _user_id_and_tenant(db_engine, ADMIN)
         admin_tok = _mint_access_token(admin_id, admin_tenant, ADMIN)
         admin_s = _new_session()
-        admin_s.cookies.set("access_token", admin_tok,
-                            domain=BASE_URL.split("//")[1])
+        admin_s.cookies.set("access_token", admin_tok)
 
         pm_id, pm_tenant = _user_id_and_tenant(db_engine, PM)
 
@@ -522,7 +525,7 @@ class TestP0_2_ReceiptAuditActor:
             # Mint receipter (test-pm) session.
             tok = _mint_access_token(pm_id, pm_tenant, PM)
             s = _new_session()
-            s.cookies.set("access_token", tok, domain=BASE_URL.split("//")[1])
+            s.cookies.set("access_token", tok)
 
             # Get PO lines to size the receipt.
             r = s.get(f"{BASE_URL}/api/v1/purchase-orders/{po_id}")
@@ -676,7 +679,7 @@ class TestP0_3_MfaPendingBlocked:
         pm_id, tenant = _user_id_and_tenant(db_engine, PM)
         tok = _mint_mfa_pending_token(pm_id, PM, tenant)
         s = _new_session()
-        s.cookies.set("access_token", tok, domain=BASE_URL.split("//")[1])
+        s.cookies.set("access_token", tok)
         r = s.post(f"{BASE_URL}/api/auth/password/change", json={
             "current_password": TEST_PASSWORD,
             "new_password": "Decoy-NewPwd-2026!",
@@ -691,7 +694,7 @@ class TestP0_3_MfaPendingBlocked:
         pm_id, tenant = _user_id_and_tenant(db_engine, PM)
         tok = _mint_mfa_pending_token(pm_id, PM, tenant)
         s = _new_session()
-        s.cookies.set("access_token", tok, domain=BASE_URL.split("//")[1])
+        s.cookies.set("access_token", tok)
         r = s.get(f"{BASE_URL}/api/projects")
         print(f"P0.3 — /api/projects with mfa_pending → HTTP {r.status_code}")
         assert r.status_code in (401, 403)
@@ -703,7 +706,7 @@ class TestP0_3_MfaPendingBlocked:
         pm_id, tenant = _user_id_and_tenant(db_engine, PM)
         tok = _mint_mfa_pending_token(pm_id, PM, tenant)
         s = _new_session()
-        s.cookies.set("access_token", tok, domain=BASE_URL.split("//")[1])
+        s.cookies.set("access_token", tok)
         r = s.get(f"{BASE_URL}/api/auth/me")
         print(f"P0.3 — /auth/me with mfa_pending → HTTP {r.status_code}")
         assert r.status_code == 200, r.text
@@ -718,7 +721,7 @@ class TestP0_3_MfaPendingBlocked:
         pm_id, tenant = _user_id_and_tenant(db_engine, PM)
         tok = _mint_mfa_pending_token(pm_id, PM, tenant)
         s = _new_session()
-        s.cookies.set("access_token", tok, domain=BASE_URL.split("//")[1])
+        s.cookies.set("access_token", tok)
         r = s.post(f"{BASE_URL}/api/auth/mfa/enroll/start", json={})
         print(f"P0.3 — /mfa/enroll/start with mfa_pending → HTTP {r.status_code}")
         assert r.status_code not in (401, 403), (

@@ -112,7 +112,7 @@ class TestP1_R1_MfaPendingHoles:
         pm_id, tenant = _user_id_and_tenant(db_engine, PM)
         tok = _mint_mfa_pending_token(pm_id, PM, tenant)
         s = _new_session()
-        s.cookies.set("access_token", tok, domain=BASE_URL.split("//")[1])
+        s.cookies.set("access_token", tok)
         r = s.post(f"{BASE_URL}/api/auth/mfa/disable", json={
             "current_password": TEST_PASSWORD,
         })
@@ -131,7 +131,7 @@ class TestP1_R1_MfaPendingHoles:
         pm_id, tenant = _user_id_and_tenant(db_engine, PM)
         tok = _mint_access_token(pm_id, tenant, PM)
         s = _new_session()
-        s.cookies.set("access_token", tok, domain=BASE_URL.split("//")[1])
+        s.cookies.set("access_token", tok)
         r = s.post(f"{BASE_URL}/api/auth/mfa/disable", json={
             "current_password": TEST_PASSWORD,
         })
@@ -145,7 +145,7 @@ class TestP1_R1_MfaPendingHoles:
         pm_id, tenant = _user_id_and_tenant(db_engine, PM)
         tok = _mint_mfa_pending_token(pm_id, PM, tenant)
         s = _new_session()
-        s.cookies.set("access_token", tok, domain=BASE_URL.split("//")[1])
+        s.cookies.set("access_token", tok)
         r = s.post(
             f"{BASE_URL}/api/auth/mfa/backup-codes/regenerate",
             json={"current_password": TEST_PASSWORD, "current_totp": "000000"},
@@ -165,7 +165,7 @@ class TestP1_R1_MfaPendingHoles:
         pm_id, tenant = _user_id_and_tenant(db_engine, PM)
         tok = _mint_access_token(pm_id, tenant, PM)
         s = _new_session()
-        s.cookies.set("access_token", tok, domain=BASE_URL.split("//")[1])
+        s.cookies.set("access_token", tok)
         r = s.post(
             f"{BASE_URL}/api/auth/mfa/backup-codes/regenerate",
             json={"current_password": TEST_PASSWORD, "current_totp": "000000"},
@@ -276,9 +276,13 @@ class TestP1_R3_GovernanceSourceLock:
 
         # Seed a project + appraisal (the lock target).
         with db_engine.begin() as conn:
-            admin = conn.execute(sa.text(
-                "SELECT id FROM users WHERE email='rhys@syhomes.co.uk'"
-            )).scalar()
+            admin = conn.execute(sa.text("""
+                SELECT u.id FROM users u
+                JOIN user_roles ur ON ur.user_id = u.id AND ur.status = 'Active'
+                JOIN roles r ON r.id = ur.role_id
+                WHERE r.code = 'super_admin'
+                ORDER BY u.created_at LIMIT 1
+            """)).scalar()
             entity = conn.execute(sa.text(
                 "SELECT id FROM entities ORDER BY created_at LIMIT 1"
             )).scalar()
