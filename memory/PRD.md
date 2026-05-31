@@ -18,6 +18,62 @@ Frontend / actuals / commitments / Xero are out of scope until later prompts.
 
 ## What's been implemented
 
+### 2026-05-31 — Chat 33 (Prompt 2.6) Budget Change Control (BCRs) & Forecasts ✓ COMPLETE
+
+Backend-only build per Build Pack 2.6. Push-to-main. All 35 acceptance
+gates green.
+
+- **§R1 Migration `0036_budget_changes`.** `permission_action +=
+  'apply'` (idempotent); `budget_lines.is_contingency` BOOL NOT NULL
+  DEFAULT false (clean backfill); new tables `budget_changes` (BCR
+  header with state machine, denormalised tenant_id per
+  purchase_orders precedent, nullable `source_variation_id` STUB
+  with NO FK reserved for 2.8) and `budget_change_lines` (signed
+  delta). UNIQUE (budget_id, reference); CHECK constraints on type +
+  status. Down/up round-trip clean.
+- **§R2 Permissions.** +2 (`budget_changes.submit` + `.apply`).
+  **110 → 112** (operator-confirmed additive: Build Pack predicted
+  +5/115 but the live seed already carried view/create/edit/approve).
+  Role grants: super_admin/director (wildcard); PM (full 6); finance
+  (view+approve+apply); apply mapping IDENTICAL to approve mapping.
+- **§R3 Services.** New `services/budget_changes.py`.
+  Audit pattern: service-layer `record_audit` + `field_diff`
+  (suppliers/CIS/PO Track-2 convention) — NOT legacy budgets
+  router-layer pattern. Per-type invariants (Transfer/Contingency
+  net-zero, Adjustment non-zero), race-safe BCR-NNNN reference via
+  parent row lock. State machine: Draft → Submitted → Approved →
+  Applied + Rejected/Withdrawn terminal. LD2 self-approval guard
+  on GROSS movement basis (`sum(abs(delta))` — not net_impact, so
+  a £50k↔£50k net-zero Transfer by the raiser still blocks at the
+  £10k threshold); NULL-creator fail-open; super-admin NOT exempt.
+  Apply re-asserts parent Active/Locked, FRESH reads under FOR
+  UPDATE, ALL-OR-NOTHING write, then reuses the EXISTING
+  `_recompute_line` + `recompute_summary` (no duplicated math).
+- **§R4 Routers.** New `routers/budget_changes.py` mounted at
+  `/api/v1`. 10 endpoints: POST/GET list/GET one/PATCH (Draft only)
+  + submit/approve/reject (reason required)/withdraw/apply + GET
+  `/budgets/{id}/change-log`. Cross-tenant → 404; validation → 422;
+  state → 409; self-approval → 403.
+- **§R5 Tests.** **39 new test functions** in
+  `tests/test_budget_changes.py` (schema 3 + create-invariants 10 +
+  workflow 7 + apply-effects 5 + self-approval 5 + perms 9).
+  Baseline-drift literals bumped across 8 legacy files (chat-15 §3
+  pattern): test_auth_rbac (super_admin 110→112, director 106→108),
+  test_bootstrap (head sentinel 0035→0036), test_migration_0025_actuals,
+  test_migration_0028_user_preferences, test_patch_3, test_retro_wires,
+  test_permissions_2_7, test_subcontractors (all head/count literals).
+  **Pytest 2nd-run WARM-DB: 1110 passed, 3 xpassed, 0 failed,
+  0 errors, 186.50s.** Regression floor 1071 honoured (+39 net new).
+- **Scope honoured.** No frontend (2.6-FE later split). No 2.8
+  variation generation (source_variation_id is stub with NO FK).
+  No per-role approval limits (B43). No contingency-remaining
+  reporting. No edit/reverse of Applied BCR (corrections = new
+  opposing BCR by design).
+- **Commits:** R1–R5 + closing docs in working tree. NOT pushed-
+  confirmed — operator pushes via Save to GitHub.
+
+
+
 ### 2026-02-01 — Chat 32 (Prompt 2.7) Subcontractors, CIS Verifications & Supplier Documents ✓ COMPLETE
 
 Backend-only build per Build Pack 2.7. Push-to-main (operator verifies

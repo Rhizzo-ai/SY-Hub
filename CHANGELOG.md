@@ -12,6 +12,107 @@ Each entry: date, prompt reference (if applicable), change, rationale.
 ## Entries
 
 
+## Chat 33 — Track 2.6 Budget Change Control (BCRs) & Forecasts (2026-05-31)
+
+Build Pack 2.6 §R1–§R5. Backend-only (frontend split deferred to 2.6-FE).
+Push-to-main via operator's Save-to-GitHub.
+
+- **§R1 Migration `0036_budget_changes`.** Idempotent enum extension
+  `permission_action += 'apply'` (`submit` already present). Adds
+  `budget_lines.is_contingency` Boolean NOT NULL DEFAULT false (clean
+  backfill — all existing rows → false). New tables
+  `budget_changes` (BCR header) and `budget_change_lines` (BCR detail).
+  Header carries denormalised `tenant_id` (per `purchase_orders.tenant_id`
+  Chat 24 R2 precedent) for list-time tenant filtering; service-layer
+  resolution still goes via parent budget's project_id (Pattern α).
+  `source_variation_id` is a nullable UUID **stub with NO FK** — 2.8
+  will add the FK to `subcontract_variations.id` when that table lands.
+  CHECK constraints lock `change_type ∈ {Transfer, ContingencyDrawdown,
+  Adjustment}` and `status ∈ {Draft, Submitted, Approved, Applied,
+  Rejected, Withdrawn}`. Unique `(budget_id, reference)` for BCR-NNNN.
+  Down/up round-trip verified.
+- **§R2 Permissions.** +2 (`budget_changes.submit` +
+  `budget_changes.apply`). **110 → 112.** Note the §R0 deviation —
+  Build Pack §R2 sample list (`view/create/submit/approve/apply`,
+  predicted +5 → 115) PREDATED the pre-existing seed of
+  `budget_changes.{view,create,edit,approve}` (added in an earlier
+  chat alongside the `RESOURCES` enum slot). Operator decision
+  (Chat 33 §R0 Q1=b): keep `edit` (semantic load distinct from
+  `.create` — used to amend a Draft BCR), add only the truly-new
+  `submit` + `apply` → net +2 = 112. Test gate 31 reads literal 112.
+  Role mapping: `apply` mirrors `approve` exactly (super_admin,
+  director, finance, project_manager — verified via
+  `test_apply_role_mapping`); `submit` mirrors the budget-editing set
+  (super_admin, director, project_manager).
+- **§R3 Services.** New `services/budget_changes.py`. **Audit pattern
+  deviation (operator-confirmed Q2=a):** writes audits IN-SERVICE
+  via `services.audit.record_audit` + `field_diff`, mirroring the
+  newer Track-2 pattern (suppliers / CIS / PO / PO approvals /
+  supplier_documents) — NOT the legacy budgets-router-layer pattern
+  (`routers/budgets.py` has 10 `record_audit` calls; the budgets
+  service has zero). Documented in the service docstring.
+- **§R3.1 Create.** `create_bcr` row-locks the parent budget via
+  `_load_budget_for_write(lock_for_update=True)`. Parent must be
+  `Active` or `Locked` (Draft is edited directly; terminal is
+  frozen) — else `BudgetStateError` → 409. Per-type invariants:
+  Transfer requires ≥2 lines summing to 0; ContingencyDrawdown
+  requires ≥2 lines summing to 0 AND every negative-delta source
+  line must have `is_contingency=true`; Adjustment requires
+  non-zero net. Advisory create-time negative-budget check
+  (apply-time guard is authoritative). Race-safe `BCR-NNNN`
+  reference generated under the parent row lock.
+- **§R3.2 Workflow.** State machine `Draft → Submitted → Approved →
+  Applied` (+ `Rejected`, `Withdrawn` terminal). Each transition
+  re-loads parent + BCR under FOR UPDATE. **LD2 self-approval guard
+  reuses `get_budget_self_approval_threshold(db)` on a GROSS-movement
+  basis** (`sum(abs(delta))` over detail lines — NOT `net_impact`,
+  so a £50k↔£50k net-zero Transfer by the raiser still trips the
+  £10k threshold). NULL-creator fail-open; super-admin NOT exempt.
+  Mirrors the `activate()` guard structure precisely → 403
+  `BudgetSelfApprovalError`.
+- **§R3.2 Apply (the core).** On Approved → Applied: re-asserts
+  parent still `Active`/`Locked` (no apply on a budget that moved
+  to Closed/Superseded while the BCR sat in Approved); FRESH reads
+  of every referenced `budget_line` under FOR UPDATE (do NOT trust
+  values cached at create time); defensive negative-budget
+  check; ALL-OR-NOTHING write of `approved_changes += delta`;
+  then calls the **EXISTING** `_recompute_line` (per line) +
+  `recompute_summary` (parent header) — no duplicated math. Stamps
+  `applied_at`/`applied_by`; audit `Approve` with
+  `metadata.kind='bcr_applied'`.
+- **§R4 Routers.** New `routers/budget_changes.py` mounted at
+  `/api/v1`. 10 endpoints: POST/GET list/GET one/PATCH (Draft
+  only)/+ submit/approve/reject (reason required)/withdraw/apply +
+  GET `/budgets/{id}/change-log`. Cross-tenant → 404 (not 403);
+  validation → 422; bad transition / terminal parent → 409;
+  self-approval → 403. Registered in `server.py` alongside
+  `budgets_router`.
+- **§R5 Tests.** **39 new test functions** in
+  `tests/test_budget_changes.py` across 6 classes: schema/migration
+  (3), create + invariants (10), workflow (7), apply effects (5),
+  self-approval (5), permissions / regression (9). All 35 acceptance
+  gates from Build Pack §R5 are covered.
+  Baseline-drift literals bumped (chat-15 §3 pattern): `test_auth_rbac`
+  super_admin 110→112, director 106→108; `test_bootstrap` head
+  sentinel 0035_ → 0036_; `test_migration_0025_actuals` literal
+  0036_budget_changes; `test_migration_0028_user_preferences` literal
+  0036_budget_changes; `test_patch_3` 110→112; `test_retro_wires`
+  110→112; `test_permissions_2_7` 110→112; `test_subcontractors`
+  head literal 0036_budget_changes.
+  **Pytest 2nd-run WARM-DB: 1110 passed, 3 xpassed, 0 failed,
+  0 errors, 186.50s.** Regression floor 1071 honoured (+39).
+- **Scope honoured.** No frontend (later split 2.6-FE). No 2.8
+  variation → BCR generation (`source_variation_id` is a nullable
+  stub with NO FK; 2.8 adds the FK + generation path). No per-role /
+  per-user approval limits (B43 backlog). No contingency-remaining
+  reporting dashboards (the `is_contingency` flag enables it; report
+  itself is later). No multi-level approval chains. No edit/reverse
+  of an Applied BCR (corrections are new opposing BCRs by design).
+- **Commits:** R1–R5 code + tests in one commit; CHANGELOG + closing
+  doc in a separate commit. NOT pushed-confirmed (operator pushes via
+  Save to GitHub).
+
+
 ## Chat 32 — Track 2.7 Subcontractors, CIS Verifications & Supplier Documents (2026-02-01)
 
 Build Pack 2.7 §R1–§R5. Backend-only (frontend split deferred to 2.7-FE).

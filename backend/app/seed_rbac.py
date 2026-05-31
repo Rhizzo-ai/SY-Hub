@@ -144,7 +144,17 @@ PERMISSION_CATALOGUE += _perms_for(
 )
 PERMISSION_CATALOGUE += _perms_for(
     "budget_changes",
-    include=["view", "create", "edit", "approve"],
+    # Chat 33 §R2 (Prompt 2.6) — Budget Change Requests (BCRs).
+    # Pre-seed of view/create/edit/approve predated this build; 2.6
+    # adds `submit` + `apply` to round out the workflow surface. Per
+    # operator decision (Chat 33 §R0): we KEEP `edit` (used to amend a
+    # Draft BCR) rather than removing it per the literal Build Pack
+    # list — final count delta is baseline+2, not baseline+5. Inline
+    # deviation note: BP §R2 sample list omitted `edit`; we retain it
+    # because it carries semantic load distinct from `.create`.
+    # sensitive: approve, apply (money-moving authority).
+    include=["view", "create", "edit", "submit", "approve", "apply"],
+    sensitive={"approve", "apply"},
 )
 PERMISSION_CATALOGUE += _perms_for(
     "cash_flow",
@@ -261,7 +271,8 @@ ROLE_PERMISSIONS["project_manager"] = {
     "budgets.view", "budgets.view_sensitive", "budgets.create", "budgets.edit",
     "actuals.view", "actuals.create", "actuals.edit",
     "commitments.view", "commitments.create", "commitments.edit",
-    "budget_changes.view", "budget_changes.create", "budget_changes.approve",
+    "budget_changes.view", "budget_changes.create", "budget_changes.edit",
+    "budget_changes.submit", "budget_changes.approve", "budget_changes.apply",
     "cash_flow.view", "cash_flow.edit",
     "programmes.view", "programmes.edit",
     "programme_tasks.view", "programme_tasks.create", "programme_tasks.edit",
@@ -303,7 +314,7 @@ ROLE_PERMISSIONS["finance"] = {
     "actuals.view", "actuals.view_sensitive", "actuals.create", "actuals.edit", "actuals.approve",
     "actuals.admin",
     "commitments.view", "commitments.view_sensitive",
-    "budget_changes.view", "budget_changes.approve",
+    "budget_changes.view", "budget_changes.approve", "budget_changes.apply",
     "cash_flow.view", "cash_flow.view_sensitive", "cash_flow.edit",
     "cost_codes.view", "cost_codes.admin",
     "xero_connections.view", "xero_connections.admin",

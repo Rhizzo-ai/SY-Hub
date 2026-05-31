@@ -198,7 +198,7 @@ def test_detect_db_state_at_head():
     current = B.detect_db_state(ctx)
     head = B._alembic_heads()
     assert current == head
-    assert current.startswith("0035_") or current == head
+    assert current.startswith("0036_") or current == head
 
 
 def test_detect_db_state_unstamped(ephemeral_db: str):
@@ -229,9 +229,11 @@ def test_alembic_heads_helper_returns_single_head():
     # when the audit_action 'SendBack' enum value landed (P0.13 resolution).
     # Bumped again by Chat 32 (Prompt 2.7): 0034_ → 0035_ when
     # subcontractor + CIS verification + supplier_documents landed.
+    # Bumped again by Chat 33 (Prompt 2.6): 0035_ → 0036_ when
+    # budget change requests (BCRs) landed.
     # See chat-15-closing §3 — this sentinel is "part of any migration's
     # bookkeeping" and must be bumped whenever the head moves.
-    assert head.startswith("0035_"), f"unexpected head id: {head}"
+    assert head.startswith("0036_"), f"unexpected head id: {head}"
 
 
 # ----------------------------------------------------------------------

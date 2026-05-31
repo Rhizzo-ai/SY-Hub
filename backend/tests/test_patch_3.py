@@ -63,9 +63,11 @@ class TestPatch3Permissions:
             #   in R2 too → 101. R3 adds pos.approve → 102.
             # Chat 32 / mig 0035 adds cis.* (+3) and supplier_documents.* (+5)
             #   → 110.
+            # Chat 33 / mig 0036 adds budget_changes.submit + .apply (+2)
+            #   → 112.
             # Function name retains "81" — renaming is out of scope (see
             # chat-22 §2 + Future_Tasks polish entry).
-            assert total == 110
+            assert total == 112
         finally:
             db.close()
 

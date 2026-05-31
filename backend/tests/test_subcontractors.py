@@ -103,8 +103,8 @@ class TestSchema:
             head = c.execute(text(
                 "SELECT version_num FROM alembic_version"
             )).scalar()
-        assert head == "0035_subcontractors", (
-            f"expected head 0035_subcontractors, got {head!r}"
+        assert head == "0036_budget_changes", (
+            f"expected head 0036_budget_changes, got {head!r}"
         )
 
     def test_supplier_type_enum_exists(self, engine):

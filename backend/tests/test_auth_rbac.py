@@ -152,10 +152,11 @@ class TestAuthMe:
         #   + Chat 24 R1 (suppliers.* +5):                         91
         #   + Chat 24 R2 (pos.* +10 incl. receipt placeholder):   101
         #   + Chat 24 R3 (pos.approve):                            102
-        #   + Chat 32 (Prompt 2.7: cis.* +3, supplier_documents.* +5): 110  ← current
+        #   + Chat 32 (Prompt 2.7: cis.* +3, supplier_documents.* +5): 110
+        #   + Chat 33 (Prompt 2.6: budget_changes.submit + .apply +2): 112 ← current
         # Function name retains "87" — renaming is out of scope (see
         # chat-22 §2 + Future_Tasks polish entry).
-        assert len(data["permissions"]) == 110
+        assert len(data["permissions"]) == 112
         assert data["email"] == TEST_ADMIN_EMAIL
 
     def test_me_unauthenticated_returns_401(self):
@@ -204,8 +205,9 @@ class TestRoles:
         #   + 2.5A (actuals.admin):                                85
         #   + 2.5C (ai_capture.view_costs, mig 0026, chat-20):     86
         #   + Chat 24 R1+R2+R3 (suppliers.*, pos.*):              102
-        #   + Chat 32 (cis.* +3, supplier_documents.* +5):        110  ← current
-        assert role_perms["super_admin"] == 110
+        #   + Chat 32 (cis.* +3, supplier_documents.* +5):        110
+        #   + Chat 33 (budget_changes.submit + .apply +2):         112 ← current
+        assert role_perms["super_admin"] == 112
         # director count history:
         #   Patch #3 baseline (after losing 4 orphan grants):       77
         #   + 2.2 (appraisals.submit, appraisals.view_financials):  79
@@ -213,8 +215,10 @@ class TestRoles:
         #   + 2.5A (actuals.admin):                                 81
         #   + 2.5C (ai_capture.view_costs, mig 0026, chat-20):      82
         #   + Chat 24 R1+R2+R3 (suppliers.*, pos.*):                98
-        #   + Chat 32 (cis.* +3, supplier_documents.* +5):         106  ← current
-        assert role_perms["director"] == 106
+        #   + Chat 32 (cis.* +3, supplier_documents.* +5):         106
+        #   + Chat 33 (budget_changes.submit + .apply +2,
+        #              via wildcard minus 4 admin exclusions):     108 ← current
+        assert role_perms["director"] == 108
         assert role_perms["project_manager"] >= 30
         assert role_perms["finance"] >= 25
         # 1.7: +system_config.view granted to all 10 roles.

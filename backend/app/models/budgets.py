@@ -150,6 +150,13 @@ class BudgetLine(Base):
     linked_programme_task_id = Column(UUID(as_uuid=True), nullable=True)
     is_locked = Column(Boolean, nullable=False, default=False)
     requires_attention = Column(Boolean, nullable=False, default=False)
+    # Chat 33 §R1.1 (Prompt 2.6) — flag a budget line as a contingency
+    # reserve. ContingencyDrawdown BCRs validate the source line has
+    # `is_contingency = true`. Default false; backfilled false in
+    # migration 0036.
+    is_contingency = Column(
+        Boolean, nullable=False, default=False, server_default="false",
+    )
     display_order = Column(Integer, nullable=False)
     notes = Column(Text, nullable=True)
     created_at = Column(

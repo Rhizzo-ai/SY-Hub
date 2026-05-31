@@ -53,6 +53,9 @@ ACTIONS = (
     "edit_issued", "issue", "void", "close", "receipt",
     # Chat 32 §R2 (Prompt 2.7) — CIS verification action.
     "verify",
+    # Chat 33 §R2 (Prompt 2.6) — BCR apply action (writes
+    # budget_lines.approved_changes after approval).
+    "apply",
 )
 
 ENTITY_SCOPES = ("All", "Specific")

@@ -25,10 +25,13 @@ def engine():
 
 class TestPermissionCount:
     def test_total_permission_count_is_110(self, engine):
-        """Gate 26: permission count = prior baseline (102) + 8 = 110."""
+        """Gate 26: permission count = prior baseline (102) + 8 = 110
+        at 2.7 close. Chat 33 / mig 0036 (Prompt 2.6) adds
+        budget_changes.submit + .apply → 112. Function name retains
+        '110' per chat-15 §3 literal-drift convention."""
         with engine.connect() as c:
             n = c.execute(text("SELECT count(*) FROM permissions")).scalar()
-        assert n == 110, f"expected 110 permissions, got {n}"
+        assert n == 112, f"expected 112 permissions, got {n}"
 
     def test_eight_new_perm_codes_present(self, engine):
         """Gate 26 (positive form): the 8 new codes exist in the catalogue."""
