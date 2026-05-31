@@ -572,7 +572,18 @@ per locked decisions LD2/LD3 and single-session scope discipline.
   the 2.7 CIS verification data + the `retention_pct`/`cis_applies` fields
   stored (unused) in 2.8a.
 
-  - **B54** — Variation summary endpoint. Aggregated approved-variation totals
+- **B54** — Variation summary endpoint. Aggregated approved-variation totals
   per subcontract (folded-into-sum vs BCR-routed). Offered by Emergent at
   Chat 34 close as unsolicited scope; declined (dashboard/2.8b territory).
   Fold into 2.8b or the reporting track. Defer.
+
+- **B55** — PO variation workflow for NON-subcontract orders (extras/alterations
+  on material/supplier POs). Out of scope for 2.8b; logged for a later prompt.
+  
+- **B56** — Subcontract→budget line mapping. `_pick_budget_line_for_subcontract`
+  currently picks "any active line". Should map a specific budget line per
+  subcontract. Backend. From Chat 35 (2.8b).
+  
+- **B57** — `view_sensitive` masking pushed into SELECT. Currently masks at the
+  serialise layer for valuation/notice endpoints; push filtering into the query
+  so masked columns aren't materialised. Backend hardening. From Chat 35 (2.8b).
