@@ -22,6 +22,9 @@ def db_engine():
 
 class TestSchemaMigration:
     def test_alembic_head_is_0036_budget_changes(self):
+        """Head sentinel — name retained for git-diff hygiene; the
+        actual expected value moves with each new migration. Chat 34
+        (Prompt 2.8a) bumps it to 0037_subcontracts."""
         from app.db import SessionLocal
         db = SessionLocal()
         try:
@@ -30,8 +33,8 @@ class TestSchemaMigration:
             )).scalar()
         finally:
             db.close()
-        assert head == "0036_budget_changes", (
-            f"Expected alembic head 0036_budget_changes; got {head}"
+        assert head == "0037_subcontracts", (
+            f"Expected alembic head 0037_subcontracts; got {head}"
         )
 
     def test_budget_changes_tables_exist(self, db_engine):

@@ -156,6 +156,20 @@ PERMISSION_CATALOGUE += _perms_for(
     include=["view", "create", "edit", "submit", "approve", "apply"],
     sensitive={"approve", "apply"},
 )
+# Chat 34 §R2 (Prompt 2.8a) — subcontracts (formal agreement layer).
+# sensitive: view_sensitive (contract sums), approve.
+PERMISSION_CATALOGUE += _perms_for(
+    "subcontracts",
+    include=["view", "view_sensitive", "create", "edit", "approve"],
+    sensitive={"view_sensitive", "approve"},
+)
+# Chat 34 §R2 (Prompt 2.8a) — subcontract variations (raise → cost →
+# approve → issue). sensitive: approve, issue (formal authority).
+PERMISSION_CATALOGUE += _perms_for(
+    "subcontract_variations",
+    include=["view", "create", "cost", "approve", "issue"],
+    sensitive={"approve", "issue"},
+)
 PERMISSION_CATALOGUE += _perms_for(
     "cash_flow",
     include=["view", "view_sensitive", "edit"],
@@ -303,6 +317,14 @@ ROLE_PERMISSIONS["project_manager"] = {
     "supplier_documents.view_sensitive",
     "supplier_documents.create", "supplier_documents.edit",
     "supplier_documents.archive",
+    # Chat 34 §R2 (Prompt 2.8a) — subcontracts + variations.
+    # PM creates/edits subcontracts and raises/costs variations;
+    # approval + issue authority lives with finance/director.
+    "subcontracts.view", "subcontracts.view_sensitive",
+    "subcontracts.create", "subcontracts.edit",
+    "subcontract_variations.view",
+    "subcontract_variations.create",
+    "subcontract_variations.cost",
 }
 
 # finance
@@ -337,6 +359,15 @@ ROLE_PERMISSIONS["finance"] = {
     "supplier_documents.view", "supplier_documents.view_sensitive",
     "supplier_documents.create", "supplier_documents.edit",
     "supplier_documents.archive",
+    # Chat 34 §R2 (Prompt 2.8a) — subcontracts + variations.
+    # Finance holds the approve/issue authority (mirrors finance's
+    # `budget_changes.approve` + `pos.approve` mappings); no create/
+    # edit (PM raises and edits the subcontract / variation surface).
+    "subcontracts.view", "subcontracts.view_sensitive",
+    "subcontracts.approve",
+    "subcontract_variations.view",
+    "subcontract_variations.approve",
+    "subcontract_variations.issue",
 }
 
 # site_manager
@@ -357,6 +388,10 @@ ROLE_PERMISSIONS["site_manager"] = {
     # for CIS only. supplier_documents.* is intentionally restricted to
     # roles holding suppliers.create per test gate 27.
     "cis.view",
+    # Chat 34 §R2 (Prompt 2.8a) — read-only subcontracts/variations
+    # mirrors the suppliers.view read pattern.
+    "subcontracts.view",
+    "subcontract_variations.view",
 }
 
 # sales
@@ -382,6 +417,9 @@ ROLE_PERMISSIONS["read_only"] = {
     # CIS only. supplier_documents.* is intentionally restricted to
     # roles holding suppliers.create per test gate 27.
     "cis.view",
+    # Chat 34 §R2 (Prompt 2.8a) — read-only subcontracts/variations.
+    "subcontracts.view",
+    "subcontract_variations.view",
 }
 
 # investor_read_only

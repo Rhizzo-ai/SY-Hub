@@ -12,6 +12,133 @@ Each entry: date, prompt reference (if applicable), change, rationale.
 ## Entries
 
 
+## Chat 34 — Track 2.8a Subcontracts & Variations (2026-05-31)
+
+Build Pack 2.8a §R0–§R5. Backend-only. Push-to-main via operator's
+Save-to-GitHub. 2.8b (valuations / payment-notices / retention / CIS
+deductions) deliberately deferred — `retention_pct` and `cis_applies`
+columns are stored now but UNUSED until 2.8b.
+
+- **§R0 Pre-flight.** Alembic HEAD confirmed at `0036_budget_changes`.
+  `purchase_orders` schema confirms `project_id`, `supplier_id`,
+  `budget_id`, `status` (po_status with `closed`/`voided` terminal),
+  `total_amount`. `budget_changes.create_bcr(..., source_variation_id=,
+  change_type=)` confirmed (2.6 stub column, NO FK pre-pack).
+  `suppliers.supplier_type` carries the `'Subcontractor'` enum value
+  (2.7). Audit + numbering conventions confirmed (`record_audit` +
+  `field_diff`, BCR-style count-based reference). Permission baseline
+  = 112. **Single material delta vs the Build Pack §R0.7 prediction:
+  only `cost` is a NEW `permission_action` enum value — `issue`
+  already exists from PO 2.5. Confirmed via `pg_enum` lookup.**
+
+- **§R1 Migration `0037_subcontracts`.** Idempotent enum extensions:
+  `permission_action += 'cost'` (only new value;
+  `issue` reused from PO 2.5), `permission_resource += 'subcontracts'`
+  and `+= 'subcontract_variations'`. Adds tables `subcontracts` and
+  `subcontract_variations` with check constraints on the state
+  columns (`Draft|Active|Completed|Terminated` and
+  `Raised|Costed|Approved|Issued|Rejected|Withdrawn`) and unique
+  composite indexes on `(project_id, reference)` and
+  `(subcontract_id, reference)` respectively. Adds the deferred FK
+  `budget_changes.source_variation_id → subcontract_variations.id ON
+  DELETE SET NULL` (the column already existed as a 2.6 stub; this
+  migration only adds the constraint). Downgrade drops FK first, then
+  both tables. The `cost` enum value is left in `permission_action`
+  on downgrade (Postgres has no `DROP VALUE`); inert without
+  catalogue rows or grants. Pattern matches the 0029/0035/0036
+  asymmetry.
+
+- **§R2 Permissions (+10, baseline 112 → 122).** New rows:
+  `subcontracts.{view,view_sensitive,create,edit,approve}` (5),
+  `subcontract_variations.{view,create,cost,approve,issue}` (5).
+  `view_sensitive`/`approve` on the contract resource and
+  `approve`/`issue` on the variation resource are flagged
+  `is_sensitive=true`. Role mapping mirrors the live
+  `seed_rbac.py` matrix:
+    - `super_admin` + `director` (via wildcard): all 10.
+    - `finance`: view/view_sensitive + approve/issue (mirrors the
+      `budget_changes.approve/apply` + `pos.approve` finance pattern).
+    - `project_manager`: view/view_sensitive + create/edit on
+      subcontracts + create/cost on variations (NOT approve/issue —
+      separation of duties).
+    - `site_manager` + `read_only`: `subcontracts.view` +
+      `subcontract_variations.view` only.
+
+- **§R3 Services.** `services/subcontracts.py`:
+  `create_subcontract` validates LD2 (rejects plain suppliers with a
+  ValueError → 422) and LD1 (PO same-project + same-subcontractor;
+  sum reconciliation is warn-not-block via
+  `po_reconciliation_note`). SC-NNNN refs are project-scoped sequential
+  under a `SELECT … FOR UPDATE` on the parent project (mirrors the
+  BCR `_next_reference` pattern; race-safe via the row lock + unique
+  constraint). State machine
+  `Draft→Active→Completed` plus `Terminated` (terminal from any
+  state). Activate requires `signed_at`. Service-layer audits via
+  `record_audit` + `field_diff` on Create/Update/Status_Change.
+  Sum fields gated at the serialiser via
+  `subcontracts.view_sensitive`.
+  `services/subcontract_variations.py`: state machine
+  `Raised→Costed→Approved→Issued` plus `Rejected`/`Withdrawn`
+  terminals. VAR-NNNN refs per-subcontract sequential. On approval
+  with `cost_treatment='WithinContractSum'` (LD4) the agreed value
+  folds into `current_contract_sum`; with `cost_treatment='BudgetChange'`
+  (LD3) the service calls the EXISTING
+  `budget_changes.create_bcr(..., change_type='Adjustment',
+  source_variation_id=variation.id, lines=[{budget_line_id, delta}])`
+  and stores the returned BCR id in `generated_bcr_id`. The
+  generated BCR is a Draft BCR with its own approve/apply lifecycle
+  — NOT auto-applied. SoD carry-through: because the BCR creator
+  equals the variation approver, the 2.6 self-approval guard
+  prevents that SAME user from approving the generated BCR above
+  threshold — a different user must. This is correct and intended.
+  Active-budget resolution via
+  `Budget.is_current=true AND status='Active'`; no current Active
+  budget → 422.
+
+- **§R4 Routers.** `routers/subcontracts.py` mounts under
+  `/api/v1/subcontracts` with POST/GET-list/GET/PATCH +
+  POST /{id}/activate, /complete, /terminate.
+  `routers/subcontract_variations.py` mounts under
+  `/api/v1/subcontract-variations` with POST/GET-list/GET +
+  POST /{id}/cost, /approve, /issue, /reject, /withdraw. The
+  approve body accepts `cost_treatment` plus
+  `target_budget_line_id` (required when
+  `cost_treatment='BudgetChange'`). Error mapping: cross-tenant
+  NotFound → 404, state errors → 409, ValueError → 422. Both
+  routers registered in `server.py`.
+
+- **§R5 Tests (64 new functions, all six files named EXACTLY per the
+  Build Pack, no consolidation).**
+  `test_subcontracts_migration.py` (8), `test_permissions_2_8a.py`
+  (11), `test_subcontracts_service.py` (14),
+  `test_subcontracts_api.py` (11),
+  `test_subcontract_variations_service.py` (13), and
+  `test_subcontract_variations_api.py` (7). Shared HTTP fixtures live
+  in `tests/_subcontracts_common.py` (underscore-prefixed so pytest
+  does not collect it — same convention as `_bcr_common.py`).
+  Covers all 35 acceptance gates including the end-to-end variation→
+  BCR two-user apply flow (gate 26), source_variation_id round-trip
+  (gate 27), and the SoD carry-through documented above. Permission
+  count test enforces literal `count == 122`.
+
+- **Baseline regression sentinels bumped (pattern follows 2.6 +
+  2.7).** Hardcoded numeric / head-id baselines updated in
+  `test_auth_rbac.py` (super_admin 112→122, director 108→118,
+  read_only 13→15), `test_patch_3.py` (112→122),
+  `test_permissions_2_6.py` (112→122),
+  `test_permissions_2_7.py` (112→122),
+  `test_retro_wires.py` (112→122),
+  `test_budget_changes_migration.py` (head `0036→0037`),
+  `test_subcontractors.py` (head `0036→0037`),
+  `test_migration_0025_actuals.py` (head `0036→0037`),
+  `test_migration_0028_user_preferences.py` (head `0036→0037`),
+  `test_bootstrap.py` (head sentinel `0036_→0037_`). Function names
+  retained per the chat-15 §3 / chat-22 §2 literal-drift convention.
+
+- **2nd-run pytest result: 1183 collected, 1180 passed,
+  3 xpassed, 0 failed, 0 errors.** Regression floor held.
+
+
 ## Chat 33 — Track 2.6 Budget Change Control (BCRs) & Forecasts (2026-05-31)
 
 Build Pack 2.6 §R1–§R5. Backend-only (frontend split deferred to 2.6-FE).

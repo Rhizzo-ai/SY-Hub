@@ -65,9 +65,11 @@ class TestPatch3Permissions:
             #   → 110.
             # Chat 33 / mig 0036 adds budget_changes.submit + .apply (+2)
             #   → 112.
+            # Chat 34 / mig 0037 (Prompt 2.8a) adds subcontracts.* +5
+            #   and subcontract_variations.* +5 → 122.
             # Function name retains "81" — renaming is out of scope (see
             # chat-22 §2 + Future_Tasks polish entry).
-            assert total == 112
+            assert total == 122
         finally:
             db.close()
 

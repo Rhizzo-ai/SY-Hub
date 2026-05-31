@@ -57,6 +57,8 @@ from app.routers.number_prefixes import router as number_prefixes_router  # noqa
 from app.routers.purchase_orders import router as purchase_orders_router  # noqa: E402
 from app.routers.cis import router as cis_router  # noqa: E402
 from app.routers.supplier_documents import router as supplier_documents_router  # noqa: E402
+from app.routers.subcontracts import router as subcontracts_router  # noqa: E402
+from app.routers.subcontract_variations import router as subcontract_variations_router  # noqa: E402
 from app.seed import seed  # noqa: E402
 from app.seed_rbac import seed_rbac  # noqa: E402
 from app.seed_system_config import (  # noqa: E402
@@ -171,6 +173,9 @@ v1_router.include_router(purchase_orders_router)
 # Chat 32 §R4 (Prompt 2.7) — CIS verifications + supplier documents.
 v1_router.include_router(cis_router)
 v1_router.include_router(supplier_documents_router)
+# Chat 34 §R4 (Prompt 2.8a) — subcontracts + variations.
+v1_router.include_router(subcontracts_router)
+v1_router.include_router(subcontract_variations_router)
 api_router.include_router(v1_router)
 
 app.include_router(api_router)

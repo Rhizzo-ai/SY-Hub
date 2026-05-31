@@ -153,10 +153,12 @@ class TestAuthMe:
         #   + Chat 24 R2 (pos.* +10 incl. receipt placeholder):   101
         #   + Chat 24 R3 (pos.approve):                            102
         #   + Chat 32 (Prompt 2.7: cis.* +3, supplier_documents.* +5): 110
-        #   + Chat 33 (Prompt 2.6: budget_changes.submit + .apply +2): 112 ← current
+        #   + Chat 33 (Prompt 2.6: budget_changes.submit + .apply +2): 112
+        #   + Chat 34 (Prompt 2.8a: subcontracts.* +5,
+        #              subcontract_variations.* +5):                  122 ← current
         # Function name retains "87" — renaming is out of scope (see
         # chat-22 §2 + Future_Tasks polish entry).
-        assert len(data["permissions"]) == 112
+        assert len(data["permissions"]) == 122
         assert data["email"] == TEST_ADMIN_EMAIL
 
     def test_me_unauthenticated_returns_401(self):
@@ -206,8 +208,10 @@ class TestRoles:
         #   + 2.5C (ai_capture.view_costs, mig 0026, chat-20):     86
         #   + Chat 24 R1+R2+R3 (suppliers.*, pos.*):              102
         #   + Chat 32 (cis.* +3, supplier_documents.* +5):        110
-        #   + Chat 33 (budget_changes.submit + .apply +2):         112 ← current
-        assert role_perms["super_admin"] == 112
+        #   + Chat 33 (budget_changes.submit + .apply +2):         112
+        #   + Chat 34 (subcontracts.* +5, subcontract_variations.* +5):
+        #                                                          122 ← current
+        assert role_perms["super_admin"] == 122
         # director count history:
         #   Patch #3 baseline (after losing 4 orphan grants):       77
         #   + 2.2 (appraisals.submit, appraisals.view_financials):  79
@@ -217,15 +221,19 @@ class TestRoles:
         #   + Chat 24 R1+R2+R3 (suppliers.*, pos.*):                98
         #   + Chat 32 (cis.* +3, supplier_documents.* +5):         106
         #   + Chat 33 (budget_changes.submit + .apply +2,
-        #              via wildcard minus 4 admin exclusions):     108 ← current
-        assert role_perms["director"] == 108
+        #              via wildcard minus 4 admin exclusions):     108
+        #   + Chat 34 (subcontracts.* +5, subcontract_variations.* +5,
+        #              via wildcard):                              118 ← current
+        assert role_perms["director"] == 118
         assert role_perms["project_manager"] >= 30
         assert role_perms["finance"] >= 25
         # 1.7: +system_config.view granted to all 10 roles.
         # 2.5A: read_only gets actuals.view (+1) → 10.
         # Chat 24 R1+R2: read_only gets suppliers.view + pos.view (+2) → 12.
         # Chat 32 (Prompt 2.7): read_only gets cis.view (+1) → 13.
-        assert role_perms["read_only"] == 13
+        # Chat 34 (Prompt 2.8a): read_only gets subcontracts.view +
+        #   subcontract_variations.view (+2) → 15.
+        assert role_perms["read_only"] == 15
         assert role_perms["investor_read_only"] == 4  # 1.6: +cost_codes.view, 1.7: +system_config.view
         assert role_perms["subcontractor_portal"] == 3  # 1.7: +system_config.view
         assert role_perms["consultant_portal"] == 4  # 1.6: +cost_codes.view, 1.7: +system_config.view

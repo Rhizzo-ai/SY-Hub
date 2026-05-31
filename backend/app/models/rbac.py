@@ -40,6 +40,11 @@ RESOURCES = (
     # supplier compliance documents resources.
     "cis",
     "supplier_documents",
+    # Chat 34 §R2 (Prompt 2.8a) — subcontracts (formal agreement layer
+    # wrapping a subcontractor PO) + subcontract variations
+    # (raise → cost → approve → issue workflow).
+    "subcontracts",
+    "subcontract_variations",
 )
 
 ACTIONS = (
@@ -56,6 +61,11 @@ ACTIONS = (
     # Chat 33 §R2 (Prompt 2.6) — BCR apply action (writes
     # budget_lines.approved_changes after approval).
     "apply",
+    # Chat 34 §R2 (Prompt 2.8a) — subcontract variation `cost` step
+    # (set agreed_value, transition Raised→Costed). `issue` already
+    # exists (PO 2.5) and is reused for the formal variation-issued
+    # step.
+    "cost",
 )
 
 ENTITY_SCOPES = ("All", "Specific")
