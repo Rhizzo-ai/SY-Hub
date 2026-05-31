@@ -43,6 +43,20 @@ _db_query_count: dict[str, int] = {}  # for tests/diagnostics only
 _MISSING = object()
 
 
+# ---------------------------------------------------------------------------
+# Build Pack 2.4C — Budget Approval Controls (Segregation of Duties)
+#
+# Editable, single global threshold (£) at/above which a budget's creator may
+# not be the user who activates it. Stored as a `Decimal` value_type row in
+# system_config (key/value pattern — no schema change). The in-code default
+# below is the defensive fallback for when the row is absent (fresh DB
+# pre-seed, or row deleted), mirroring the variance-band fallback pattern
+# already in budgets.py (VARIANCE_AMBER_PCT / VARIANCE_RED_PCT).
+# ---------------------------------------------------------------------------
+BUDGET_SELF_APPROVAL_THRESHOLD_KEY = "budget_self_approval_threshold_gbp"
+DEFAULT_BUDGET_SELF_APPROVAL_THRESHOLD_GBP = Decimal("10000.00")
+
+
 def _parse(raw: str, value_type: str) -> Any:
     """Parse a stored string into its typed Python value.
 
@@ -276,6 +290,33 @@ def list_all(db: Session) -> list[SystemConfigModel]:
             SystemConfigModel.category, SystemConfigModel.config_key,
         )
     ).all())
+
+
+def get_budget_self_approval_threshold(db: Optional[Session] = None) -> Decimal:
+    """Return the GBP threshold at/above which a budget's creator may not
+    self-activate (segregation of duties — Build Pack 2.4C / Decision 1
+    from the MD + Louise Track 2 review, 2026-05-28).
+
+    Reads from `system_config` (key `budget_self_approval_threshold_gbp`,
+    value_type `Decimal`); falls back to the in-code default
+    `DEFAULT_BUDGET_SELF_APPROVAL_THRESHOLD_GBP` (£10,000.00) when the
+    config row is absent. This mirrors the defensive fallback pattern
+    already used for variance bands in budgets.py.
+
+    Returns a `Decimal` (2dp). Comparison semantics at the call site are
+    `total >= threshold` (`>=`, not `>`) — at exactly the threshold a
+    separate approver is required.
+    """
+    value = get_or_default(
+        BUDGET_SELF_APPROVAL_THRESHOLD_KEY,
+        DEFAULT_BUDGET_SELF_APPROVAL_THRESHOLD_GBP,
+        db=db,
+    )
+    # The row's value_type=Decimal => _parse() already returns a Decimal.
+    # Defensive cast in case an unexpected type slipped through.
+    if isinstance(value, Decimal):
+        return value
+    return Decimal(str(value))
 
 
 def _query_count_for(key: str) -> int:

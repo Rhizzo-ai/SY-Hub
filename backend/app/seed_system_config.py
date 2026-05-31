@@ -1,6 +1,6 @@
 """System config seed — Prompt 1.7.
 
-Source of truth for the 38 seed keys. Idempotent: skips any key already
+Source of truth for the 39 seed keys. Idempotent: skips any key already
 present. On first boot, called from lifespan AFTER seed_rbac() so that
 role IDs exist. On subsequent boots, the no-op fast path triggers.
 
@@ -66,6 +66,13 @@ SEEDS: list[tuple[str, str, str, str, str, str]] = [
      "director", "Finance approval ceiling (GBP) for budget changes"),
     ("budget.approval_threshold_director_gbp", "100000", "Integer", "Budget",
      "super_admin", "Director approval ceiling (GBP) for budget changes"),
+    # Build Pack 2.4C — Budget Approval Controls (Segregation of Duties).
+    # GBP threshold at/above which a budget's creator may NOT activate it
+    # (creator != activator required). Stage 1 = single global threshold;
+    # Stage 2 (per-role/per-user limits) is on the backlog (B43).
+    ("budget_self_approval_threshold_gbp", "10000.00", "Decimal", "Budget",
+     "super_admin", "GBP threshold at/above which a budget's creator may not "
+     "self-activate (segregation of duties; Stage 1 single global threshold)"),
     # Security
     ("security.session_idle_timeout_minutes", "60", "Integer", "Security",
      "super_admin", "Session idle timeout in minutes"),
