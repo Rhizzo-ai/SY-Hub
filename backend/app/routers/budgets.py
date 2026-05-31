@@ -62,8 +62,8 @@ from app.services import budgets as budget_svc
 from app.services import budget_lines as line_svc
 from app.services.audit import record_audit
 from app.services.budget_errors import (
-    BudgetCreationError, BudgetNotFoundError, BudgetStateError,
-    BudgetValidationError,
+    BudgetCreationError, BudgetNotFoundError, BudgetSelfApprovalError,
+    BudgetStateError, BudgetValidationError,
 )
 
 
@@ -81,6 +81,10 @@ def _map(exc: Exception):
         return HTTPException(400, str(exc))
     if isinstance(exc, BudgetCreationError):
         return HTTPException(400, str(exc))
+    if isinstance(exc, BudgetSelfApprovalError):
+        # Build Pack 2.4C R2.3 — segregation-of-duties refusal is an
+        # authorisation refusal (403), NOT a state-machine violation (409).
+        return HTTPException(403, str(exc))
     if isinstance(exc, BudgetStateError):
         return HTTPException(409, str(exc))
     return None
@@ -348,7 +352,7 @@ def _state_change(
         )
         previous_status = before.status
         b = svc_fn(db, budget_id=budget_id, user=current, perms=perms)
-    except (BudgetStateError, BudgetNotFoundError) as exc:
+    except (BudgetSelfApprovalError, BudgetStateError, BudgetNotFoundError) as exc:
         raise _map(exc)
     record_audit(
         db, action="Status_Change", resource_type="budgets",

@@ -70,7 +70,7 @@ SEEDS: list[tuple[str, str, str, str, str, str]] = [
     # GBP threshold at/above which a budget's creator may NOT activate it
     # (creator != activator required). Stage 1 = single global threshold;
     # Stage 2 (per-role/per-user limits) is on the backlog (B43).
-    ("budget_self_approval_threshold_gbp", "10000.00", "Decimal", "Budget",
+    ("budget.self_approval_threshold_gbp", "10000.00", "Decimal", "Budget",
      "super_admin", "GBP threshold at/above which a budget's creator may not "
      "self-activate (segregation of duties; Stage 1 single global threshold)"),
     # Security

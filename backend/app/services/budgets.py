@@ -31,7 +31,8 @@ from app.models.projects import Project
 from app.models.rbac import UserRole, user_role_projects
 from app.models.user import User
 from app.services.budget_errors import (
-    BudgetCreationError, BudgetNotFoundError, BudgetStateError,
+    BudgetCreationError, BudgetNotFoundError, BudgetSelfApprovalError,
+    BudgetStateError,
 )
 
 log = logging.getLogger(__name__)
@@ -471,10 +472,52 @@ def update_header(
 def activate(
     db: Session, *, budget_id: uuid.UUID, user: User, perms: UserPermissions,
 ) -> Budget:
-    """Draft -> Active. Gated by budgets.edit per B8."""
+    """Draft -> Active. Gated by budgets.edit per B8.
+
+    Build Pack 2.4C R2 — Segregation of duties: a budget's creator may
+    NOT self-activate when the budget total is at or above the
+    configurable threshold `budget.self_approval_threshold_gbp`
+    (default £10,000). Super-admin creators are NOT exempt (R2.2).
+
+    Fail-open for legacy / system-seeded budgets where
+    `created_by_user_id IS NULL` (R2.2.3): a NULL creator can never
+    match the activator's id, so the guard is naturally bypassed.
+
+    The total is computed side-effect-free from freshly-loaded line
+    rows (sum of `original_budget + approved_changes`) into a LOCAL
+    variable; we deliberately do NOT consult the cached
+    `budget.total_budget` column (may be stale/NULL on a fresh Draft
+    before any line edits) and do NOT call `recompute_summary` here
+    (it has write side-effects: rewrites line caches and bumps
+    `summary_refreshed_at` — see R2.2).
+    """
+    from app.services.system_config import get_budget_self_approval_threshold
+
     b = _load_budget_for_write(db, budget_id, user, perms, lock_for_update=True)
     if b.status != "Draft":
         raise BudgetStateError(f"Cannot activate from {b.status}; only Draft")
+
+    # R2.2.3: NULL creator → fail open (cannot match user.id anyway, but
+    # express the intent explicitly for readers).
+    if b.created_by_user_id is not None and b.created_by_user_id == user.id:
+        threshold = get_budget_self_approval_threshold(db=db)
+        # R2.2: side-effect-free total from freshly-loaded lines into LOCAL.
+        fresh_lines = db.scalars(
+            select(BudgetLine).where(BudgetLine.budget_id == b.id)
+        ).all()
+        total = Decimal("0")
+        for ln in fresh_lines:
+            total += Decimal(ln.original_budget or 0) + Decimal(
+                ln.approved_changes or 0
+            )
+        # R1.1: comparison is >= (£10k itself is blocked).
+        if total >= threshold:
+            raise BudgetSelfApprovalError(
+                f"Budget creator cannot self-activate at or above "
+                f"£{threshold} threshold (total £{total}); a different "
+                f"user must activate this budget."
+            )
+
     b.status = "Active"
     return b
 

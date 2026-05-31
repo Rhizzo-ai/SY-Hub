@@ -229,6 +229,22 @@ def line_id(active_budget):
 
 
 @pytest.fixture(scope="module", autouse=True)
+def _bump_self_approval_threshold(db_engine, admin):
+    """Build Pack 2.4C — admin self-activates £250k budgets in this suite.
+    Bump threshold so the new segregation-of-duties guard doesn't 403.
+    Uses the PUT endpoint so the backend's process cache is invalidated."""
+    from app.services import system_config as sc_svc
+    key = sc_svc.BUDGET_SELF_APPROVAL_THRESHOLD_KEY
+    r = admin.put(
+        f"{BASE_URL}/api/v1/system-config/{key}",
+        json={"value": "999999999.00"},
+    )
+    assert r.status_code == 200, r.text
+    yield
+    admin.post(f"{BASE_URL}/api/v1/system-config/{key}/restore")
+
+
+@pytest.fixture(scope="module", autouse=True)
 def all_projects_cleanup(db_engine, project):
     yield
     _wipe_routes(db_engine, [project["id"]])

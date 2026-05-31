@@ -100,6 +100,33 @@ def _clean(db_engine):
     _wipe_budgets(db_engine)
 
 
+@pytest.fixture(scope="module", autouse=True)
+def _bump_self_approval_threshold(db_engine, admin):
+    """Build Pack 2.4C — the existing test suite seeds £250k budgets and
+    has admin self-activate them. With the new segregation-of-duties
+    guard (default threshold £10k), every legacy lifecycle test would
+    suddenly 403. Bump the threshold to a value far above any seeded
+    total for the duration of this module, restoring on teardown.
+
+    The dedicated 2.4C guard test class manages the threshold itself
+    per-test (sets a low value, asserts the guard fires, resets).
+
+    Uses the PUT /system-config/{key} endpoint so the BACKEND process's
+    in-memory cache is invalidated (the test process's invalidate()
+    doesn't reach the supervisor-managed FastAPI worker).
+    """
+    from app.services import system_config as sc_svc
+    key = sc_svc.BUDGET_SELF_APPROVAL_THRESHOLD_KEY
+    r = admin.put(
+        f"{BASE_URL}/api/v1/system-config/{key}",
+        json={"value": "999999999.00"},
+    )
+    assert r.status_code == 200, r.text
+    yield
+    # Restore to default via the API so the backend cache stays in sync.
+    admin.post(f"{BASE_URL}/api/v1/system-config/{key}/restore")
+
+
 @pytest.fixture(scope="module")
 def admin(db_engine):
     return login_with_auto_enroll(None, BASE_URL, ADMIN_EMAIL, PWD)
@@ -2699,3 +2726,279 @@ class TestDetailQueryBudget:
             )
         finally:
             db.close()
+
+
+
+# --------------------------------------------------------------------------
+# Build Pack 2.4C — Budget self-approval (segregation of duties) — R5
+# --------------------------------------------------------------------------
+
+class TestBudgetSelfApprovalGuard:
+    """Build Pack 2.4C R5 — `budget.self_approval_threshold_gbp` guard
+    on `POST /api/v1/budgets/{id}/activate`.
+
+    Each test sets the threshold explicitly via the system_config DB row
+    and invalidates the in-process cache so the value takes effect
+    immediately. The module-level `_bump_self_approval_threshold`
+    fixture defaults this to £999,999,999 for legacy tests; these
+    tests override per-test, then restore the high value at teardown.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _isolate_threshold(self, db_engine, admin):
+        """Per-test threshold override: high default, low after each.
+
+        Uses the PUT /system-config/{key} endpoint so the BACKEND process's
+        in-memory cache is invalidated (the test process's invalidate()
+        doesn't reach the supervisor-managed FastAPI worker)."""
+        from app.services import system_config as sc_svc
+        yield
+        # Restore to module default after each test via the API so the
+        # backend's process cache stays in sync.
+        r = admin.put(
+            f"{BASE_URL}/api/v1/system-config/"
+            f"{sc_svc.BUDGET_SELF_APPROVAL_THRESHOLD_KEY}",
+            json={"value": "999999999.00"},
+        )
+        assert r.status_code in (200, 422), r.text
+
+    def _set_threshold(self, admin, value: str) -> None:
+        from app.services import system_config as sc_svc
+        r = admin.put(
+            f"{BASE_URL}/api/v1/system-config/"
+            f"{sc_svc.BUDGET_SELF_APPROVAL_THRESHOLD_KEY}",
+            json={"value": value},
+        )
+        assert r.status_code == 200, r.text
+
+    def _make_draft_budget(self, admin_session, project, line_amount: str) -> str:
+        """Build a Draft budget with a single line of `line_amount` GBP.
+        Returns the budget id. The activator is the caller of the
+        returned id — tests choose whether to self-activate (admin) or
+        delegate (director)."""
+        from app.db import SessionLocal
+        db = SessionLocal()
+        try:
+            db.execute(text("DELETE FROM budgets WHERE project_id=:p"),
+                       {"p": project["id"]})
+            db.commit()
+        finally:
+            db.close()
+        # Create an approved appraisal seeded with a single cost line at
+        # `line_amount` so the seeded budget total == line_amount.
+        r = admin_session.post(
+            f"{BASE_URL}/api/v1/projects/{project['id']}/appraisals",
+            json={"name": f"SoD-{uuid.uuid4().hex[:6]}",
+                  "land_purchase_price": "100000"},
+        )
+        assert r.status_code == 201, r.text
+        aid = r.json()["id"]
+        db = SessionLocal()
+        try:
+            cc_id = db.scalar(text("SELECT id FROM cost_codes LIMIT 1"))
+            db.execute(text(
+                "DELETE FROM appraisal_cost_lines WHERE appraisal_id=:a"
+            ), {"a": aid})
+            db.execute(text("""
+                INSERT INTO appraisal_cost_lines
+                  (id, appraisal_id, display_order, cost_code_id, label,
+                   category, auto_source, amount, is_locked)
+                VALUES (gen_random_uuid(), :a, 10, :cc, 'SoD build',
+                        'Construction', 'Manual', :amt, false)
+            """), {"a": aid, "cc": cc_id, "amt": line_amount})
+            db.commit()
+        finally:
+            db.close()
+        ru = admin_session.post(
+            f"{BASE_URL}/api/v1/appraisals/{aid}/units",
+            json={"unit_label": "U", "unit_type": "Detached",
+                  "tenure": "Open_Market", "quantity": 1,
+                  "price_per_unit": "500000",
+                  "build_cost_per_unit": "200000"},
+        )
+        assert ru.status_code == 201, ru.text
+        assert admin_session.post(
+            f"{BASE_URL}/api/v1/appraisals/{aid}/submit"
+        ).status_code == 200
+        assert admin_session.post(
+            f"{BASE_URL}/api/v1/appraisals/{aid}/approve"
+        ).status_code == 200
+        rb = admin_session.post(
+            f"{BASE_URL}/api/v1/projects/{project['id']}/budgets/from-appraisal",
+            json={"source_appraisal_id": aid},
+        )
+        assert rb.status_code == 201, rb.text
+        return rb.json()["id"]
+
+    # ------------------------------------------------------------------
+    # R5.1 — self-approval AT threshold (>= boundary) is blocked (403)
+    # ------------------------------------------------------------------
+    def test_self_approval_exactly_at_threshold_blocked_403(
+        self, db_engine, admin, project,
+    ):
+        self._set_threshold(admin, "10000.00")
+        bid = self._make_draft_budget(admin, project, line_amount="10000.00")
+        r = admin.post(f"{BASE_URL}/api/v1/budgets/{bid}/activate")
+        assert r.status_code == 403, (
+            f"expected 403 at threshold boundary, got {r.status_code}: {r.text}"
+        )
+        # Must NOT be the 409 state-machine error.
+        assert "Cannot activate from" not in r.text
+
+    # ------------------------------------------------------------------
+    # R5.2 — self-approval ABOVE threshold is blocked (403)
+    # ------------------------------------------------------------------
+    def test_self_approval_above_threshold_blocked_403(
+        self, db_engine, admin, project,
+    ):
+        self._set_threshold(admin, "10000.00")
+        bid = self._make_draft_budget(admin, project, line_amount="50000.00")
+        r = admin.post(f"{BASE_URL}/api/v1/budgets/{bid}/activate")
+        assert r.status_code == 403, r.text
+
+    # ------------------------------------------------------------------
+    # R5.3 — self-approval BELOW threshold is ALLOWED (200)
+    # ------------------------------------------------------------------
+    def test_self_approval_below_threshold_allowed(
+        self, db_engine, admin, project,
+    ):
+        self._set_threshold(admin, "10000.00")
+        bid = self._make_draft_budget(admin, project, line_amount="9999.99")
+        r = admin.post(f"{BASE_URL}/api/v1/budgets/{bid}/activate")
+        assert r.status_code == 200, r.text
+        assert r.json()["status"] == "Active"
+
+    # ------------------------------------------------------------------
+    # R5.4 — different activator (creator != activator) is ALLOWED (200)
+    # ------------------------------------------------------------------
+    def test_other_user_activation_above_threshold_allowed(
+        self, db_engine, admin, director, project,
+    ):
+        self._set_threshold(admin, "10000.00")
+        bid = self._make_draft_budget(admin, project, line_amount="50000.00")
+        r = director.post(f"{BASE_URL}/api/v1/budgets/{bid}/activate")
+        assert r.status_code == 200, r.text
+        assert r.json()["status"] == "Active"
+
+    # ------------------------------------------------------------------
+    # R5.5 — NULL created_by_user_id => fail open (Build Pack R2.2.3)
+    # ------------------------------------------------------------------
+    # NOTE: The `budgets.created_by_user_id` column is NOT NULL in the
+    # current schema (FK to users.id, NOT NULL constraint), so the
+    # `is not None` defensive guard in `activate()` is effectively dead
+    # code today. We retain the check because R2.2.3 explicitly mandates
+    # fail-open for legacy / system-seeded rows, and any future schema
+    # migration that drops the NOT NULL would otherwise re-introduce the
+    # SoD block on those rows. The test is therefore skipped (the path
+    # cannot be exercised via the DB) but the in-code guard is asserted
+    # via source-level inspection below.
+    def test_null_created_by_user_id_guard_present_in_source(self):
+        """Source-level assertion that activate() short-circuits when
+        created_by_user_id is None (fail-open, R2.2.3). The DB NOT NULL
+        constraint prevents an integration test."""
+        import inspect
+        from app.services import budgets as budget_svc
+        src = inspect.getsource(budget_svc.activate)
+        assert "created_by_user_id is not None" in src, (
+            "activate() must include the NULL-creator fail-open guard "
+            "per Build Pack 2.4C R2.2.3"
+        )
+
+    # ------------------------------------------------------------------
+    # R5.6 — super_admin creator is NOT exempt (Build Pack R2.2)
+    # ------------------------------------------------------------------
+    def test_super_admin_creator_not_exempt(
+        self, db_engine, admin, project,
+    ):
+        # `admin` is a super_admin; the guard must still fire on
+        # self-approval at/above the threshold.
+        self._set_threshold(admin, "10000.00")
+        bid = self._make_draft_budget(admin, project, line_amount="20000.00")
+        r = admin.post(f"{BASE_URL}/api/v1/budgets/{bid}/activate")
+        assert r.status_code == 403, r.text
+
+    # ------------------------------------------------------------------
+    # R5.7 — service-level: BudgetSelfApprovalError is raised (not
+    # BudgetStateError) so error mapping at the route stays correct
+    # ------------------------------------------------------------------
+    def test_service_raises_self_approval_error(
+        self, db_engine, db_session, admin, project,
+    ):
+        from app.services.budgets import activate, create_from_appraisal
+        from app.services.budget_errors import (
+            BudgetSelfApprovalError, BudgetStateError,
+        )
+        from app.models.appraisals import Appraisal, AppraisalCostLine
+        from app.models.user import User
+        from app.auth.permissions import compute_effective_permissions
+
+        from app.services import system_config as sc_svc
+
+        self._set_threshold(admin, "10000.00")
+        # Service-layer test runs in this process; invalidate the test
+        # process's cache too so the in-process getter sees £10k.
+        sc_svc.invalidate(sc_svc.BUDGET_SELF_APPROVAL_THRESHOLD_KEY)
+        db = db_session
+        db.execute(text("DELETE FROM budgets WHERE project_id=:p"),
+                   {"p": project["id"]})
+        db.commit()
+        uid = db.scalar(text(
+            "SELECT id FROM users WHERE email='test-admin@example.test'"
+        ))
+        u = db.get(User, uid)
+        perms = compute_effective_permissions(db, u.id, u.tenant_id)
+        cc_id = db.scalar(text("SELECT id FROM cost_codes LIMIT 1"))
+        ap = Appraisal(
+            project_id=uuid.UUID(project["id"]),
+            version_number=99, name="sod-svc",
+            reference_date=date(2025, 1, 1),
+            land_purchase_price=Decimal("100000"),
+            sdlt_category="Residential_Standard",
+            developer_relief=False,
+            project_duration_months=12,
+            status="Approved", is_current=False,
+            created_by_user_id=u.id,
+        )
+        db.add(ap)
+        db.flush()
+        db.add(AppraisalCostLine(
+            appraisal_id=ap.id, display_order=1, cost_code_id=cc_id,
+            label="sod", category="Other", auto_source="Manual",
+            amount=Decimal("25000"),
+        ))
+        db.flush()
+        b = create_from_appraisal(
+            db, project_id=uuid.UUID(project["id"]),
+            source_appraisal_id=ap.id, user=u, perms=perms,
+        )
+
+        with pytest.raises(BudgetSelfApprovalError) as exc_info:
+            activate(db, budget_id=b.id, user=u, perms=perms)
+        # Must NOT be a state-machine error.
+        assert not isinstance(exc_info.value, BudgetStateError)
+
+    # ------------------------------------------------------------------
+    # R5.8 — config getter returns the seeded default and reads the
+    # current row when set
+    # ------------------------------------------------------------------
+    def test_config_getter_reads_db_row(self, db_engine, admin):
+        from app.services.system_config import (
+            get_budget_self_approval_threshold,
+            DEFAULT_BUDGET_SELF_APPROVAL_THRESHOLD_GBP,
+            invalidate, BUDGET_SELF_APPROVAL_THRESHOLD_KEY,
+        )
+        self._set_threshold(admin, "12345.67")
+        # Test process has its own cache; invalidate so the next read
+        # hits the DB.
+        invalidate(BUDGET_SELF_APPROVAL_THRESHOLD_KEY)
+        v = get_budget_self_approval_threshold()
+        assert v == Decimal("12345.67")
+        # Restore to default and confirm reset.
+        with db_engine.begin() as c:
+            c.execute(text(
+                "UPDATE system_config SET config_value=default_value "
+                "WHERE config_key=:k"
+            ), {"k": BUDGET_SELF_APPROVAL_THRESHOLD_KEY})
+        invalidate(BUDGET_SELF_APPROVAL_THRESHOLD_KEY)
+        v2 = get_budget_self_approval_threshold()
+        assert v2 == DEFAULT_BUDGET_SELF_APPROVAL_THRESHOLD_GBP

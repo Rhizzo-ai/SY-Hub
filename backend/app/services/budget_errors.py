@@ -43,3 +43,18 @@ class BudgetValidationError(BudgetError):
 
     400 at the route layer.
     """
+
+
+class BudgetSelfApprovalError(BudgetError):
+    """Segregation-of-duties refusal (Build Pack 2.4C R2.3).
+
+    Raised when a budget's `created_by_user_id` equals the activator's
+    user id AND the budget total is at or above the configurable
+    `budget.self_approval_threshold_gbp`. This is an *authorisation*
+    refusal — the caller may have `budgets.edit` but the business rule
+    forbids self-approval at/above the threshold. Therefore this maps
+    to HTTP 403 at the router (NOT 409 — that's reserved for
+    state-machine violations via BudgetStateError).
+
+    Always 403 at the route layer.
+    """

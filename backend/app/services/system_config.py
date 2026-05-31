@@ -53,7 +53,7 @@ _MISSING = object()
 # pre-seed, or row deleted), mirroring the variance-band fallback pattern
 # already in budgets.py (VARIANCE_AMBER_PCT / VARIANCE_RED_PCT).
 # ---------------------------------------------------------------------------
-BUDGET_SELF_APPROVAL_THRESHOLD_KEY = "budget_self_approval_threshold_gbp"
+BUDGET_SELF_APPROVAL_THRESHOLD_KEY = "budget.self_approval_threshold_gbp"
 DEFAULT_BUDGET_SELF_APPROVAL_THRESHOLD_GBP = Decimal("10000.00")
 
 
@@ -297,7 +297,7 @@ def get_budget_self_approval_threshold(db: Optional[Session] = None) -> Decimal:
     self-activate (segregation of duties — Build Pack 2.4C / Decision 1
     from the MD + Louise Track 2 review, 2026-05-28).
 
-    Reads from `system_config` (key `budget_self_approval_threshold_gbp`,
+    Reads from `system_config` (key `budget.self_approval_threshold_gbp`,
     value_type `Decimal`); falls back to the in-code default
     `DEFAULT_BUDGET_SELF_APPROVAL_THRESHOLD_GBP` (£10,000.00) when the
     config row is absent. This mirrors the defensive fallback pattern
