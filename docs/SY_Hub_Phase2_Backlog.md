@@ -542,3 +542,14 @@ per locked decisions LD2/LD3 and single-session scope discipline.
   it a single backend session. Needs a ratings table keyed on
   (supplier_id, project_id) + a scoring scheme. Defer; low priority until
   there's enough subcontractor history to rate.
+
+- **B51** — Subcontractor onboarding checklist widget (read-only).
+  Bolt-on UX surface on top of 2.7: surface each Subcontractor's
+  `current_cis_status` plus most-recent `supplier_documents` expiry on a
+  dashboard panel. Two-endpoint backend addition (no migration):
+  `GET /api/v1/subcontractors/onboarding-summary` (list view, one row per
+  subcontractor with the two derived fields) and
+  `GET /api/v1/subcontractors/{id}/onboarding-checklist` (detail view —
+  full document list + current verification). Held back to keep 2.7
+  scope-locked; spec properly when 2.7-FE picks up so widget design is
+  driven by FE needs not back-end speculation. Defer.

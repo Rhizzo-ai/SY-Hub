@@ -12,6 +12,95 @@ Each entry: date, prompt reference (if applicable), change, rationale.
 ## Entries
 
 
+## Chat 32 — Track 2.7 Subcontractors, CIS Verifications & Supplier Documents (2026-02-01)
+
+Build Pack 2.7 §R1–§R5. Backend-only (frontend split deferred to 2.7-FE).
+Push-to-main via operator's Save-to-GitHub.
+
+- **§R1 Migration `0035_subcontractors`.** New PG enum `supplier_type`
+  (`Supplier` | `Subcontractor`); 5 new `suppliers` columns
+  (`supplier_type` NOT NULL default `'Supplier'` — clean backfill;
+  `cis_subtype` String(30) app-constrained; `cis_registered` Boolean
+  default false; `utr` String(13) sensitive; `current_cis_status`
+  String(20) service-maintained cache). New tables
+  `subcontractor_cis_verifications` (append-only; match_status CHECK
+  Gross/Net/Unmatched; supplier+verified_on DESC index) and
+  `supplier_documents` (lightweight; doc_type CHECK vs 7 values;
+  soft-delete via `is_archived`). Idempotent enum extensions:
+  `permission_action += 'verify'`; `permission_resource +=
+  'cis', 'supplier_documents'`. Down/up round-trip verified.
+- **§R2 Permissions.** +8 (`cis.{view,view_sensitive,verify}` +
+  `supplier_documents.{view,view_sensitive,create,edit,archive}`).
+  **102 → 110.** Role mapping: `cis.verify` + all 5
+  `supplier_documents.*` mirror the role-set holding `suppliers.create`
+  exactly (super_admin, director, finance, project_manager —
+  asserted in `test_permissions_2_7::test_role_mapping`).
+  `cis.view_sensitive` mirrors `suppliers.view_sensitive`
+  (super_admin, director, finance). `cis.view` extended to
+  site_manager + read_only (broader read on CIS only — supplier_documents
+  intentionally stays at the 4-role suppliers.create set per test #27).
+- **§R3 Services.** New `services/cis.py` (append-only —
+  `record_verification` is the only writer of
+  `supplier.current_cis_status`; rejects non-Subcontractor with
+  `ValueError("only valid for subcontractors")`; no UPDATE/DELETE
+  helpers exposed). New `services/supplier_documents.py` (mirrors
+  suppliers service patterns 1:1 — `_snapshot` + `record_audit`,
+  Archive/Restore actions, soft-delete). Extended
+  `services/suppliers.py` with `_validate_supplier_type`,
+  `_validate_cis_subtype` (rejects on Plain Supplier),
+  `_validate_utr` (whitespace-strip + 10-digit check),
+  `list_suppliers(supplier_type=…)` filter. UTR added to
+  `SENSITIVE_RESPONSE_FIELDS`.
+- **§R4 Routers.** Extended `routers/suppliers.py` with
+  `?supplier_type=` filter (ValueError → 422) and 4 new body fields.
+  New `routers/cis.py` (`POST /verifications` 201, non-subcontractor
+  → 409, cross-tenant → 404; `GET /verifications?supplier_id=…` and
+  `GET /verifications/current` with sensitive-field gating; **no
+  PATCH/DELETE**). New `routers/supplier_documents.py` (POST + list +
+  GET + PATCH + archive/unarchive; cross-tenant → 404). Both new
+  routers registered under `/api/v1` in `server.py`.
+- **§R5 Tests.** +42 new test functions across 5 files
+  (`test_subcontractors.py` 13, `test_cis_service.py` 7,
+  `test_cis_api.py` 7, `test_supplier_documents.py` 11,
+  `test_permissions_2_7.py` 4). All 28 build-pack acceptance gates
+  pass. Baseline-drift literals bumped (chat-15 §3 pattern) in
+  `test_auth_rbac` (super_admin 102→110, director 98→106, read_only
+  12→13), `test_bootstrap` (head sentinel 0034_→0035_),
+  `test_migration_0025_actuals`, `test_migration_0028_user_preferences`,
+  `test_patch_3` (102→110), `test_retro_wires` (102→110).
+  **Pytest 2nd-run WARM-DB: 1071 passed, 3 xpassed, 0 failed, 0 errors,
+  196.53s.** Regression floor 1038 honoured.
+- Commits: `09d5367` (R1–R5 build), plus the doc-close commit landing
+  this entry and `docs/chat-summaries/chat-32-closing.md`.
+- Spawned backlog items: **B48** CIS auto-expiry attention scan,
+  **B49** migrate `supplier_documents` → Track 5 versioned store,
+  **B50** per-project supplier ratings, **B51** subcontractor
+  onboarding checklist widget (read-only).
+
+**DEVIATIONS:**
+
+- **`utr` body field max_length=30** (looser than the DB column's
+  String(13)). The Build Pack §R3.1 spec calls for whitespace-strip
+  on the service side ("strip whitespace and internal spaces; if
+  present, validate exactly 10 digits"). To honour that, the body
+  layer must accept whitespace-decorated input. The service strips +
+  validates against the 10-digit contract before persistence; the DB
+  column remains String(13) and only stores 10 cleaned digits.
+- **`seed_rbac.py` mirrors the migration role grants.** The 0035
+  migration writes role-permission rows directly so a fresh-DB
+  upgrade is consistent on its own. The same grants are also
+  declared in `seed_rbac.py` so the bootstrap path (which idempotent-
+  upserts from `PERMISSION_CATALOGUE` + the role-perm map) stays in
+  sync. Either path lands the same final state.
+- **Legacy `suppliers.cis_status` column LEFT IN PLACE.** Per Build
+  Pack §R1.1 — the new `current_cis_status` is the authoritative
+  cache (only writer: `services/cis.record_verification`); dropping
+  the legacy column is OUT OF SCOPE for 2.7. Documented in the
+  migration docstring; clients should read `current_cis_status` going
+  forward.
+
+
+
 ## Chat 32 — Track 2.4C Budget Approval Controls (Segregation of Duties) (2026-05-31)
 
 Decision 1 from the MD + Louise Track 2 review (2026-05-28). Backend-only.
