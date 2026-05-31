@@ -170,6 +170,21 @@ PERMISSION_CATALOGUE += _perms_for(
     include=["view", "create", "cost", "approve", "issue"],
     sensitive={"approve", "issue"},
 )
+# Chat 35 §R2 (Prompt 2.8b) — subcontract valuations (inbound JCT
+# certification cycle). sensitive: view_sensitive (CIS/net payable),
+# certify (money-authorising act).
+PERMISSION_CATALOGUE += _perms_for(
+    "subcontract_valuations",
+    include=["view", "view_sensitive", "create", "certify"],
+    sensitive={"view_sensitive", "certify"},
+)
+# Chat 35 §R2 (Prompt 2.8b) — payment notices (Payment + PayLess) +
+# retention release. sensitive: release (retention release authority).
+PERMISSION_CATALOGUE += _perms_for(
+    "payment_notices",
+    include=["view", "create", "release"],
+    sensitive={"release"},
+)
 PERMISSION_CATALOGUE += _perms_for(
     "cash_flow",
     include=["view", "view_sensitive", "edit"],
@@ -325,6 +340,13 @@ ROLE_PERMISSIONS["project_manager"] = {
     "subcontract_variations.view",
     "subcontract_variations.create",
     "subcontract_variations.cost",
+    # Chat 35 §R2 (Prompt 2.8b) — subcontract valuations + payment notices.
+    # PM raises and submits valuations; certify + release authority
+    # lives with finance/director (money-authorising surface).
+    "subcontract_valuations.view",
+    "subcontract_valuations.view_sensitive",
+    "subcontract_valuations.create",
+    "payment_notices.view",
 }
 
 # finance
@@ -368,6 +390,16 @@ ROLE_PERMISSIONS["finance"] = {
     "subcontract_variations.view",
     "subcontract_variations.approve",
     "subcontract_variations.issue",
+    # Chat 35 §R2 (Prompt 2.8b) — finance is the money-authorising
+    # surface for valuations + retention releases. Mirrors finance's
+    # subcontract_variations.{approve,issue} + budget_changes.apply
+    # authority mapping.
+    "subcontract_valuations.view",
+    "subcontract_valuations.view_sensitive",
+    "subcontract_valuations.certify",
+    "payment_notices.view",
+    "payment_notices.create",
+    "payment_notices.release",
 }
 
 # site_manager
@@ -392,6 +424,9 @@ ROLE_PERMISSIONS["site_manager"] = {
     # mirrors the suppliers.view read pattern.
     "subcontracts.view",
     "subcontract_variations.view",
+    # Chat 35 §R2 (Prompt 2.8b) — read-only valuations + notices view.
+    "subcontract_valuations.view",
+    "payment_notices.view",
 }
 
 # sales
@@ -420,6 +455,9 @@ ROLE_PERMISSIONS["read_only"] = {
     # Chat 34 §R2 (Prompt 2.8a) — read-only subcontracts/variations.
     "subcontracts.view",
     "subcontract_variations.view",
+    # Chat 35 §R2 (Prompt 2.8b) — read-only valuations + notices.
+    "subcontract_valuations.view",
+    "payment_notices.view",
 }
 
 # investor_read_only

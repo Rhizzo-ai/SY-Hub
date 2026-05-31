@@ -329,6 +329,8 @@ class TestPermissionsCatalogue:
             # + .apply (+2) → 112.
             # Chat 34 / mig 0037 (Prompt 2.8a) adds subcontracts.* +5
             # and subcontract_variations.* +5 → 122.
-            assert total == 122
+            # Chat 35 / mig 0038 (Prompt 2.8b) adds
+            # subcontract_valuations.* +4 and payment_notices.* +3 → 129.
+            assert total == 129
         finally:
             db.close()

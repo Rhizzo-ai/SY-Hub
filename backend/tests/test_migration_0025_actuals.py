@@ -133,8 +133,8 @@ class TestMigration0025Schema:
         # and by Chat 34 (Prompt 2.8a) when 0037 landed.
         # Function name retained — renaming is out of scope (see
         # chat-22 §2 + Future_Tasks polish entry).
-        assert head == "0037_subcontracts", \
-            f"expected 0037_subcontracts, got {head!r}"
+        assert head == "0038_sc_valuations", \
+            f"expected 0038_sc_valuations, got {head!r}"
 
     def test_actuals_has_51_columns(self, engine):
         with engine.connect() as c:

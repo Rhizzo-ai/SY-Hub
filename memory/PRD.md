@@ -18,6 +18,90 @@ Frontend / actuals / commitments / Xero are out of scope until later prompts.
 
 ## What's been implemented
 
+### 2026-05-31 — Chat 35 (Prompt 2.8b) Subcontract Valuations, Payment Notices, Retention ✓ COMPLETE
+
+Backend-only build per Build Pack 2.8b. Push-to-main. All §R5 acceptance
+gates green (1234 passed, 0 failed, 0 errors — final-run hard gates met).
+
+- **§R0.2 — `net_amount` basis verdict: PRE-deduction.** Reads
+  `services/actuals.create_actual` + `_compute_retention` +
+  `_compute_cis_deduction` + `services/budgets_reconciliation.recompute_for_line`
+  end-to-end. The actuals service stores `net_amount` as-is from the
+  payload (no internal subtraction); `retention_amount` +
+  `cis_deduction_amount` are recorded as separate columns; the
+  cost-tracker subtracts retention from `actuals_to_date` itself.
+  Wired R3.1 step 6 to pass `net_amount=gross_this_cert` with explicit
+  deduction columns. Test gate 16 backstops:
+  `net_amount − retention − CIS == net_payable_this_cert`.
+
+- **§R0.5 — CIS-status mapping** uses the 4-value `current_cis_status`
+  domain (`CURRENT_CIS_STATUSES`) — the cache field, NOT the 3-value
+  verification-row enum (`CIS_MATCH_STATUSES`). Final wiring:
+  `Gross→0, Net→20, Unmatched→30, Unverified→30 (live default), NULL→30
+  (defensive)`. Explicit tests for all 5 cases.
+
+- **§R1 Migration `0038_sc_valuations`.** Idempotent enum extensions:
+  `permission_action += 'certify', 'release'`;
+  `permission_resource += 'subcontract_valuations', 'payment_notices'`
+  (resource extension is a logged CHANGELOG deviation vs Build Pack
+  §R1.4 which listed action only). 3 new tables: `subcontract_valuations`,
+  `payment_notices`, `retention_releases` (each with check
+  constraints + the appropriate unique constraints). Adds the
+  deferred FK `actuals.related_subcontract_id → subcontracts.id ON
+  DELETE SET NULL` (idempotent guard; column existed since 2.5).
+  Inserts 7 permission catalogue rows + role grants. Down/up
+  round-trip clean.
+
+- **§R2 Permissions.** +7 (4 subcontract_valuations + 3
+  payment_notices). **122 → 129** literal. Role grants:
+  - `super_admin` + `director`: all 7.
+  - `finance`: view/view_sensitive + certify on valuations and
+    view/create/release on notices (the money-authorising surface).
+  - `project_manager`: view/view_sensitive/create on valuations +
+    view on notices (PM raises and views; no certify or release).
+  - `site_manager` + `read_only`: view-only on both surfaces.
+
+- **§R3 Services.** Three new services:
+  - `services/subcontract_valuations.py` — Draft → Submitted →
+    Certified | Rejected. `certify_valuation` computes cumulative
+    `gross_this_cert`, retention movement, CIS on labour only,
+    over-claim warn-not-block, posts the actual via the existing
+    actuals service with §R0.2 PRE-deduction wiring, commits snapshot
+    fields, auto-creates the Payment notice. View_sensitive masks
+    CIS rate/retention movement/net payable/previous certified net.
+  - `services/payment_notices.py` — `create_payment_notice_internal`
+    (auto on certify) + `create_payless_notice` (manual against
+    Certified only). `PN-NNNN` numbered per-valuation.
+  - `services/retention_releases.py` — PC + DLP releases, each once
+    per subcontract (unique constraint). Posts a negative-retention
+    actual (`net_amount=0`, `retention_amount=-amount_released`) to
+    flow the released bucket into `actuals_to_date`.
+
+- **§R4 Routers.** Two new routers under `/api/v1`:
+  - `/subcontract-valuations` (POST create, GET list, GET one, POST
+    submit, POST certify, POST reject).
+  - `/payment-notices` (GET list, GET one, POST payless) + retention
+    sub-routes on `/subcontracts/{sc_id}/retention-release[s]`.
+
+- **§R5 Tests.** 6 new files, **54 new tests** (≥36 required).
+  Includes gate 16 §R0.2 backstop, all 5 CIS-status branches, NULL
+  defensive case, lifecycle gates, cumulative 2nd-cert math, retention
+  movement, over-claim warn-not-block, permission gating (PM 403 on
+  certify), audit emission, role mapping count assertions.
+
+- **Legacy guardrail tests rebaselined.** 13 head/perm-count pins
+  bumped from `0037_subcontracts`/`122` to `0038_sc_valuations`/`129`
+  across the legacy test corpus (auth_rbac, bootstrap, multiple
+  migration tests, permissions_2_6/2_7/2_8a, retro_wires,
+  subcontractors, subcontracts_migration, patch_3). Director count
+  118→125, read_only 15→17.
+
+- **Final pytest result.** Warm-DB RUN1 = RUN2 = **1234 passed,
+  2 xfailed, 1 xpassed, 0 failed, 0 errors** in ~223s each. Operator's
+  hard gates (failed=0 AND errors=0) green on both runs.
+
+
+
 ### 2026-05-31 — Chat 34 (Prompt 2.8a) Subcontracts & Variations ✓ COMPLETE
 
 Backend-only build per Build Pack 2.8a. Push-to-main. All 35 acceptance

@@ -12,6 +12,171 @@ Each entry: date, prompt reference (if applicable), change, rationale.
 ## Entries
 
 
+## Chat 35 — Track 2.8b Subcontract Valuations / Payment Notices / Retention (2026-05-31)
+
+Build Pack 2.8b §R0–§R5. Backend-only. Push-to-main via operator's
+Save-to-GitHub. Builds on 2.8a — `retention_pct` and `cis_applies`
+columns added in 2.8a are now wired through the certification path.
+
+- **§R0 Pre-flight.** Alembic HEAD confirmed at `0037_subcontracts`.
+  Read `actuals.create_actual` + `_compute_retention` +
+  `_compute_cis_deduction` + `budgets_reconciliation.recompute_for_line`
+  end-to-end to determine the `net_amount` basis. **§R0.2 verdict:
+  PRE-deduction.** The actuals service stores `net_amount` as-is from
+  the payload (no internal subtraction); `retention_amount` and
+  `cis_deduction_amount` are recorded as separate columns; the
+  cost-tracker (`budgets_reconciliation`) subtracts retention from
+  `actuals_to_date` itself. Wired R3.1 step 6 to pass
+  `net_amount=gross_this_cert` with the deduction columns explicit
+  (test #16 backstops: posted-actual `net_amount − retention_amount −
+  cis_deduction_amount == net_payable_this_cert`). B52/B53/B54
+  backlog edits confirmed present on main. Permission baseline = 122.
+
+- **§R0.5 — CIS-status domain reconciliation.** The Build Pack LD3
+  wording ("Unmatched/Unverified → 30%") is accurate. Two distinct
+  enums exist:
+  - `CIS_MATCH_STATUSES` (3 values: Gross/Net/Unmatched) gates
+    `cis_verifications.match_status` (what HMRC returned).
+  - `CURRENT_CIS_STATUSES` (4 values: Gross/Net/Unmatched/Unverified)
+    is the domain of `suppliers.current_cis_status` — the cache field
+    we map. `"Unverified"` is the **live default** for any new
+    `Subcontractor` supplier per `services/suppliers.py`. Final
+    mapping wired in `services/subcontract_valuations.cis_rate_for_status`:
+    Gross→0, Net→20, Unmatched→30, Unverified→30, NULL→30 (defensive).
+
+- **§R0.8 — Pytest baseline.** Warm-DB RUN2: **1180 passed, 3 xpassed,
+  0 failed, 0 errors** (1183 collected; same substantive state as the
+  prior session's 1179 pass / 1 flake / 3 xfail report — the
+  `test_snapshot_restore_simulation` flake passed upward in this run
+  and the 3 known order-dependent tests (`test_csv_export_shape`,
+  `test_json_export_shape`, `test_login_success_creates_row`) showed
+  as xpass rather than xfail). Floor accepted by operator: failed=0
+  AND errors=0 are the only hard gates; xfailed≠0 / xpassed≠0 not a
+  regression.
+
+- **§R1 Migration `0038_sc_valuations`.** Idempotent enum extensions
+  (Build Pack §R1.4 listed `permission_action` only; per Chat 35 §R0
+  reconciliation we ALSO extend `permission_resource` — logged as a
+  CHANGELOG deviation): `permission_action += 'certify', 'release'`
+  and `permission_resource += 'subcontract_valuations',
+  'payment_notices'`. New tables `subcontract_valuations` (cumulative
+  JCT chain with snapshot fields stored at certification),
+  `payment_notices` (Payment auto-created on certify + PayLess manual
+  withhold notices), `retention_releases` (PC/DLP releases, unique
+  per `(subcontract_id, release_type)`). Adds the deferred FK
+  `actuals.related_subcontract_id → subcontracts.id ON DELETE SET NULL`
+  (column existed since 2.5; target table since 2.8a; FK added now
+  with idempotent guard). Inserts 7 permission catalogue rows
+  (`subcontract_valuations.{view,view_sensitive,create,certify}` +
+  `payment_notices.{view,create,release}`) with role grants mirroring
+  Chat 34 §R2 (finance + director hold certify/release; PM raises +
+  views; site_manager/read_only/sales/investor view-only). Downgrade
+  drops grants → catalogue rows → FK → tables; enum values remain
+  (Postgres has no `DROP VALUE`), inert without catalogue rows.
+
+- **§R2 RBAC seed.** `PERMISSION_CATALOGUE` extended via
+  `_perms_for(...)` for the two new resources (7 perms), totalling
+  **129 permissions** (122 + 7). `RESOURCES` += two new values,
+  `ACTIONS` += `'certify'`, `'release'`. Role mapping mirrors §R1
+  grants — finance (money-authoring surface) gets certify + release;
+  PM has create/view + view_sensitive but NOT certify or release;
+  director full set; read_only/site_manager view-only.
+
+- **§R3 Services.** Three new services under `app/services/`:
+  - `subcontract_valuations.py` — Draft → Submitted → Certified
+    (terminal) | Rejected (terminal) lifecycle. `create_valuation`
+    gates on Active/Completed subcontract. `certify_valuation` is
+    the core: computes cumulative `gross_this_cert =
+    gross_applied_to_date − previous_gross_certified`, validates
+    `labour + materials == gross_this_cert`, maps
+    `supplier.current_cis_status` to a CIS rate, computes
+    retention movement (cumulative-minus-previous) and CIS on labour
+    only, posts the actual via `actuals.create_actual` with §R0.2
+    PRE-deduction wiring (`net_amount=gross_this_cert`,
+    `retention_amount=retention_this_cert`,
+    `cis_labour_amount=labour`, `cis_materials_amount=materials`,
+    `cis_deduction_rate_pct=cis_rate`), commits snapshot fields on
+    the valuation row, and calls `payment_notices.create_payment_notice_internal`
+    to auto-create the Payment notice. Over-claim is WARN-NOT-BLOCK
+    (`over_claim_flag` + `over_claim_note`). `view_sensitive`
+    filters CIS rate, retention movement, net payable, previous
+    certified net from the response.
+  - `payment_notices.py` — `create_payment_notice_internal` (called
+    from certify, type=`Payment`) + `create_payless_notice` (manual,
+    type=`PayLess`, against Certified only, 409 otherwise).
+    `PN-NNNN` reference numbered per-valuation.
+  - `retention_releases.py` — `release_retention` posts a
+    negative-retention actual (`net_amount=0`,
+    `retention_amount=-amount_released`) which flows the released
+    bucket back into `actuals_to_date` via the existing
+    `budgets_reconciliation` SUM logic. Unique constraint on
+    `(subcontract_id, release_type)` ensures each release type
+    fires once.
+
+- **§R4 Routers.** Two new routers under `/api/v1`:
+  - `subcontract_valuations.py` —
+    `POST /subcontract-valuations` (.create),
+    `GET /subcontract-valuations[?subcontract_id=&status=]` (.view),
+    `GET /subcontract-valuations/{id}` (.view),
+    `POST /subcontract-valuations/{id}/submit` (.create),
+    `POST /subcontract-valuations/{id}/certify` (.certify),
+    `POST /subcontract-valuations/{id}/reject` (.certify).
+  - `payment_notices.py` —
+    `GET /payment-notices[?subcontract_valuation_id=]` (.view),
+    `GET /payment-notices/{id}` (.view),
+    `POST /payment-notices/payless` (.create),
+    `POST /subcontracts/{sc_id}/retention-release` (.release),
+    `GET /subcontracts/{sc_id}/retention-releases` (.view).
+  Error mapping: `NotFoundError → 404`, `StateError → 409`,
+  `ValueError → 422`.
+
+- **§R5 Tests.** Six new files, **54 new tests** (well above the
+  ≥36 minimum):
+  - `tests/test_sc_valuations_migration.py` (7 tests — table
+    presence, FK SET NULL rule, unique constraints, check
+    constraints, alembic head, table co-existence).
+  - `tests/test_subcontract_valuations_service.py` (17 tests —
+    create gates, lifecycle, certify math including all 5 CIS-rate
+    cases (Net/Gross/Unmatched/Unverified/NULL), cis_applies=false
+    short-circuit, cumulative 2nd-cert behaviour, retention
+    movement, over-claim warn-not-block, gate-16 §R0.2 backstop
+    asserting posted-actual `net_amount − retention − CIS ==
+    net_payable_this_cert`, snapshot persistence, pure CIS-rate
+    helper).
+  - `tests/test_subcontract_valuations_api.py` (7 tests —
+    permission gating (PM 403 on certify, read-only 403 on
+    create), cross-tenant 404, payload validation 422, audit
+    emission across Create + Submit + Certify).
+  - `tests/test_payment_notices_service.py` (5 tests — auto
+    Payment notice on certify with `PN-0001` + correct figures,
+    PayLess against Certified valid, PayLess against Draft 409,
+    missing reason 422, cross-tenant 404).
+  - `tests/test_retention_releases_service.py` (7 tests — PC
+    default 50%, DLP after PC, repeat-type 409, custom pct
+    honoured, no-retention-held 409, unknown release_type 422).
+  - `tests/test_permissions_2_8b.py` (9 tests — 129-perm count
+    in both DB and Python, all 7 new codes present, role mapping
+    for finance/director/PM/read_only, enum-value presence for
+    `certify`/`release` and the two new resources).
+
+- **Deviations vs Build Pack** logged here:
+  1. §R0.5 — Build Pack §R0.7 prediction was "2 new
+     `permission_action` values + 0 new `permission_resource`
+     values"; actual delta is 2 new `permission_action` values
+     **AND** 2 new `permission_resource` values
+     (`subcontract_valuations`, `payment_notices`). Resource enum
+     extension is idempotent and inert without catalogue rows;
+     mirrors the 2.8a pattern.
+  2. §R0.5 — CIS rate mapping uses the 4-value `current_cis_status`
+     domain (incl. live `"Unverified"`) plus a NULL-defensive 30%
+     fallback. Build Pack §R0.7 prior reading of "3 values" came
+     from the verification-row enum (`CIS_MATCH_STATUSES`), which
+     is a different field; documented above.
+
+  No code style or scoping deviations from the Build Pack.
+
+
+
 ## Chat 34 — Track 2.8a Subcontracts & Variations (2026-05-31)
 
 Build Pack 2.8a §R0–§R5. Backend-only. Push-to-main via operator's

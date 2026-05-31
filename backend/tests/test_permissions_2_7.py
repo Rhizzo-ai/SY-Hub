@@ -29,11 +29,13 @@ class TestPermissionCount:
         at 2.7 close. Chat 33 / mig 0036 (Prompt 2.6) adds
         budget_changes.submit + .apply → 112. Chat 34 / mig 0037
         (Prompt 2.8a) adds subcontracts.* +5 and
-        subcontract_variations.* +5 → 122. Function name retains
+        subcontract_variations.* +5 → 122. Chat 35 / mig 0038
+        (Prompt 2.8b) adds subcontract_valuations.* +4 and
+        payment_notices.* +3 → 129. Function name retains
         '110' per chat-15 §3 literal-drift convention."""
         with engine.connect() as c:
             n = c.execute(text("SELECT count(*) FROM permissions")).scalar()
-        assert n == 122, f"expected 122 permissions, got {n}"
+        assert n == 129, f"expected 129 permissions, got {n}"
 
     def test_eight_new_perm_codes_present(self, engine):
         """Gate 26 (positive form): the 8 new codes exist in the catalogue."""

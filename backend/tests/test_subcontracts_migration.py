@@ -23,6 +23,8 @@ def db_engine():
 
 class TestSchemaMigration:
     def test_alembic_head_is_0037_subcontracts(self):
+        """Head sentinel — renamed semantically by each chat. Chat 35
+        (Prompt 2.8b) bumps it to 0038_sc_valuations."""
         from app.db import SessionLocal
         db = SessionLocal()
         try:
@@ -31,8 +33,8 @@ class TestSchemaMigration:
             )).scalar()
         finally:
             db.close()
-        assert head == "0037_subcontracts", (
-            f"Expected alembic head 0037_subcontracts; got {head}"
+        assert head == "0038_sc_valuations", (
+            f"Expected alembic head 0038_sc_valuations; got {head}"
         )
 
     def test_subcontract_tables_exist(self, db_engine):

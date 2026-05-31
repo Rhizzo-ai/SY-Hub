@@ -45,6 +45,10 @@ RESOURCES = (
     # (raise → cost → approve → issue workflow).
     "subcontracts",
     "subcontract_variations",
+    # Chat 35 §R2 (Prompt 2.8b) — inbound subcontractor payment cycle:
+    # cumulative JCT valuations + Payment / PayLess notices.
+    "subcontract_valuations",
+    "payment_notices",
 )
 
 ACTIONS = (
@@ -66,6 +70,11 @@ ACTIONS = (
     # exists (PO 2.5) and is reused for the formal variation-issued
     # step.
     "cost",
+    # Chat 35 §R2 (Prompt 2.8b) — valuation `certify` (assess + certify,
+    # the money-authorising act that posts the actual) + retention
+    # `release` (PC / DLP releases on the subcontract).
+    "certify",
+    "release",
 )
 
 ENTITY_SCOPES = ("All", "Specific")

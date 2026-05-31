@@ -198,7 +198,7 @@ def test_detect_db_state_at_head():
     current = B.detect_db_state(ctx)
     head = B._alembic_heads()
     assert current == head
-    assert current.startswith("0037_") or current == head
+    assert current.startswith("0038_") or current == head
 
 
 def test_detect_db_state_unstamped(ephemeral_db: str):
@@ -233,9 +233,11 @@ def test_alembic_heads_helper_returns_single_head():
     # budget change requests (BCRs) landed.
     # Bumped again by Chat 34 (Prompt 2.8a): 0036_ → 0037_ when
     # subcontracts + variations landed.
+    # Bumped again by Chat 35 (Prompt 2.8b): 0037_ → 0038_ when
+    # subcontract valuations + payment notices + retention releases landed.
     # See chat-15-closing §3 — this sentinel is "part of any migration's
     # bookkeeping" and must be bumped whenever the head moves.
-    assert head.startswith("0037_"), f"unexpected head id: {head}"
+    assert head.startswith("0038_"), f"unexpected head id: {head}"
 
 
 # ----------------------------------------------------------------------
