@@ -81,7 +81,16 @@ from app.models.actuals import (
     VALID_TRANSITIONS, CHANGE_LOG_EVENT_TYPES,
 )
 from app.models.user_preferences import UserPreference
-from app.models.suppliers import Supplier, SUPPLIER_CIS_STATUSES
+from app.models.suppliers import (
+    Supplier, SUPPLIER_CIS_STATUSES,
+    SUPPLIER_TYPES, CIS_SUBTYPES, CURRENT_CIS_STATUSES,
+)
+from app.models.cis import (
+    SubcontractorCISVerification, CIS_MATCH_STATUSES,
+)
+from app.models.supplier_documents import (
+    SupplierDocument, SUPPLIER_DOC_TYPES,
+)
 from app.models.number_prefixes import ProjectNumberPrefix, PREFIX_ENTITY_TYPES
 from app.models.purchase_orders import (
     PurchaseOrder, PurchaseOrderLine,

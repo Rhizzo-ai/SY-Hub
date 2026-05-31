@@ -63,6 +63,11 @@ class SupplierCreateBody(BaseModel):
     payment_terms_days: Optional[int] = Field(None, ge=0, le=365)
     default_vat_rate: Optional[float] = Field(None, ge=0, le=100)
     notes: Optional[str] = Field(None)
+    # Chat 32 §R4.1 (Prompt 2.7) — subcontractor + CIS extension fields.
+    supplier_type: Optional[str] = Field(None, max_length=20)
+    cis_subtype: Optional[str] = Field(None, max_length=30)
+    cis_registered: Optional[bool] = Field(None)
+    utr: Optional[str] = Field(None, max_length=30)
 
 
 class SupplierUpdateBody(BaseModel):
@@ -86,6 +91,11 @@ class SupplierUpdateBody(BaseModel):
     payment_terms_days: Optional[int] = Field(None, ge=0, le=365)
     default_vat_rate: Optional[float] = Field(None, ge=0, le=100)
     notes: Optional[str] = Field(None)
+    # Chat 32 §R4.1 (Prompt 2.7) — subcontractor + CIS extension fields.
+    supplier_type: Optional[str] = Field(None, max_length=20)
+    cis_subtype: Optional[str] = Field(None, max_length=30)
+    cis_registered: Optional[bool] = Field(None)
+    utr: Optional[str] = Field(None, max_length=30)
 
 
 # ---------------------------------------------------------------------------
@@ -114,6 +124,10 @@ def list_endpoint(
     request: Request,
     q: Optional[str] = Query(None, min_length=1, max_length=200),
     include_archived: bool = Query(False),
+    supplier_type: Optional[str] = Query(
+        None,
+        description="Chat 32 §R4.1: filter to 'Supplier' or 'Subcontractor'.",
+    ),
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
     pair: tuple[Principal, UserPermissions] = Depends(_perm_dep),
@@ -123,11 +137,15 @@ def list_endpoint(
     _check_perm(perms, "suppliers.view")
     include_sensitive = perms.has("suppliers.view_sensitive")
 
-    rows, total = svc.list_suppliers(
-        db, principal.tenant_id,
-        q=q, include_archived=include_archived,
-        limit=limit, offset=offset,
-    )
+    try:
+        rows, total = svc.list_suppliers(
+            db, principal.tenant_id,
+            q=q, include_archived=include_archived,
+            supplier_type=supplier_type,
+            limit=limit, offset=offset,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
     return {
         "items": [svc.serialise(r, include_sensitive=include_sensitive) for r in rows],
         "total": total,

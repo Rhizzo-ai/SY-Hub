@@ -61,9 +61,11 @@ class TestPatch3Permissions:
             #   → 102? Spec ships pos.* incrementally: R2 lays the 10
             #   action codes excluding approve; receipt placeholder lands
             #   in R2 too → 101. R3 adds pos.approve → 102.
+            # Chat 32 / mig 0035 adds cis.* (+3) and supplier_documents.* (+5)
+            #   → 110.
             # Function name retains "81" — renaming is out of scope (see
             # chat-22 §2 + Future_Tasks polish entry).
-            assert total == 102
+            assert total == 110
         finally:
             db.close()
 

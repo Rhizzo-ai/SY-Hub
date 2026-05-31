@@ -27,7 +27,10 @@ from fastapi import Request
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
-from app.models.suppliers import Supplier, SUPPLIER_CIS_STATUSES
+from app.models.suppliers import (
+    Supplier, SUPPLIER_CIS_STATUSES,
+    SUPPLIER_TYPES, CIS_SUBTYPES,
+)
 from app.services.audit import field_diff, record_audit
 
 
@@ -41,6 +44,9 @@ _AUDIT_COLS: tuple[str, ...] = (
     "payment_terms_days", "default_vat_rate", "notes",
     "portal_enabled",
     "is_archived",
+    # Chat 32 §R3 (Prompt 2.7) — subcontractor + CIS extension fields.
+    "supplier_type", "cis_subtype", "cis_registered", "utr",
+    "current_cis_status",
 )
 
 
@@ -93,6 +99,50 @@ def _validate_payment_terms(value: Any) -> Optional[int]:
     return n
 
 
+# ---------------------------------------------------------------------------
+# Chat 32 §R3.1 (Prompt 2.7) — subcontractor field validators.
+# ---------------------------------------------------------------------------
+
+def _validate_supplier_type(value: Any) -> str:
+    if value is None or value == "":
+        return "Supplier"
+    if value not in SUPPLIER_TYPES:
+        raise ValueError(
+            f"supplier_type must be one of {SUPPLIER_TYPES}, got {value!r}"
+        )
+    return value
+
+
+def _validate_cis_subtype(
+    value: Any, *, supplier_type: str,
+) -> Optional[str]:
+    """`cis_subtype` is only permitted when `supplier_type='Subcontractor'`."""
+    if value is None or value == "":
+        return None
+    if value not in CIS_SUBTYPES:
+        raise ValueError(
+            f"cis_subtype must be one of {CIS_SUBTYPES}, got {value!r}"
+        )
+    if supplier_type != "Subcontractor":
+        raise ValueError(
+            "cis_subtype is only valid when supplier_type='Subcontractor'"
+        )
+    return value
+
+
+def _validate_utr(value: Any) -> Optional[str]:
+    """UK UTR — strip whitespace, must be exactly 10 digits."""
+    if value is None or value == "":
+        return None
+    if not isinstance(value, str):
+        raise ValueError("utr must be a string")
+    # Strip whitespace (leading/trailing AND internal spaces).
+    cleaned = "".join(value.split())
+    if not cleaned.isdigit() or len(cleaned) != 10:
+        raise ValueError("utr must be exactly 10 digits")
+    return cleaned
+
+
 def _name_collides(
     db: Session, tenant_id: uuid.UUID, name: str,
     *, exclude_id: Optional[uuid.UUID] = None,
@@ -119,10 +169,15 @@ def list_suppliers(
     *,
     q: Optional[str] = None,
     include_archived: bool = False,
+    supplier_type: Optional[str] = None,
     limit: int = 100,
     offset: int = 0,
 ) -> tuple[list[Supplier], int]:
-    """Tenant-scoped paginated list. Returns (rows, total_unpaged)."""
+    """Tenant-scoped paginated list. Returns (rows, total_unpaged).
+
+    `supplier_type` (Chat 32 §R3.1) filters to Supplier-only or
+    Subcontractor-only when provided.
+    """
     where = [Supplier.tenant_id == tenant_id]
     if not include_archived:
         where.append(Supplier.is_archived.is_(False))
@@ -132,6 +187,15 @@ def list_suppliers(
             func.lower(Supplier.name).like(like),
             func.lower(func.coalesce(Supplier.trading_name, "")).like(like),
         ))
+    if supplier_type is not None:
+        # Validate against the app-level enum tuple (DB enum will also
+        # reject, but we want a clean ValueError before hitting SQL).
+        if supplier_type not in SUPPLIER_TYPES:
+            raise ValueError(
+                f"supplier_type must be one of {SUPPLIER_TYPES}, "
+                f"got {supplier_type!r}"
+            )
+        where.append(Supplier.supplier_type == supplier_type)
     base = select(Supplier).where(and_(*where))
     total = db.scalar(select(func.count()).select_from(base.subquery())) or 0
     rows = list(db.scalars(
@@ -172,6 +236,18 @@ def create_supplier(
     vat = _coerce_vat_rate(payload.get("default_vat_rate"))
     terms = _validate_payment_terms(payload.get("payment_terms_days"))
 
+    # Chat 32 §R3.1 (Prompt 2.7) — subcontractor + CIS extension fields.
+    stype = _validate_supplier_type(payload.get("supplier_type"))
+    cis_subtype = _validate_cis_subtype(
+        payload.get("cis_subtype"), supplier_type=stype,
+    )
+    utr = _validate_utr(payload.get("utr"))
+    cis_registered_raw = payload.get("cis_registered", False)
+    cis_registered = bool(cis_registered_raw) if cis_registered_raw is not None else False
+    # current_cis_status is service-maintained. NEW subcontractors default
+    # to 'Unverified'; plain suppliers stay NULL.
+    current_cis_status = "Unverified" if stype == "Subcontractor" else None
+
     row = Supplier(
         tenant_id=tenant_id,
         name=name,
@@ -195,6 +271,11 @@ def create_supplier(
         notes=payload.get("notes") or None,
         portal_enabled=False,
         is_archived=False,
+        supplier_type=stype,
+        cis_subtype=cis_subtype,
+        cis_registered=cis_registered,
+        utr=utr,
+        current_cis_status=current_cis_status,
         created_by=user_id,
         updated_by=user_id,
     )
@@ -261,6 +342,22 @@ def update_supplier(
 
     if "cis_status" in payload:
         row.cis_status = _validate_cis(payload["cis_status"])
+
+    # Chat 32 §R3.1 (Prompt 2.7) — subcontractor + CIS field updates.
+    if "supplier_type" in payload:
+        row.supplier_type = _validate_supplier_type(payload["supplier_type"])
+    # cis_subtype semantics depend on the (possibly updated) supplier_type.
+    if "cis_subtype" in payload:
+        row.cis_subtype = _validate_cis_subtype(
+            payload["cis_subtype"], supplier_type=row.supplier_type,
+        )
+    if "cis_registered" in payload:
+        row.cis_registered = bool(payload["cis_registered"])
+    if "utr" in payload:
+        row.utr = _validate_utr(payload["utr"])
+    # current_cis_status is NOT settable via update payload — it is
+    # owned by services/cis.record_verification() exclusively. Silently
+    # ignore the key if a client tries to set it.
 
     if "default_vat_rate" in payload:
         row.default_vat_rate = _coerce_vat_rate(payload["default_vat_rate"])
@@ -358,6 +455,8 @@ SENSITIVE_RESPONSE_FIELDS: frozenset[str] = frozenset({
     "bank_name",
     "bank_account_no",
     "bank_sort_code",
+    # Chat 32 §R4.1 (Prompt 2.7) — UTR is sensitive PII for sole traders.
+    "utr",
 })
 
 
@@ -391,6 +490,12 @@ def serialise(
         ),
         "created_at": row.created_at.isoformat() if row.created_at else None,
         "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+        # Chat 32 §R4.1 (Prompt 2.7) — subcontractor + CIS fields. Always
+        # surfaced (not gated) except `utr`, which is sensitive.
+        "supplier_type": row.supplier_type,
+        "cis_subtype": row.cis_subtype,
+        "cis_registered": bool(row.cis_registered),
+        "current_cis_status": row.current_cis_status,
     }
     if include_sensitive:
         base.update({
@@ -399,6 +504,7 @@ def serialise(
             "bank_name": row.bank_name,
             "bank_account_no": row.bank_account_no,
             "bank_sort_code": row.bank_sort_code,
+            "utr": row.utr,
         })
     else:
         # Explicitly null-out sensitive keys so the response shape is

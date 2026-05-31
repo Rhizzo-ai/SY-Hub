@@ -23,7 +23,7 @@ from typing import Optional
 from sqlalchemy import (
     Boolean, DateTime, ForeignKey, Integer, Numeric, String, Text, text,
 )
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import ENUM as PG_ENUM, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
@@ -31,6 +31,13 @@ from app.db import Base
 
 CIS_STATUSES = ("gross", "net_20", "net_30", "not_registered")
 SUPPLIER_CIS_STATUSES = CIS_STATUSES  # Public alias (avoid clash with entity-level CIS_STATUSES on import)
+
+# Chat 32 §R1 (Prompt 2.7) — supplier vs subcontractor discriminator.
+SUPPLIER_TYPES = ("Supplier", "Subcontractor")
+# Chat 32 §R1 (Prompt 2.7) — CIS subtype is app-constrained (not a DB enum).
+CIS_SUBTYPES = ("Labour_Only", "Labour_And_Plant", "Supply_And_Fix")
+# Chat 32 §R3 (Prompt 2.7) — denormalised cache of current verification.
+CURRENT_CIS_STATUSES = ("Gross", "Net", "Unmatched", "Unverified")
 
 
 class Supplier(Base):
@@ -68,6 +75,31 @@ class Supplier(Base):
     vat_number: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     company_number: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     cis_status: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+
+    # Chat 32 §R1 (Prompt 2.7) — subcontractor + CIS extension.
+    # supplier_type: PG enum 'supplier_type'. Defaults to 'Supplier' so
+    # existing rows backfill cleanly. A subcontractor IS a supplier row
+    # with supplier_type='Subcontractor' (single-table inheritance pattern,
+    # not a separate table).
+    supplier_type: Mapped[str] = mapped_column(
+        PG_ENUM("Supplier", "Subcontractor",
+                name="supplier_type", create_type=False),
+        nullable=False,
+        server_default=text("'Supplier'::supplier_type"),
+    )
+    # cis_subtype is app-constrained (CIS_SUBTYPES); only meaningful when
+    # supplier_type='Subcontractor'. NULL for plain suppliers.
+    cis_subtype: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
+    cis_registered: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false"),
+    )
+    # utr: UK Unique Taxpayer Reference (10 digits). Sensitive PII; the
+    # audit pipeline already redacts the field name via SENSITIVE_FIELDS.
+    utr: Mapped[Optional[str]] = mapped_column(String(13), nullable=True)
+    # current_cis_status: denormalised cache of the latest verification's
+    # match status. Maintained ONLY by services/cis.record_verification();
+    # never settable via the supplier create/update payload.
+    current_cis_status: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
 
     # Banking (sensitive)
     bank_name: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)

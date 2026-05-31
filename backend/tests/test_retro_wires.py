@@ -323,6 +323,8 @@ class TestPermissionsCatalogue:
             # Chat 24 R1 (mig 0029) adds suppliers.* (+5) → 91.
             # Chat 24 R2 (mig 0031) adds pos.* (+10) → 101.
             # Chat 24 R3 (mig 0032) adds pos.approve → 102.
-            assert total == 102
+            # Chat 32 / mig 0035 (Prompt 2.7) adds cis.* (+3) and
+            # supplier_documents.* (+5) → 110.
+            assert total == 110
         finally:
             db.close()

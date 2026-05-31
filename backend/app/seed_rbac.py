@@ -114,6 +114,19 @@ PERMISSION_CATALOGUE += _perms_for(
     include=["view", "view_sensitive", "create", "edit", "archive"],
     sensitive={"view_sensitive", "archive"},
 )
+# Chat 32 §R2 (Prompt 2.7) — subcontractor CIS verifications.
+# sensitive: view_sensitive (UTR + verification_number), verify.
+PERMISSION_CATALOGUE += _perms_for(
+    "cis",
+    include=["view", "view_sensitive", "verify"],
+    sensitive={"view_sensitive", "verify"},
+)
+# Chat 32 §R2 (Prompt 2.7) — supplier compliance documents.
+PERMISSION_CATALOGUE += _perms_for(
+    "supplier_documents",
+    include=["view", "view_sensitive", "create", "edit", "archive"],
+    sensitive={"view_sensitive", "archive"},
+)
 # Chat 24 §R2 (Prompt 2.5) — purchase orders.
 # Spec §2.3: exactly 11 pos.* permissions. Sensitive: view_sensitive
 # (pricing), delete, void.
@@ -266,6 +279,19 @@ ROLE_PERMISSIONS["project_manager"] = {
     # NO void (void is super_admin/admin/director only per spec).
     "pos.view", "pos.view_sensitive", "pos.create", "pos.edit",
     "pos.issue", "pos.receipt", "pos.close", "pos.delete",
+    # Chat 32 §R2 (Prompt 2.7) — CIS verifications + supplier documents.
+    # Test gate 27 requires `supplier_documents.*` (all 5) to map to
+    # exactly the roles holding suppliers.create. PM holds
+    # suppliers.create → PM holds ALL 5 supplier_documents.* perms,
+    # including view_sensitive + archive. cis.verify mirrors
+    # suppliers.create likewise. cis.view_sensitive mirrors
+    # suppliers.view_sensitive (which PM does NOT hold) — hence PM does
+    # NOT get cis.view_sensitive.
+    "cis.view", "cis.verify",
+    "supplier_documents.view",
+    "supplier_documents.view_sensitive",
+    "supplier_documents.create", "supplier_documents.edit",
+    "supplier_documents.archive",
 }
 
 # finance
@@ -293,6 +319,13 @@ ROLE_PERMISSIONS["finance"] = {
     # build pack §9.2 — finance APPROVES and SEES money but does NOT
     # raise/issue/receipt POs).
     "pos.view", "pos.view_sensitive", "pos.approve",
+    # Chat 32 §R2 (Prompt 2.7) — CIS verifications + supplier documents.
+    # Finance holds suppliers.{view,view_sensitive,create,edit,archive}
+    # → mirror the full set across the two new resources.
+    "cis.view", "cis.view_sensitive", "cis.verify",
+    "supplier_documents.view", "supplier_documents.view_sensitive",
+    "supplier_documents.create", "supplier_documents.edit",
+    "supplier_documents.archive",
 }
 
 # site_manager
@@ -309,6 +342,10 @@ ROLE_PERMISSIONS["site_manager"] = {
     "suppliers.view",
     # Chat 24 §R2 (Prompt 2.5) — PO read + receipt-only access
     "pos.view", "pos.receipt",
+    # Chat 32 §R2 (Prompt 2.7) — site_manager mirrors suppliers.view
+    # for CIS only. supplier_documents.* is intentionally restricted to
+    # roles holding suppliers.create per test gate 27.
+    "cis.view",
 }
 
 # sales
@@ -330,6 +367,10 @@ ROLE_PERMISSIONS["read_only"] = {
     # pattern). NO view_sensitive (price/PII) and NO write actions.
     "suppliers.view",
     "pos.view",
+    # Chat 32 §R2 (Prompt 2.7) — read-only mirrors suppliers.view for
+    # CIS only. supplier_documents.* is intentionally restricted to
+    # roles holding suppliers.create per test gate 27.
+    "cis.view",
 }
 
 # investor_read_only

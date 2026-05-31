@@ -34,8 +34,8 @@ class TestMigration0028Schema:
             ).scalar()
         # Live head bumped again by Chat 24 R1/R2/R3/R4 (Prompt 2.5).
         # Function name retained per Future_Tasks polish entry.
-        assert head == "0034_audit_sendback", (
-            f"expected 0034_audit_sendback, got {head!r}"
+        assert head == "0035_subcontractors", (
+            f"expected 0035_subcontractors, got {head!r}"
         )
 
     def test_table_and_partial_unique_indexes_present(self, engine):

@@ -36,6 +36,10 @@ RESOURCES = (
     "ai_capture",  # Chat 20 §R1.1 (B38) — cost dashboard resource
     "suppliers",   # Chat 24 §R1 (Prompt 2.5) — supplier directory resource
     "pos",         # Chat 24 §R2 (Prompt 2.5) — purchase orders resource
+    # Chat 32 §R2 (Prompt 2.7) — subcontractor CIS verifications +
+    # supplier compliance documents resources.
+    "cis",
+    "supplier_documents",
 )
 
 ACTIONS = (
@@ -47,6 +51,8 @@ ACTIONS = (
     "archive",     # Chat 24 §R1 (Prompt 2.5) — supplier archive/unarchive
     # Chat 24 §R2 (Prompt 2.5) — PO action verbs
     "edit_issued", "issue", "void", "close", "receipt",
+    # Chat 32 §R2 (Prompt 2.7) — CIS verification action.
+    "verify",
 )
 
 ENTITY_SCOPES = ("All", "Specific")
