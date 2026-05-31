@@ -18,6 +18,55 @@ Frontend / actuals / commitments / Xero are out of scope until later prompts.
 
 ## What's been implemented
 
+### 2026-05-31 — Track 2.4C Budget Approval Controls (SoD) ✓ COMPLETE
+
+Build Pack 2.4C R1–R5. Segregation-of-duties: a budget's creator cannot
+self-activate at/above a configurable threshold (default £10,000).
+
+- **R1 — Config.** New `system_config` row
+  `budget.self_approval_threshold_gbp` (Decimal, default 10000.00,
+  category Budget, super_admin-editable). Typed getter
+  `get_budget_self_approval_threshold(db)` with in-code fallback
+  `DEFAULT_BUDGET_SELF_APPROVAL_THRESHOLD_GBP = Decimal("10000.00")`.
+  Seed reconciliation count 39 → 40.
+- **R2 — `activate()` guard.** In `app/services/budgets.py::activate()`:
+  side-effect-free local-variable total
+  = Σ(`original_budget` + `approved_changes`) across freshly-loaded
+  `BudgetLine` rows (no `recompute_summary`, no read of cached
+  `total_budget`). Comparison `total >= threshold`. NULL
+  `created_by_user_id` fail-open. Super-admin **not** exempt.
+- **R2.3 — Exception + mapping.** New `BudgetSelfApprovalError` →
+  router maps to **HTTP 403** (authorisation refusal).
+  `BudgetStateError` stays 409.
+- **R5 — Tests.** `TestBudgetSelfApprovalGuard` (8 tests, all passing):
+  boundary `==threshold` blocked, `>threshold` blocked, `<threshold`
+  allowed, other-user activation allowed, NULL-creator guard asserted
+  by source inspection (column is NOT NULL today), super-admin not
+  exempt, service raises `BudgetSelfApprovalError` (not
+  `BudgetStateError`), getter reads DB + falls back to default.
+- **Test fixtures.** Three legacy modules (`test_budgets.py`,
+  `test_actuals_routes.py`, `test_budgets_line_delete.py`) added a
+  module-scope `_bump_self_approval_threshold` autouse fixture that
+  **only raises** the threshold to £999,999,999 (via PUT
+  `/system-config/{key}`, which invalidates the backend cache),
+  restoring on teardown.
+- **Pytest WARM-DB 2nd run:**
+  `1035 passed, 2 xfailed, 1 xpassed, 2 warnings in 165.12s`.
+- **Commits:** `199c857` (R1–R5 nine-file change), `9871219`
+  (test-hygiene fix). **Push pending** — see CHANGELOG push-hygiene
+  flag re: pre-existing auto-commit `352eb08` noise.
+
+Files: `app/routers/budgets.py`, `app/seed_system_config.py`,
+`app/services/budget_errors.py`, `app/services/budgets.py`,
+`app/services/system_config.py`, `tests/test_actuals_routes.py`,
+`tests/test_budgets.py`, `tests/test_budgets_line_delete.py`,
+`tests/test_system_config.py`.
+
+Backlog spawned: **B43** Stage 2 per-role / per-user approval limits,
+**B44** threshold admin UI, **B45** FE 403 self-approval refusal message.
+
+
+
 ### 2026-02-27 — R7 Batch 2 follow-on mini-pack (backend) ✓ COMPLETE
 
 Adds the missing `GET /projects/{project_id}/purchase-orders` endpoint

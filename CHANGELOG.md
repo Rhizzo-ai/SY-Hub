@@ -12,6 +12,111 @@ Each entry: date, prompt reference (if applicable), change, rationale.
 ## Entries
 
 
+## Chat 32 — Track 2.4C Budget Approval Controls (Segregation of Duties) (2026-05-31)
+
+Build Pack 2.4C R1–R5 implemented. A budget's creator cannot self-activate when
+the budget total is at/above a configurable threshold (default £10,000).
+
+**Behaviour**
+
+- New service-layer guard in `app/services/budgets.py::activate()`. Side-effect-
+  free local-variable total = Σ(`original_budget` + `approved_changes`) across
+  freshly-loaded `BudgetLine` rows. Does **not** consult the cached
+  `budgets.total_budget` column and does **not** call `recompute_summary`
+  (which would rewrite line caches and bump `summary_refreshed_at`). Per Build
+  Pack R2.2.
+- Comparison is `total >= threshold`. £10,000 itself is blocked. Per R1.1.
+- Fail-open when `created_by_user_id IS NULL` (legacy / system-seeded rows).
+  Per R2.2.3.
+- Super-admin creators are **not** exempt. Per R2.2.
+- New exception `BudgetSelfApprovalError` (in `app/services/budget_errors.py`)
+  is distinct from `BudgetStateError`. Router maps it to **HTTP 403** (an
+  authorisation refusal); `BudgetStateError` stays **409**. Per R2.3.
+
+**Configuration**
+
+- New `system_config` row: `budget.self_approval_threshold_gbp` (Decimal,
+  default `"10000.00"`, category `Budget`, `minimum_role_to_edit=super_admin`).
+- New typed getter `system_config.get_budget_self_approval_threshold(db)` with
+  in-code fallback `DEFAULT_BUDGET_SELF_APPROVAL_THRESHOLD_GBP = Decimal("10000.00")`
+  if the row is absent (mirrors the variance-band fallback pattern in
+  `budgets.py`).
+- Seed reconciliation count rose 39 → 40 (38 seeds + migration 0022's
+  `appraisal_decisions_required_threshold` + this new key).
+  `tests/test_system_config.py::TestSeed::test_seed_creates_40_keys` updated.
+
+**Test coverage (R5 — 8 tests in `TestBudgetSelfApprovalGuard`)**
+
+1. self-approval **exactly at** threshold → 403 (boundary proof: `>=`).
+2. self-approval **above** threshold → 403.
+3. self-approval **below** threshold → 200.
+4. **Different activator** (creator=admin, activator=director) above
+   threshold → 200.
+5. NULL `created_by_user_id` fail-open: enforced by **source-level inspection**
+   only (`budgets.created_by_user_id` is `NOT NULL` in the current schema, so
+   the integration path is unreachable; the defensive guard in `activate()`
+   is retained against any future migration that drops the NOT NULL).
+6. Super-admin creator **not exempt** → 403 above threshold.
+7. Service layer raises `BudgetSelfApprovalError` (asserted **not**
+   `BudgetStateError` — so the 403/409 mapping cannot regress).
+8. Config getter reads the live DB row and falls back to the in-code default
+   when the row is restored.
+
+Full pytest (WARM-DB, 2nd run):
+`1035 passed, 2 xfailed, 1 xpassed, 2 warnings in 165.12s`.
+
+**Deviations and decisions**
+
+- **Key rename mid-build**: The first internal pass used the underscored key
+  `budget_self_approval_threshold_gbp`. Per Louise review (Track 2.4C R1 STOP
+  gate) renamed to dotted form `budget.self_approval_threshold_gbp` to match
+  the other Budget category keys (`budget.variance_threshold_amber_pct`,
+  `budget.approval_threshold_pm_gbp`, …). The legacy underscored row that had
+  been seeded into the dev DB was deleted manually as part of the rename.
+- **Permissions**: No new permission added. The existing `system_config.admin`
+  (super_admin only) governs threshold edits via the existing PUT
+  `/system-config/{key}` endpoint. Stage 2 per-role / per-user approval limits
+  remain on the backlog (B43).
+- **Test fixtures**: Three legacy test modules (`test_budgets.py`,
+  `test_actuals_routes.py`, `test_budgets_line_delete.py`) seed £250k budgets
+  and have admin self-activate them. A module-scoped `_bump_self_approval_threshold`
+  autouse fixture **raises** the threshold to £999,999,999 in those modules
+  only, via the PUT endpoint so the backend's in-process cache invalidates.
+  The fixture restores on teardown. The new `TestBudgetSelfApprovalGuard`
+  class sets its own threshold per-test (£10k) and is the authority on the
+  guard's behaviour; the boundary test at line `test_self_approval_exactly_at_threshold_blocked_403`
+  proves the bumped value never leaks through.
+- **Front-end**: No FE changes. Backlog item B45 (FE message for the 403
+  self-approval refusal) deferred.
+
+**Files touched (2.4C scope only)**
+
+```
+backend/app/routers/budgets.py
+backend/app/seed_system_config.py
+backend/app/services/budget_errors.py
+backend/app/services/budgets.py
+backend/app/services/system_config.py
+backend/tests/test_actuals_routes.py
+backend/tests/test_budgets.py
+backend/tests/test_budgets_line_delete.py
+backend/tests/test_system_config.py
+```
+
+Commits: `199c857` (R1–R5), `9871219` (test-hygiene: tighten teardown assert).
+
+**⚠ Push hygiene flag**
+
+Local `main` is 3 commits ahead of `origin/main`. The first of those three —
+auto-commit `352eb08`, made by the platform **before** 2.4C R1 began —
+includes the hostname-rename / `scripts/seed_r7_*` / `test_reports/helpers/*`
+noise files explicitly excluded from 2.4C scope. They are **not** in the
+two 2.4C commits, but a default Save-to-GitHub push will sweep them along.
+Decision pending from product owner: push as-is vs. cherry-pick clean PR
+vs. interactive rebase.
+
+
+
 ## Chat 30 — Backlog #15 CI portability fix (test-only) (2026-05-28)
 
 Three test-portability bugs in `backend/tests/test_audit_remediation_p0.py`
