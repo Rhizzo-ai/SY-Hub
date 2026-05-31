@@ -38,7 +38,7 @@ load_dotenv(str(_BACKEND / ".env"))
 
 BASE_URL = (
     os.environ.get("REACT_APP_BACKEND_URL", "").rstrip("/")
-    or "https://spend-approval-gate.preview.emergentagent.com"
+    or "https://supplier-verify-7.preview.emergentagent.com"
 )
 DATABASE_URL = os.environ["DATABASE_URL"]
 JWT_SECRET = os.environ["JWT_SECRET"]
