@@ -553,3 +553,20 @@ per locked decisions LD2/LD3 and single-session scope discipline.
   full document list + current verification). Held back to keep 2.7
   scope-locked; spec properly when 2.7-FE picks up so widget design is
   driven by FE needs not back-end speculation. Defer.
+
+### Chat 33–34 — new items added at chat-end (2026-05-31)
+
+- **B52** — Contingency-line flag UI. 2.6 added `budget_lines.is_contingency`
+  but it's settable only via direct SQL or a future budget-edit form. A
+  Project-Detail toggle would let PMs designate contingency lines without
+  engineering, unlocking the ContingencyDrawdown BCR type for live projects.
+  Offered by Emergent at Chat 33 close as unsolicited scope; declined
+  (frontend, out of 2.6 backend scope). Fold into 2.6-FE. Defer.
+
+- **B53** — Prompt 2.8 split (decision record, not a build task). 2.8 split
+  into **2.8a** (Subcontracts + Variations — Chat 34) and **2.8b**
+  (Valuations + Payment Notices + Retention release + CIS deductions —
+  later). Driven by the brief's explicit "candidate split" flag; 2.8a closes
+  the variation→BCR loop into 2.6, 2.8b is the monthly-money engine and uses
+  the 2.7 CIS verification data + the `retention_pct`/`cis_applies` fields
+  stored (unused) in 2.8a.
