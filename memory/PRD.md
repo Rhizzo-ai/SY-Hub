@@ -18,6 +18,102 @@ Frontend / actuals / commitments / Xero are out of scope until later prompts.
 
 ## What's been implemented
 
+### 2026-02-01 — Chat 32 (Prompt 2.7) Subcontractors, CIS Verifications & Supplier Documents ✓ COMPLETE
+
+Backend-only build per Build Pack 2.7. Push-to-main (operator verifies
+on GitHub web). All 28 acceptance gates green.
+
+- **§R1 Migration `0035_subcontractors`.** Idempotent enum extensions
+  (`permission_action += 'verify'`; `permission_resource += 'cis',
+  'supplier_documents'`); new PG enum `supplier_type` (`Supplier`,
+  `Subcontractor`); 5 new columns on `suppliers`
+  (`supplier_type` NOT NULL default `'Supplier'` — clean backfill;
+  `cis_subtype` String(30) nullable, app-constrained;
+  `cis_registered` Boolean NOT NULL default false;
+  `utr` String(13) nullable, sensitive;
+  `current_cis_status` String(20) nullable, service-maintained cache);
+  new table `subcontractor_cis_verifications` (append-only,
+  match_status CHECK Gross/Net/Unmatched, supplier_id+verified_on DESC
+  index); new table `supplier_documents` (lightweight; doc_type CHECK
+  vs 7 allowed values; soft-delete via is_archived). Downgrade drops
+  new tables, columns, and the supplier_type enum (PG cannot drop
+  enum values — documented asymmetry per 0029 pattern). Live
+  round-trip down/up verified.
+- **§R2 Permissions.** `_perms_for("cis", include=["view",
+  "view_sensitive","verify"], sensitive={"view_sensitive","verify"})`
+  + `_perms_for("supplier_documents", include=["view",
+  "view_sensitive","create","edit","archive"],
+  sensitive={"view_sensitive","archive"})`. **102 → 110.** Role
+  mapping mirrors suppliers.create role-set (super_admin, director,
+  finance, project_manager) for cis.verify + ALL 5 supplier_documents
+  perms (test gate 27 literal); cis.view_sensitive mirrors
+  suppliers.view_sensitive (3 roles); cis.view extended to
+  site_manager + read_only (broader read).
+- **§R3 Services.**
+  - `services/suppliers` extended: `_validate_supplier_type`,
+    `_validate_cis_subtype` (rejects on Plain Supplier),
+    `_validate_utr` (whitespace-strip + 10-digit check),
+    `list_suppliers(supplier_type=…)` filter, `_AUDIT_COLS` includes
+    the 5 new columns. `current_cis_status` defaults `Unverified` for
+    new Subcontractors, NULL for plain Suppliers; NOT settable via
+    update payload. UTR added to `SENSITIVE_RESPONSE_FIELDS`.
+  - `services/cis` new module:
+    `record_verification` (rejects on non-Subcontractor →
+    `ValueError`, validates match_status ∈ {Gross,Net,Unmatched},
+    coerces dates/decimals, **only writer of**
+    `supplier.current_cis_status`, emits audit `Create`),
+    `list_verifications` (newest first by verified_on),
+    `get_current_verification`. NO update/delete helpers exposed
+    (append-only contract).
+  - `services/supplier_documents` new module: mirrors suppliers
+    service patterns 1:1 — `create_document`, `list_documents`
+    (excludes archived by default, `include_archived` flag),
+    `get_document`, `update_document`, `set_archived` (idempotent;
+    audits Archive/Restore). `file_ref` + `notes` gated in
+    serialiser via `SENSITIVE_RESPONSE_FIELDS`.
+- **§R4 Routers.**
+  - `routers/suppliers` extended: `?supplier_type=` query param on
+    GET (router→service ValueError→422); 4 new create/update body
+    fields (`supplier_type`, `cis_subtype`, `cis_registered`, `utr`
+    — `utr` max_length=30 at body layer to accept whitespace-decorated
+    input; service strips and validates against 10-digit contract).
+    Serialiser surfaces all subcontractor fields; `utr` gated.
+  - `routers/cis` new (prefix `/cis`): `POST /verifications` (201,
+    gate `cis.verify`, cross-tenant → 404, non-subcontractor → 409,
+    other ValueError → 422; 201 response includes
+    verification_number regardless of view_sensitive since creator
+    just wrote it); `GET /verifications?supplier_id=…` (gate
+    `cis.view`; strips `verification_number` without
+    `cis.view_sensitive`); `GET /verifications/current`. **No PATCH,
+    no DELETE.**
+  - `routers/supplier_documents` new (prefix `/supplier-documents`):
+    POST (201), GET list, GET one, PATCH, POST archive +
+    POST unarchive. Cross-tenant → 404. All routers mounted under
+    `/api/v1` in `server.py` alongside existing suppliers router.
+- **§R5 Tests.** **42 new test functions** across 5 files
+  (`test_subcontractors.py` 13, `test_cis_service.py` 7,
+  `test_cis_api.py` 7, `test_supplier_documents.py` 11,
+  `test_permissions_2_7.py` 4). All 28 build-pack acceptance gates
+  covered. Baseline-drift literals bumped (chat-15 §3 pattern) in
+  `test_auth_rbac` (super_admin 102→110, director 98→106, read_only
+  12→13), `test_bootstrap` (head sentinel 0034_→0035_),
+  `test_migration_0025_actuals`, `test_migration_0028_user_preferences`,
+  `test_patch_3` (102→110), `test_retro_wires` (102→110).
+  **Pytest 2nd-run WARM-DB: 1071 passed, 3 xpassed, 0 failed,
+  0 errors, 196.53s.** Regression floor 1038 honoured.
+- **Scope honoured.** No frontend (later split 2.7-FE). No auto-expiry
+  flagging (LD2 / backlog **B48**). No payment-blocking on lapsed
+  CIS (belongs with 2.8 valuations). Legacy `suppliers.cis_status`
+  column left in place — `current_cis_status` is the authoritative
+  cache; dropping the legacy column is OUT OF SCOPE (documented
+  deviation in migration docstring). `supplier_documents.file_ref` is
+  a reference string only; binary upload pipeline migrates to Track 5
+  (backlog **B49**). Per-project supplier ratings backlog **B50**.
+- **Commit:** `09d5367`. NOT pushed-confirmed (per Build Pack 2.7
+  opener — operator verifies push on GitHub web).
+
+
+
 ### 2026-05-31 — Track 2.4C Budget Approval Controls (SoD) ✓ COMPLETE
 
 Build Pack 2.4C R1–R5. Segregation-of-duties: a budget's creator cannot
