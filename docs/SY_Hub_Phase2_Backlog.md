@@ -474,6 +474,43 @@ path = REPO_ROOT / "app" / "routers" / "appraisals.py"
 Run pytest locally to confirm 1004 → 1021 passing (re-enables the
 17), then push.
 
+### Chat 31 — new items added at chat-end (2026-05-31)
+
+Added at chat-end per Chat 31 close. B43–B45 were named as Stage-2
+deferrals in the 2.4C Build Pack; logged here for traceability. B46 and
+B47 are new this chat.
+
+- **B43** — Stage 2 per-role / per-user budget approval limits. Current
+  2.4C is Stage 1: a single global `budget.self_approval_threshold_gbp`.
+  Stage 2 adds per-role and/or per-user limits (e.g. PM can self-approve
+  to £5k, Contracts Manager to £25k, Director unlimited). Needs a limits
+  table keyed on role/user + the activate guard reading the caller's
+  effective limit instead of the global threshold. Defer until real usage
+  shows the single global threshold is too blunt.
+
+- **B44** — Threshold admin UI. `system_config` budget keys (incl.
+  `budget.self_approval_threshold_gbp`) are editable only via
+  `PUT /system-config/{key}` today. Build a front-end admin surface for
+  super_admin to view + edit budget config without hitting the API
+  directly. Pairs with the broader system-config admin surface.
+
+- **B45** — Front-end message for the 403 self-approval refusal. The 2.4C
+  backend returns HTTP 403 (`BudgetSelfApprovalError`) when a creator
+  tries to self-activate at/above threshold. Front-end should catch this
+  and show a guided "this needs a Director to approve — ask [X]" prompt
+  rather than a raw error toast. Pairs with B46.
+
+- **B46** — `/budgets/{id}/activate-preview` endpoint. Read-only: runs the
+  SoD self-approval guard without mutating budget status, so the FE can
+  warn the user inline ("you can't approve this yourself") before they
+  click Activate. UX warm-up for B45. Suggested as unsolicited scope in
+  Chat 31; declined for 2.4C and logged here. Defer.
+
+- **B47** — Push-hygiene cleanup. Auto-commit `352eb08` swept noise onto
+  main: a hostname-rename artefact, `scripts/seed_r7_*`, and
+  `test_reports/helpers/*`. Remove in a dedicated Claude Code pass. Not
+  blocking; no functional impact.
+
 **Owner.** Defer to the Track 2 wrap-up audit (Chat 30+) with MD /
 Louise, OR to a Claude Code checkpoint pass. **Not blocking** —
 local pytest has caught real regressions throughout Tracks 2 + 3.
