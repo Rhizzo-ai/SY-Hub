@@ -506,10 +506,11 @@ B47 are new this chat.
   click Activate. UX warm-up for B45. Suggested as unsolicited scope in
   Chat 31; declined for 2.4C and logged here. Defer.
 
-- **B47** — Push-hygiene cleanup. Auto-commit `352eb08` swept noise onto
-  main: a hostname-rename artefact, `scripts/seed_r7_*`, and
-  `test_reports/helpers/*`. Remove in a dedicated Claude Code pass. Not
-  blocking; no functional impact.
+- **B47 (closed 2026-05-31)** — Push-hygiene cleanup. Auto-commit `352eb08`
+  swept noise onto main: a hostname-rename artefact, `scripts/seed_r7_*`,
+  and `test_reports/helpers/*`. VERIFIED gone from main at Chat 34 — all
+  named files return 404. No Claude Code pass needed. (Hostname-rename
+  artefact unnamed in original entry; named junk confirmed removed.)
 
 **Owner.** Defer to the Track 2 wrap-up audit (Chat 30+) with MD /
 Louise, OR to a Claude Code checkpoint pass. **Not blocking** —
