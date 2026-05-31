@@ -87,11 +87,24 @@ Push-to-main via operator's Save-to-GitHub.
   validation → 422; bad transition / terminal parent → 409;
   self-approval → 403. Registered in `server.py` alongside
   `budgets_router`.
-- **§R5 Tests.** **39 new test functions** in
-  `tests/test_budget_changes.py` across 6 classes: schema/migration
-  (3), create + invariants (10), workflow (7), apply effects (5),
-  self-approval (5), permissions / regression (9). All 35 acceptance
-  gates from Build Pack §R5 are covered.
+- **§R5 Tests.** **39 new test functions** split across 4 files
+  matching the Build Pack §R5 naming convention:
+  - `tests/test_budget_changes_migration.py` (3) — schema + alembic
+    head + is_contingency backfill.
+  - `tests/test_budget_changes_service.py` (15) — service-layer
+    invariants (Transfer/Contingency net-zero, Adjustment non-zero,
+    contingency-source rejection, BCR-NNNN sequence, parent-state
+    gating) + apply effects on budget_lines + header recompute.
+  - `tests/test_budget_changes_api.py` (17) — HTTP workflow
+    transitions, LD2 self-approval guard (5 tests inc. gross-
+    movement basis + NULL-creator fail-open), API surface
+    (cross-tenant 404, missing-perm 403, list filter, change-log).
+  - `tests/test_permissions_2_6.py` (4) — permission count baseline+2,
+    new perms seeded, `apply` role mapping matches `approve` exactly,
+    `submit` mapped to project_manager.
+  Shared helpers in `tests/_bcr_common.py` (NOT collected by pytest —
+  leading underscore prefix). All 35 acceptance gates from Build Pack
+  §R5 are covered.
   Baseline-drift literals bumped (chat-15 §3 pattern): `test_auth_rbac`
   super_admin 110→112, director 106→108; `test_bootstrap` head
   sentinel 0035_ → 0036_; `test_migration_0025_actuals` literal
@@ -100,7 +113,7 @@ Push-to-main via operator's Save-to-GitHub.
   110→112; `test_permissions_2_7` 110→112; `test_subcontractors`
   head literal 0036_budget_changes.
   **Pytest 2nd-run WARM-DB: 1110 passed, 3 xpassed, 0 failed,
-  0 errors, 186.50s.** Regression floor 1071 honoured (+39).
+  0 errors, 189.07s.** Regression floor 1071 honoured (+39).
 - **Scope honoured.** No frontend (later split 2.6-FE). No 2.8
   variation → BCR generation (`source_variation_id` is a nullable
   stub with NO FK; 2.8 adds the FK + generation path). No per-role /

@@ -105,10 +105,20 @@ perm) were confirmed against `main` as Build-Pack-expected.
   self-approval.
 
 ### Tests (§R5)
-- **39 new test functions** in `tests/test_budget_changes.py`,
-  covering all 35 Build Pack acceptance gates across 6 classes:
-  schema (3) + create-invariants (10) + workflow (7) +
-  apply-effects (5) + self-approval (5) + permissions/regression (9).
+- **39 new test functions** split across **4 files** matching the
+  Build Pack §R5 naming convention:
+  - `tests/test_budget_changes_migration.py` — **3 tests** (schema
+    + alembic head sentinel + is_contingency backfill).
+  - `tests/test_budget_changes_service.py` — **15 tests** (service-
+    layer invariants 10 + apply-effects 5).
+  - `tests/test_budget_changes_api.py` — **17 tests** (HTTP workflow
+    7 + self-approval 5 + API surface 5).
+  - `tests/test_permissions_2_6.py` — **4 tests** (permissions /
+    regression — mirrors test_permissions_2_7.py shape).
+  Shared helpers in `tests/_bcr_common.py` (NOT collected — leading
+  underscore prefix).
+- All 35 Build Pack §R5 acceptance gates covered across the four
+  files.
 - Baseline-drift literals bumped (chat-15 §3 pattern) in 8 legacy
   test files:
   - `test_auth_rbac.py` — super_admin 110→112, director 106→108
@@ -120,7 +130,7 @@ perm) were confirmed against `main` as Build-Pack-expected.
   - `test_permissions_2_7.py` — 110 → 112
   - `test_subcontractors.py` — head literal → 0036_budget_changes
 - **Pytest 2nd-run WARM-DB: 1110 passed, 3 xpassed, 0 failed,
-  0 errors, 186.50s.** Regression floor 1071 honoured (+39 net new).
+  0 errors, 189.07s.** Regression floor 1071 honoured (+39 net new).
 
 ---
 
@@ -186,8 +196,14 @@ perm) were confirmed against `main` as Build-Pack-expected.
 - Self-approval guard: reused get_budget_self_approval_threshold,
   gross-movement basis (sum(abs(delta))); NULL-creator fail-open;
   super-admin NOT exempt.
-- Tests: 39 new functions. pytest 2nd-run WARM-DB:
-  1110 passed, 3 xpassed, 0 failed, 0 errors, 186.50s.
+- Tests: 39 new functions across 4 files (matching §R5 naming):
+    tests/test_budget_changes_migration.py  (3)
+    tests/test_budget_changes_service.py    (15)
+    tests/test_budget_changes_api.py        (17)
+    tests/test_permissions_2_6.py           (4)
+    tests/_bcr_common.py                    (shared helpers; not collected)
+  pytest 2nd-run WARM-DB:
+  1110 passed, 3 xpassed, 0 failed, 0 errors, 189.07s.
   Regression floor 1071 honoured (+39 net new).
 - Deviations: D1 perm-count +2 (not +5); D2 service-layer audit;
   D3 Withdrawn → Update audit verb + metadata; D4 reference UNIQUE
@@ -197,7 +213,11 @@ perm) were confirmed against `main` as Build-Pack-expected.
          app/services/budget_changes.py
          app/routers/budget_changes.py
          alembic/versions/0036_budget_changes.py
-         tests/test_budget_changes.py
+         tests/_bcr_common.py
+         tests/test_budget_changes_migration.py
+         tests/test_budget_changes_service.py
+         tests/test_budget_changes_api.py
+         tests/test_permissions_2_6.py
          docs/chat-summaries/chat-33-closing.md
     MODIFIED: app/models/budgets.py (is_contingency on BudgetLine)
               app/models/rbac.py (ACTIONS += 'apply')

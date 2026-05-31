@@ -54,16 +54,20 @@ gates green.
   + submit/approve/reject (reason required)/withdraw/apply + GET
   `/budgets/{id}/change-log`. Cross-tenant → 404; validation → 422;
   state → 409; self-approval → 403.
-- **§R5 Tests.** **39 new test functions** in
-  `tests/test_budget_changes.py` (schema 3 + create-invariants 10 +
-  workflow 7 + apply-effects 5 + self-approval 5 + perms 9).
-  Baseline-drift literals bumped across 8 legacy files (chat-15 §3
-  pattern): test_auth_rbac (super_admin 110→112, director 106→108),
+- **§R5 Tests.** **39 new test functions split across 4 files** matching
+  Build Pack §R5 naming convention:
+  - `tests/test_budget_changes_migration.py` (3 — schema + head sentinel)
+  - `tests/test_budget_changes_service.py` (15 — invariants 10 + apply 5)
+  - `tests/test_budget_changes_api.py` (17 — workflow 7 + self-approval 5 + API surface 5)
+  - `tests/test_permissions_2_6.py` (4 — perms count + role mapping)
+  Shared helpers in `tests/_bcr_common.py` (leading-underscore → NOT collected).
+  Baseline-drift literals bumped across 8 legacy files (chat-15 §3 pattern):
+  test_auth_rbac (super_admin 110→112, director 106→108),
   test_bootstrap (head sentinel 0035→0036), test_migration_0025_actuals,
   test_migration_0028_user_preferences, test_patch_3, test_retro_wires,
   test_permissions_2_7, test_subcontractors (all head/count literals).
   **Pytest 2nd-run WARM-DB: 1110 passed, 3 xpassed, 0 failed,
-  0 errors, 186.50s.** Regression floor 1071 honoured (+39 net new).
+  0 errors, 189.07s.** Regression floor 1071 honoured (+39 net new).
 - **Scope honoured.** No frontend (2.6-FE later split). No 2.8
   variation generation (source_variation_id is stub with NO FK).
   No per-role approval limits (B43). No contingency-remaining
