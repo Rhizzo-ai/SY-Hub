@@ -2760,7 +2760,7 @@ class TestBudgetSelfApprovalGuard:
             f"{sc_svc.BUDGET_SELF_APPROVAL_THRESHOLD_KEY}",
             json={"value": "999999999.00"},
         )
-        assert r.status_code in (200, 422), r.text
+        assert r.status_code == 200, r.text
 
     def _set_threshold(self, admin, value: str) -> None:
         from app.services import system_config as sc_svc
