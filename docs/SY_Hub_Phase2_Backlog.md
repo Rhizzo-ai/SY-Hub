@@ -516,3 +516,29 @@ Louise, OR to a Claude Code checkpoint pass. **Not blocking** —
 local pytest has caught real regressions throughout Tracks 2 + 3.
 
 **Tracked in:** `docs/chat-summaries/chat-29-closing.md` §C.
+
+### Chat 32 — new items added at chat-end (2026-05-31)
+
+Deferred during Build Pack 2.7 (Subcontractors / CIS / supplier documents)
+per locked decisions LD2/LD3 and single-session scope discipline.
+
+- **B48** — CIS verification auto-expiry flagging. 2.7 stores
+  `expires_on` on `subcontractor_cis_verifications` but does NOT scan or
+  flag lapsed verifications. Add an attention-scan (mirror the budgets
+  `requires_attention` pattern) that flags subcontractors whose current
+  CIS verification has expired or is within N days of expiry. Payment-
+  blocking on a lapsed verification belongs with 2.8 valuations (which
+  don't yet exist) — wire there, not here. Defer.
+
+- **B49** — Migrate `supplier_documents` to the Track 5 versioned
+  document store. 2.7 ships a lightweight `supplier_documents` table with
+  `file_ref` as a reference string only (no binary upload pipeline). When
+  Track 5 lands the versioned store + approval workflow, migrate supplier
+  compliance docs onto it and deprecate the standalone table's file path.
+  Defer to Track 5.
+
+- **B50** — Per-project supplier/subcontractor ratings. The Phase 2 brief
+  (Prompt 2.7) mentions "ratings per project"; deferred from 2.7 to keep
+  it a single backend session. Needs a ratings table keyed on
+  (supplier_id, project_id) + a scoring scheme. Defer; low priority until
+  there's enough subcontractor history to rate.
