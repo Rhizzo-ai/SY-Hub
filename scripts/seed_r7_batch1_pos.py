@@ -326,7 +326,7 @@ def main():
     # ── Summary ───────────────────────────────────────────────────────
     app_url = (
         os.environ.get("REACT_APP_BACKEND_URL", "").rstrip("/")
-        or "https://contract-changes-hub.preview.emergentagent.com"
+        or "https://retention-compute.preview.emergentagent.com"
     )
     print("")
     print("─── R7 Batch 1 PO spot-check seeded ─────────────────────────────────")
