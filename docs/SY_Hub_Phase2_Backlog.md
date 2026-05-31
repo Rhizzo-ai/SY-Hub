@@ -570,3 +570,8 @@ per locked decisions LD2/LD3 and single-session scope discipline.
   the variation→BCR loop into 2.6, 2.8b is the monthly-money engine and uses
   the 2.7 CIS verification data + the `retention_pct`/`cis_applies` fields
   stored (unused) in 2.8a.
+
+  - **B54** — Variation summary endpoint. Aggregated approved-variation totals
+  per subcontract (folded-into-sum vs BCR-routed). Offered by Emergent at
+  Chat 34 close as unsolicited scope; declined (dashboard/2.8b territory).
+  Fold into 2.8b or the reporting track. Defer.
