@@ -20,7 +20,7 @@ import { toast } from 'sonner';
 import { ArrowLeft } from 'lucide-react';
 
 import {
-  Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle,
+  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -214,7 +214,9 @@ export default function BudgetChangeDetail() {
               return (
                 <tr key={ln.id} data-testid={`bcr-detail-line-${i}`}>
                   <td className="px-3 py-2">
-                    {bl?.description ?? <span className="text-slate-400">(line not in current budget snapshot)</span>}
+                    {bl
+                      ? (bl.line_description || '(unlabelled)')
+                      : <span className="text-slate-400">(line not in current budget snapshot)</span>}
                     {bl?.is_contingency ? (
                       <span className="ml-2 text-xs text-amber-700">(contingency)</span>
                     ) : null}
@@ -293,13 +295,35 @@ function EditBCRDialog({ open, onOpenChange, bcr, budgetLines }) {
   }, [open, bcr?.id]);
 
   const submit = async () => {
+    // Mirrors CreateBudgetChangeDialog: signed-decimal regex validation
+    // (lib/schemas/actuals.js pattern).
+    const DELTA_REGEX = /^-?\d+(\.\d{1,2})?$/;
+    if (!title.trim()) {
+      toast.error('Title is required.');
+      return;
+    }
+    for (const ln of lines) {
+      if (!ln.budget_line_id) {
+        toast.error('Every line needs a budget-line selection.');
+        return;
+      }
+      const raw = String(ln.delta ?? '').trim();
+      if (!DELTA_REGEX.test(raw)) {
+        toast.error('Every line needs a numeric delta (e.g. -40000 or 1500.50).');
+        return;
+      }
+      if (Number(raw) === 0) {
+        toast.error('Every line needs a non-zero delta.');
+        return;
+      }
+    }
     try {
       await patchMut.mutateAsync({
         title: title.trim(),
         reason: reason.trim() || null,
         lines: lines.map((ln) => ({
           budget_line_id: ln.budget_line_id,
-          delta: String(ln.delta),
+          delta: String(ln.delta).trim(),
         })),
       });
       toast.success('BCR updated');
