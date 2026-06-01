@@ -611,3 +611,12 @@ per locked decisions LD2/LD3 and single-session scope discipline.
   pre-filled with that line. Convenience entry point — lower urgency than B59.
   Frontend-only. From Chat 35 (2.6-FE manual review).
   
+- **B61** — Budget lines should require a name/title. Lines can currently exist
+  with a blank line_description, which is why the BCR picker had to add an
+  "(unlabelled)"/"Line {n}" fallback (2.6-FE-fix). Proper fix: make a
+  name mandatory at budget-line creation. BEFORE enforcing, investigate WHY
+  blanks occur — appraisal-generated lines inherit the appraisal label (may be
+  blank), manual lines, or test data — and confirm making it required won't
+  break existing data or a legitimate blank-then-fill workflow. Likely backend
+  (creation rule) + frontend (form validation). From Chat 35 (2.6-FE manual
+  review).
