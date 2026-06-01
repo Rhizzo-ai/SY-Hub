@@ -587,3 +587,11 @@ per locked decisions LD2/LD3 and single-session scope discipline.
 - **B57** — `view_sensitive` masking pushed into SELECT. Currently masks at the
   serialise layer for valuation/notice endpoints; push filtering into the query
   so masked columns aren't materialised. Backend hardening. From Chat 35 (2.8b).
+
+  - **B58** — BCR list lacks cross-project / pending endpoints. `GET /budget-changes`
+  requires a `budget_id`; there is no cross-project or "awaiting me" query path.
+  PO approvals already has the pattern (`GET /approvals/pending` +
+  `GET /projects/{id}/approvals/pending`). Add `GET /budget-changes/pending` +
+  `GET /projects/{id}/budget-changes` mirroring it. Unblocks the standalone BCR
+  approval queue (the deferred LD1 surface) and a future unified director inbox.
+  Half-session backend prompt. From Chat 36 (2.6-FE).
