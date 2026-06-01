@@ -8,7 +8,7 @@
 import { useState } from 'react';
 import { toast } from 'sonner';
 import {
-  Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle,
+  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
@@ -43,12 +43,12 @@ export default function BCRRejectDialog({ open, onOpenChange, bcr }) {
       <DialogContent data-testid="bcr-reject-dialog">
         <DialogHeader>
           <DialogTitle>Reject budget change</DialogTitle>
+          <DialogDescription>
+            Rejection is final — the BCR moves to <b>Rejected</b> and cannot
+            be re-opened. Raise a new BCR if a correction is needed. Reason
+            is required and is recorded on the audit log.
+          </DialogDescription>
         </DialogHeader>
-        <p className="text-sm text-slate-600">
-          Rejection is final — the BCR moves to <b>Rejected</b> and cannot
-          be re-opened. Raise a new BCR if a correction is needed. Reason
-          is required and is recorded on the audit log.
-        </p>
         <Textarea
           value={reason}
           onChange={(e) => setReason(e.target.value)}

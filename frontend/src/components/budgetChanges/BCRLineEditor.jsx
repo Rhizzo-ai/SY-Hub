@@ -51,7 +51,7 @@ export default function BCRLineEditor({
     onChange(next);
   };
   const remove = (i) => onChange(lines.filter((_, idx) => idx !== i));
-  const add = () => onChange([...lines, { budget_line_id: '', delta: '' }]);
+  const add = () => onChange([...lines, { budget_line_id: undefined, delta: '' }]);
 
   const linesById = Object.fromEntries(budgetLines.map((bl) => [bl.id, bl]));
 
@@ -88,7 +88,7 @@ export default function BCRLineEditor({
             >
               <div>
                 <Select
-                  value={ln.budget_line_id || undefined}
+                  value={ln.budget_line_id}
                   onValueChange={(v) => update(i, { budget_line_id: v })}
                   disabled={disabled}
                 >

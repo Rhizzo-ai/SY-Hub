@@ -19,7 +19,7 @@
 import { useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import {
-  Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle,
+  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -91,7 +91,7 @@ export default function CreateBudgetChangeDialog({
   const { data: budget } = useBudget(budgetId, { enabled: !!budgetId && open });
   const createMut = useCreateBCR();
 
-  const [changeType, setChangeType] = useState('');
+  const [changeType, setChangeType] = useState(undefined);
   const [title, setTitle] = useState('');
   const [reason, setReason] = useState('');
   const [lines, setLines] = useState([]);
@@ -155,6 +155,11 @@ export default function CreateBudgetChangeDialog({
       >
         <DialogHeader>
           <DialogTitle>New budget change</DialogTitle>
+          <DialogDescription>
+            Raise a draft change against this budget. Transfer and
+            Contingency drawdowns must net to £0; an Adjustment must
+            have a non-zero net.
+          </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4">
@@ -162,7 +167,7 @@ export default function CreateBudgetChangeDialog({
             <div>
               <Label htmlFor="bcr-create-change-type">Change type</Label>
               <Select
-                value={changeType || undefined}
+                value={changeType}
                 onValueChange={setChangeType}
               >
                 <SelectTrigger

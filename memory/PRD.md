@@ -18,6 +18,67 @@ Frontend / actuals / commitments / Xero are out of scope until later prompts.
 
 ## What's been implemented
 
+### 2026-06-01 — Chat 36 (Prompt 2.6-FE) BCR Workflow Frontend ✓ COMPLETE
+
+Frontend slice surfacing the full Budget Change Request workflow.
+Backend frozen at alembic head `0038_sc_valuations`, 129 permissions.
+Operator-confirmed Option (d) scope — per-budget queue via the
+BudgetDetail "Changes" tab + dedicated "Change Log" tab + standalone
+BCR detail page at `/budget-changes/:bcrId`. Standalone cross-project
+queue deferred (backlog **B51** — backend gap; no `GET
+/budget-changes/pending` or `GET /projects/{id}/budget-changes` today).
+
+- **§R0.2 ENDPOINT COVERAGE MAP** — all 10 BCR endpoints + 6
+  `budget_changes.*` permissions enumerated and mapped to UI surfaces
+  with no "intentionally not surfaced" rows.
+- **§R0.2 PIN — endpoint 9 (apply)** — confirmed from
+  `services/budget_changes.py:507/580`: `approve_bcr` ONLY stamps
+  status (no `budget_lines` write, no `recompute_summary`);
+  `apply_bcr` is the ONLY mutator (`approved_changes += delta` with
+  `FOR UPDATE` fresh-read + all-or-nothing). Two-step Approve → Apply
+  UI is required and correct.
+- **Surfaces shipped:**
+  - **A** `BudgetChangeQueue` — per-budget queue with 8 filter chips
+    (Open / All / 6 statuses) mounted as the "Changes" tab on
+    BudgetDetail (`?tab=changes`).
+  - **B** `BudgetChangeDetail` at `/budget-changes/:bcrId` —
+    workflow page with action bar + embedded EditBCRDialog
+    (Draft-only inline edit).
+  - **C** `CreateBudgetChangeDialog` — type + title + reason +
+    lines with client-side invariant mirrors of the backend
+    (Transfer/Contingency net=0; Adjustment net≠0; contingency
+    source flag check).
+  - **D** `BCRRejectDialog` — required-reason modal.
+  - **E** `BudgetChangeLogPanel` — read-only history mounted as
+    "Change log" tab on BudgetDetail.
+  - **F** `BCRStatusPill` — 6-status colour map (slate/amber/sky/
+    emerald/rose/muted-slate).
+  - **G** `BCRLineEditor` — shared lines builder used by Create + Edit.
+- **Self-approval guard (LD2)** mirrors backend behaviour: gross
+  movement basis `sum(abs(delta)) >= threshold` against the per-tenant
+  `budget.self_approval_threshold_gbp` (default £10k, fetched via
+  `useBudgetSelfApprovalThreshold` against
+  `GET /api/v1/system-config/budget.self_approval_threshold_gbp`).
+  Sub-threshold self-approve is now permitted (UI matches backend).
+- **`useBCRTransition('apply')`** coarse-invalidates `['budgets']` so
+  BudgetGridV2 totals refresh after Apply (mirrors PO commitment-verb
+  pattern at `hooks/purchaseOrders.js:235`).
+- **Test surface:** every interactive element has a `data-testid`
+  in `bcr-{component}-{purpose}` kebab-case.
+- **Tested:** Playwright iteration_11 — 15/15 review scenarios PASS,
+  100% frontend success rate. All 3 P3/P4 follow-ups applied
+  (threshold-aware self-approval guard; DialogDescription on all 4
+  dialogs; uncontrolled→controlled Select warning resolved).
+
+#### Backlog item raised
+- **B51 — BCR cross-project list endpoints.** PO approvals has the
+  pattern (`GET /approvals/pending` + `GET /projects/{id}/approvals/pending`);
+  BCR list endpoint requires `budget_id`. Add
+  `GET /budget-changes/pending` + `GET /projects/{id}/budget-changes`
+  mirroring it. Unblocks the standalone director "what's awaiting me"
+  queue page (deferred LD1 surface). Half-session backend prompt.
+
+
 ### 2026-05-31 — Chat 35 (Prompt 2.8b) Subcontract Valuations, Payment Notices, Retention ✓ COMPLETE
 
 Backend-only build per Build Pack 2.8b. Push-to-main. All §R5 acceptance

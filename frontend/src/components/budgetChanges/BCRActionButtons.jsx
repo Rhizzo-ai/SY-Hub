@@ -25,12 +25,13 @@ import { useState } from 'react';
 import { toast } from 'sonner';
 
 import {
-  Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle,
+  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 
 import { useAuth } from '@/context/AuthContext';
 import { useBCRTransition } from '@/hooks/budgetChanges';
+import { useBudgetSelfApprovalThreshold } from '@/hooks/systemConfig';
 import {
   canApproveBCR, canApplyBCR, canRejectBCR, canSubmitBCR,
   canWithdrawBCR, isBCRCreator,
@@ -59,6 +60,19 @@ export default function BCRActionButtons({ bcr, onEdit }) {
   const isDraft = status === 'Draft';
   const isSubmitted = status === 'Submitted';
   const isApproved = status === 'Approved';
+
+  // LD2 self-approval guard — mirror backend
+  // services/budget_changes.py:520-532. Threshold is gross movement
+  // (sum of abs(delta) across all BCR lines) compared with the per-
+  // tenant `budget.self_approval_threshold_gbp` value (default £10k).
+  // Backend is the authority — a 403 BudgetSelfApprovalError is the
+  // safety net if the client-side threshold is stale.
+  const { threshold } = useBudgetSelfApprovalThreshold();
+  const gross = (bcr?.lines ?? []).reduce(
+    (sum, ln) => sum + Math.abs(Number(ln.delta) || 0),
+    0,
+  );
+  const selfApprovalBlocked = creator && gross >= threshold;
 
   const callTxn = async (m, successMsg) => {
     try {
@@ -103,7 +117,11 @@ export default function BCRActionButtons({ bcr, onEdit }) {
         ) : null}
 
         {/* ── Submitted ─ Approve / Reject ───────────────────── */}
-        {isSubmitted && canApproveBCR(me) && !creator ? (
+        {/* Self-approval guard mirrors backend gross-movement check
+            (sum(abs(delta)) >= threshold). Only hides Approve at-or-
+            above the threshold — sub-threshold gross is permitted by
+            backend so the UI must allow it too. */}
+        {isSubmitted && canApproveBCR(me) && !selfApprovalBlocked ? (
           <button
             type="button"
             onClick={() => callTxn(approve, 'BCR approved — Apply next to push to budget')}
@@ -114,18 +132,18 @@ export default function BCRActionButtons({ bcr, onEdit }) {
             {approve.isPending ? 'Approving…' : 'Approve'}
           </button>
         ) : null}
-        {isSubmitted && canApproveBCR(me) && creator ? (
+        {isSubmitted && canApproveBCR(me) && selfApprovalBlocked ? (
           <button
             type="button"
             disabled
             className={`${BTN_PRIMARY} opacity-40 cursor-not-allowed`}
-            title="You created this BCR — another approver must action it (LD2 self-approval guard)"
+            title={`You created this BCR — gross movement £${gross.toLocaleString('en-GB')} is at/above the £${threshold.toLocaleString('en-GB')} self-approval threshold (LD2). Another approver must action it.`}
             data-testid="bcr-actions-approve-self-disabled"
           >
             Approve
           </button>
         ) : null}
-        {isSubmitted && canRejectBCR(me) && !creator ? (
+        {isSubmitted && canRejectBCR(me) && !selfApprovalBlocked ? (
           <button
             type="button"
             onClick={() => setRejectOpen(true)}
@@ -191,11 +209,11 @@ export default function BCRActionButtons({ bcr, onEdit }) {
         <DialogContent data-testid="bcr-withdraw-dialog">
           <DialogHeader>
             <DialogTitle>Withdraw budget change?</DialogTitle>
+            <DialogDescription>
+              This moves the BCR to <b>Withdrawn</b> (terminal). If you
+              need to change scope later, raise a new BCR.
+            </DialogDescription>
           </DialogHeader>
-          <p className="text-sm text-slate-600">
-            This moves the BCR to <b>Withdrawn</b> (terminal). If you
-            need to change scope later, raise a new BCR.
-          </p>
           <DialogFooter>
             <Button
               type="button"

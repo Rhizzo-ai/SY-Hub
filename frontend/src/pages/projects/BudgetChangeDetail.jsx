@@ -321,6 +321,10 @@ function EditBCRDialog({ open, onOpenChange, bcr, budgetLines }) {
       >
         <DialogHeader>
           <DialogTitle>Edit budget change</DialogTitle>
+          <DialogDescription>
+            Edit the header and lines of this Draft BCR. Saving keeps
+            the BCR in Draft — submit it for approval when you're ready.
+          </DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
           <div>
