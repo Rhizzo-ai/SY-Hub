@@ -12,7 +12,182 @@ Each entry: date, prompt reference (if applicable), change, rationale.
 ## Entries
 
 
-## Chat 35 — Track 2.8b Subcontract Valuations / Payment Notices / Retention (2026-05-31)
+## Chat 36 — Track 2.6-FE BCR Workflow Frontend (2026-06-01)
+
+Build Pack 2.6-FE §R0–§R1. Frontend-only. Push-to-main via operator's
+Save-to-GitHub. Backend FROZEN at alembic head `0038_sc_valuations`,
+129 permissions — zero backend changes.
+
+- **§R0 Pre-flight.** Provision Postgres / pip install / bootstrap
+  (rc=0) / `yarn install` all green. Alembic HEAD verified at
+  `0038_sc_valuations`. Permission catalogue verified at **129** via
+  `len(PERMISSION_CATALOGUE)` from `seed_rbac.py`.
+
+- **§R0.2 ENDPOINT COVERAGE MAP.** Enumerated every 2.6 BCR endpoint
+  (10 — router has create / list / get / patch / submit / approve /
+  reject / withdraw / apply / change-log; the handoff said "8" but
+  the router has 10) and every `budget_changes.*` permission (6:
+  view / create / edit / submit / approve / apply) and mapped each
+  to a surface. Map presented to operator BEFORE any component code
+  was written. Operator confirmed with one correction (LD1 reverted
+  to standalone /budget-changes queue) and one pin (endpoint 9 apply
+  semantic re-confirmation). No blank rows; no "intentionally not
+  surfaced" entries.
+
+- **§R0.2 PIN — endpoint 9 (apply).** Read
+  `services/budget_changes.py:507-538` (`approve_bcr`) and `:580-650`
+  (`apply_bcr`) end-to-end. Verdict: **approve_bcr ONLY stamps
+  status** (Submitted → Approved); it does NOT touch
+  `budget_lines.approved_changes`, does NOT call `_recompute_line` /
+  `recompute_summary`, and does NOT advance to Applied.
+  **apply_bcr is the ONLY mutator** — requires `bcr.status ==
+  "Approved"`, acquires `SELECT … FOR UPDATE` on referenced lines
+  for FRESH reads, re-asserts parent `_ALLOWED_PARENT_STATUSES`,
+  all-or-nothing writes `approved_changes += delta`, calls
+  `budgets_svc.recompute_summary`, stamps `Applied`. Two-step
+  Approve → Apply is REQUIRED and the Approved-but-not-applied
+  window is the explicit design. Reported to operator before R1.
+
+- **§R0 BACKEND GAP — B51 raised.** While preparing R1 the list
+  endpoint contract was checked: `GET /api/v1/budget-changes` requires
+  `budget_id: uuid.UUID = Query(...)`; `services.budget_changes.list_bcrs`
+  also hard-requires `budget_id`. There is NO cross-budget /
+  cross-project query path. The PO approvals surface has the pattern
+  (`GET /api/v1/approvals/pending` +
+  `GET /api/v1/projects/{id}/approvals/pending`); BCR was built
+  without the equivalent. Per the backend-frozen rule, the gap was
+  STOPPED to the operator with three resolution options. Operator
+  chose **(d)** — ship the per-budget queue today (BudgetDetail
+  Changes tab) + log a specced backend item. **B51** logged as:
+  "BCR list lacks cross-project / pending endpoints. PO approvals
+  already has the pattern (`GET /approvals/pending` +
+  `GET /projects/{id}/approvals/pending`). Add
+  `GET /budget-changes/pending` +
+  `GET /projects/{id}/budget-changes` mirroring it. Unblocks the
+  standalone BCR approval queue (deferred LD1 surface). Half-session
+  backend prompt."
+
+- **§R1 Surfaces shipped (per operator-approved scope (d)).** Seven
+  surfaces, no client-side fan-out, no standalone cross-project page
+  this slice:
+  - **A — `BudgetChangeQueue`** (per-budget queue) at
+    `components/budgetChanges/BudgetChangeQueue.jsx`. Mounted as
+    the "Changes" tab on `BudgetDetail` (`?tab=changes`). Eight
+    filter chips (Open / All / Draft / Submitted / Approved /
+    Applied / Rejected / Withdrawn). "Open" is a client-side
+    composite over the bounded backend list (200-cap). New change
+    CTA opens Surface C.
+  - **B — `BudgetChangeDetail`** at
+    `pages/projects/BudgetChangeDetail.jsx`. Route added in
+    `App.js`: `/budget-changes/:bcrId` (lazy-loaded in the
+    `budgets` chunk). Header with reference / status pill / type
+    / title / reason / timeline / net impact / rejection reason +
+    line table with cost-code + signed delta + contingency badge +
+    edit dialog (Draft-only, embedded) + action bar.
+  - **C — `CreateBudgetChangeDialog`**. Modal form for
+    `POST /budget-changes`. Mirrors backend invariants client-side
+    (Transfer/ContingencyDrawdown net=0 with ≥2 lines;
+    Adjustment net≠0; ContingencyDrawdown source lines flagged
+    `is_contingency`). Server remains the authority — backend
+    422s surface as toasts.
+  - **D — `BCRRejectDialog`**. Required-reason modal for
+    `POST /budget-changes/{id}/reject`. Backend gates on
+    `Field(..., min_length=1)`.
+  - **E — `BudgetChangeLogPanel`** at
+    `components/budgetChanges/BudgetChangeLogPanel.jsx`. Mounted
+    as the "Change log" tab on `BudgetDetail` (`?tab=change-log`).
+    Read-only audit trail using
+    `GET /api/v1/budgets/{budget_id}/change-log` — 200-cap, newest
+    first, includes Rejected / Withdrawn / Applied terminals.
+  - **F — `BCRStatusPill`** at
+    `components/budgetChanges/BCRStatusPill.jsx`. Six-status colour
+    map: Draft slate / Submitted amber / Approved sky / Applied
+    emerald / Rejected rose / Withdrawn muted-slate.
+  - **G — `BCRLineEditor`**. Shared line builder reused by Create
+    + Edit. Budget-line picker + signed delta input + live net
+    total with type-aware invariant hints. DRY.
+
+- **`BudgetDetail` 3-tab shell.** `pages/projects/BudgetDetail.jsx`
+  rebuilt around a `?tab=` URL contract (lines / changes /
+  change-log). Default tab is `lines`. Mirrors the
+  PurchaseOrderList `?tab=approvals` precedent. Tab visibility is
+  gated by the per-tab perm (`budgets.view` / `budget_changes.view`).
+  Legacy `?line=` / `?drilldown=` rewrite to `?expanded=` preserved.
+
+- **Self-approval guard (LD2) — mirrors backend exactly.**
+  `BCRActionButtons.jsx` computes `gross = sum(abs(delta))` and
+  compares with the per-tenant
+  `budget.self_approval_threshold_gbp` threshold (fetched via
+  `useBudgetSelfApprovalThreshold` against
+  `GET /api/v1/system-config/budget.self_approval_threshold_gbp`,
+  default £10k). UI hides Approve + Reject and renders the disabled
+  twin (`bcr-actions-approve-self-disabled` with explanatory
+  tooltip) only when `creator && gross >= threshold` — matching
+  `services/budget_changes.py:520-532` precisely. Sub-threshold
+  self-approve is now permitted by the UI; backend remains the
+  authority (a 403 `BudgetSelfApprovalError` is the safety net if
+  the client-side threshold is stale).
+
+- **Two-step Approve → Apply UI.** When a BCR is `Approved`,
+  `BCRActionButtons` renders the `bcr-awaiting-apply-hint` banner
+  ("Approved — awaiting apply. The parent budget has NOT yet been
+  updated. Click Apply to budget to push the deltas and recompute
+  totals.") plus the `bcr-actions-apply-btn`. Makes the §R0.2-PIN
+  design explicit to the user.
+
+- **React Query cache discipline.** `useBCRTransition` mutations
+  invalidate `bcrKeys.detail`, `bcrKeys.all`, and
+  `['budget-change-log']` on every verb. The `apply` verb additionally
+  coarse-invalidates `['budgets']` + `['budget']` so
+  `BudgetGridV2` (and the `BudgetHeader` totals) re-fetch the
+  `approved_changes` / `current_budget` / `variance` columns after
+  `apply_bcr` runs `recompute_summary`. Mirrors the PO commitment-
+  verb pattern at `hooks/purchaseOrders.js:235`.
+
+- **API path discipline.** All BCR API calls use `/v1/...` against
+  the `api` axios instance whose `baseURL` is `/api`. Verified live
+  via devtools — zero path violations observed.
+
+- **Capability helpers.** `lib/budgetChangeCapability.js` exports
+  six `canXxxBCR(me)` helpers + `isBCRCreator(bcr, me)` (creator
+  check used by withdraw eligibility and the self-approval guard).
+  Mirrors `lib/poCapability.js`.
+
+- **a11y + React warnings cleared.** All four Radix Dialog usages
+  now carry a `<DialogDescription>` (CreateBudgetChangeDialog,
+  BCRRejectDialog, EditBCRDialog, withdraw confirm). Select
+  components default to `undefined` rather than `''` so they remain
+  controlled from mount — eliminates the
+  uncontrolled→controlled React warning.
+
+- **Test surface.** Every interactive element carries a
+  `data-testid` in `bcr-{component}-{purpose}` kebab-case
+  (queue chips, queue rows, action buttons, dialog headers / inputs
+  / confirm buttons, status pills, line-editor rows, change-log
+  rows, awaiting-apply hint, etc.). 60+ unique testids across the
+  seven surfaces.
+
+- **Tested.** `testing_agent_v3_fork` iteration_11: **15/15 review
+  scenarios PASS, 100% frontend success rate, 0 backend changes,
+  0 mocked APIs.** Three P3/P4 follow-ups applied
+  (threshold-aware guard; DialogDescription a11y; Select controlled
+  fix) and re-verified clean by self-test screenshot
+  (empty console errors, dialog renders with description, queue
+  chips wire to live data, BCR-0001 Submitted state honoured by
+  the action matrix at the £10k boundary).
+
+- **`test_credentials.md`** updated with the BCR section pinning
+  `test-pm@example.test` as the recommended test user (PM role has
+  all 6 `budget_changes.*` perms AND bypasses MFA enrollment —
+  super-admin / director / finance roles enforce MFA and sit on
+  `mfa_pending` after login until enrolled, so `/auth/me` returns
+  `permissions=[]` for them).
+
+- **Deferred / out-of-scope** (per operator (d) decision):
+  standalone `/budget-changes` cross-project queue page (blocked on
+  **B51**). Surface stub NOT shipped to keep this slice clean.
+
+
 
 Build Pack 2.8b §R0–§R5. Backend-only. Push-to-main via operator's
 Save-to-GitHub. Builds on 2.8a — `retention_pct` and `cis_applies`
