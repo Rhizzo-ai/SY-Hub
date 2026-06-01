@@ -588,10 +588,26 @@ per locked decisions LD2/LD3 and single-session scope discipline.
   serialise layer for valuation/notice endpoints; push filtering into the query
   so masked columns aren't materialised. Backend hardening. From Chat 35 (2.8b).
 
-  - **B58** — BCR list lacks cross-project / pending endpoints. `GET /budget-changes`
+- **B58** — BCR list lacks cross-project / pending endpoints. `GET /budget-changes`
   requires a `budget_id`; there is no cross-project or "awaiting me" query path.
   PO approvals already has the pattern (`GET /approvals/pending` +
   `GET /projects/{id}/approvals/pending`). Add `GET /budget-changes/pending` +
   `GET /projects/{id}/budget-changes` mirroring it. Unblocks the standalone BCR
   approval queue (the deferred LD1 surface) and a future unified director inbox.
   Half-session backend prompt. From Chat 36 (2.6-FE).
+
+- **B59** — BCR line editor: show the selected budget line's current figures
+  inline. When picking a budget line and entering a delta in a BCR, the user
+  has no visibility of that line's current budget, committed, or remaining —
+  so they could move more off a line than it holds. Show current budget /
+  committed / remaining next to the delta input. HIGH — usability + safety
+  gap; candidate to pull forward as a 2.6-FE-followup before 2.7-FE. Data
+  likely already in the budget-lines API (confirm). From Chat 35 (2.6-FE
+  manual review).
+  
+- **B60** — Raise a BCR from the budget line item view. Currently BCRs are
+  raised from the budget's Changes tab only. Add a "raise a change on this
+  line" entry point from the line item that opens CreateBudgetChangeDialog
+  pre-filled with that line. Convenience entry point — lower urgency than B59.
+  Frontend-only. From Chat 35 (2.6-FE manual review).
+  
