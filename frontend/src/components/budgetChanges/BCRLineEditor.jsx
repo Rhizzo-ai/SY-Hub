@@ -101,7 +101,8 @@ export default function BCRLineEditor({
                     {budgetLines.map((bl) => (
                       <SelectItem key={bl.id} value={bl.id}>
                         <span>
-                          {bl.line_description || '(unlabelled)'}
+                          {bl.line_description
+                            || `Line ${bl.display_order ?? bl.id.slice(0, 8)}`}
                         </span>
                         {bl.is_contingency ? (
                           <span className="ml-2 text-xs text-amber-700">
@@ -126,7 +127,7 @@ export default function BCRLineEditor({
                 type="text"
                 inputMode="decimal"
                 value={ln.delta}
-                onChange={(e) => update(i, { delta: e.target.value })}
+                onChange={(e) => update(i, { delta: e.target.value.replace(/,/g, '') })}
                 placeholder="0.00"
                 className="text-right"
                 disabled={disabled}

@@ -215,7 +215,8 @@ export default function BudgetChangeDetail() {
                 <tr key={ln.id} data-testid={`bcr-detail-line-${i}`}>
                   <td className="px-3 py-2">
                     {bl
-                      ? (bl.line_description || '(unlabelled)')
+                      ? (bl.line_description
+                          || `Line ${bl.display_order ?? bl.id.slice(0, 8)}`)
                       : <span className="text-slate-400">(line not in current budget snapshot)</span>}
                     {bl?.is_contingency ? (
                       <span className="ml-2 text-xs text-amber-700">(contingency)</span>
