@@ -117,6 +117,14 @@ const NumberPrefixManager = React.lazy(() =>
     import(/* webpackChunkName: "suppliers-po" */ "@/pages/projects/NumberPrefixManager")
 );
 
+// Prompt 2.6-FE §R1 — lazy-load BCR detail in its own chunk so the
+// surface lands without inflating the main bundle. The Changes /
+// Change Log tabs on BudgetDetail import their components directly
+// from the budgets chunk (small enough not to need a third chunk).
+const BudgetChangeDetail = React.lazy(() =>
+    import(/* webpackChunkName: "budgets" */ "@/pages/projects/BudgetChangeDetail")
+);
+
 function ShellRoutes() {
     return (
         <AppShell>
@@ -240,6 +248,14 @@ function ShellRoutes() {
                 <Route path="/projects/:id/settings/numbering" element={
                     <React.Suspense fallback={<div className="p-6 text-sm">Loading…</div>}>
                         <NumberPrefixManager />
+                    </React.Suspense>
+                } />
+                {/* Prompt 2.6-FE §R1 — BCR detail (Surface B). The
+                    standalone cross-project queue at /budget-changes
+                    is deferred (backend gap B51). */}
+                <Route path="/budget-changes/:bcrId" element={
+                    <React.Suspense fallback={<div className="p-6 text-sm">Loading…</div>}>
+                        <BudgetChangeDetail />
                     </React.Suspense>
                 } />
                 <Route path="*" element={

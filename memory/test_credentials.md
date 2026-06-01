@@ -44,3 +44,23 @@ output for direct per-PO URLs and the state matrix (draft / pending_approval
 
 `rhys@syhomes.co.uk` exists in seeded DBs with MFA enabled. Not used for
 test flows — operator-only.
+
+## BCR (Prompt 2.6-FE) — preferred test user
+
+Use **`test-pm@example.test`** for BCR end-to-end flows. The PM role
+has ALL 6 `budget_changes.*` permissions (view / create / edit /
+submit / approve / apply) AND does NOT trigger MFA enrollment
+(super_admin / director / finance roles DO enforce MFA — they sit on
+`mfa_pending` after login until enrolled, so /auth/me returns
+permissions=[]).
+
+Seeded budget for BCR tests (created by `seed_r7_spotcheck.sh`):
+- Project ID: `b2a265ef-dc30-4779-96f6-e139d1881e07`
+- Budget ID:  `5a329b39-2a22-492e-a929-908a99096e8f` (Active)
+- Budget URL: `{REACT_APP_BACKEND_URL}/projects/b2a265ef-dc30-4779-96f6-e139d1881e07/budgets/5a329b39-2a22-492e-a929-908a99096e8f?tab=changes`
+- 10 budget lines across ACQ-/EXT-/FIN- prefix categories.
+
+For the LD2 self-approval test, raise a BCR > £10k as `test-pm`, then
+log in as a SECOND user (the only currently MFA-clean second user is
+the seeded super-admin or — once MFA-enrolled — director/finance).
+For day-one smoke, the single-user happy path is via `test-pm`.

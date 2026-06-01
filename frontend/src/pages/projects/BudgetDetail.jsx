@@ -1,10 +1,18 @@
 /**
- * BudgetDetail — Prompt 2.4B-i §R5.7 + Chat 23 §R3 (BudgetGridV2).
+ * BudgetDetail — Prompt 2.4B-i §R5.7 + Chat 23 §R3 (BudgetGridV2)
+ * + Prompt 2.6-FE §R1 (BCR Changes + Change Log tabs).
  *
  * Shell for the per-budget detail page. Renders:
  *   - breadcrumb + header (BudgetHeader)
  *   - SensitiveBanner when user lacks budgets.view_sensitive
- *   - BudgetGridV2 (Chat 23 R3 replacement for v1's BudgetLinesGrid)
+ *   - Tabbed body:
+ *       lines       — BudgetGridV2 (default)
+ *       changes     — <BudgetChangeQueue/> (Surface A per-budget queue)
+ *       change-log  — <BudgetChangeLogPanel/> (Surface E read-only log)
+ *
+ * Tab state is URL-driven via ?tab=. Mirrors the
+ * PurchaseOrderList ?tab=approvals precedent. Legacy `?line=` /
+ * `?drilldown=` deep-links are rewritten to `?expanded=` on mount.
  *
  * Hooks-first ordering preserved (Rules of Hooks).
  */
@@ -15,6 +23,17 @@ import { useBudget } from '@/hooks/budgets';
 import { BudgetHeader } from '@/components/budgets/BudgetHeader';
 import { SensitiveBanner } from '@/components/budgets/SensitiveBanner';
 import { BudgetGridV2 } from '@/components/budgets/grid/BudgetGridV2';
+import { canViewBCR } from '@/lib/budgetChangeCapability';
+import BudgetChangeQueue
+  from '@/components/budgetChanges/BudgetChangeQueue';
+import BudgetChangeLogPanel
+  from '@/components/budgetChanges/BudgetChangeLogPanel';
+
+const TABS = [
+  { key: 'lines',      label: 'Budget lines',  perm: 'budgets.view' },
+  { key: 'changes',    label: 'Changes',       perm: 'budget_changes.view' },
+  { key: 'change-log', label: 'Change log',    perm: 'budget_changes.view' },
+];
 
 export default function BudgetDetail() {
   const { projectId, budgetId } = useParams();
@@ -35,6 +54,18 @@ export default function BudgetDetail() {
     next.delete('drilldown');
     setSearchParams(next, { replace: true });
   }, [searchParams, setSearchParams]);
+
+  const activeTab = searchParams.get('tab') ?? 'lines';
+  const setTab = (key) => {
+    const next = new URLSearchParams(searchParams);
+    if (key === 'lines') next.delete('tab');
+    else next.set('tab', key);
+    setSearchParams(next, { replace: true });
+  };
+
+  const visibleTabs = TABS.filter((t) =>
+    me?.permissions?.includes(t.perm),
+  );
 
   const { data: budget, isLoading, isError, error } = useBudget(budgetId, {
     enabled: canView,
@@ -93,7 +124,51 @@ export default function BudgetDetail() {
         <>
           <BudgetHeader budget={budget} projectId={projectId} />
           <SensitiveBanner />
-          <BudgetGridV2 budget={budget} projectId={projectId} />
+
+          {/* Tab bar */}
+          {visibleTabs.length > 1 ? (
+            <div
+              className="flex gap-1 border-b border-slate-200"
+              data-testid="budget-detail-tabs"
+              role="tablist"
+            >
+              {visibleTabs.map((t) => (
+                <button
+                  key={t.key}
+                  type="button"
+                  role="tab"
+                  aria-selected={activeTab === t.key}
+                  onClick={() => setTab(t.key)}
+                  className={`relative px-4 py-2 text-sm transition ${
+                    activeTab === t.key
+                      ? 'font-semibold text-slate-900'
+                      : 'text-slate-500 hover:text-slate-700'
+                  }`}
+                  data-testid={`budget-detail-tab-${t.key}`}
+                >
+                  {t.label}
+                  {activeTab === t.key ? (
+                    <span className="absolute inset-x-2 -bottom-px h-0.5 bg-sy-teal-600" />
+                  ) : null}
+                </button>
+              ))}
+            </div>
+          ) : null}
+
+          {/* Tab body */}
+          {activeTab === 'changes' && canViewBCR(me) ? (
+            <div data-testid="budget-detail-tab-body-changes">
+              <BudgetChangeQueue budgetId={budgetId} projectId={projectId} />
+            </div>
+          ) : activeTab === 'change-log' && canViewBCR(me) ? (
+            <div data-testid="budget-detail-tab-body-change-log">
+              <BudgetChangeLogPanel budgetId={budgetId} />
+            </div>
+          ) : (
+            <div data-testid="budget-detail-tab-body-lines">
+              <BudgetGridV2 budget={budget} projectId={projectId} />
+            </div>
+          )}
         </>
       ) : null}
     </div>
