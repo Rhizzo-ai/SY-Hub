@@ -18,6 +18,51 @@ Frontend / actuals / commitments / Xero are out of scope until later prompts.
 
 ## What's been implemented
 
+### 2026-06-01 — Chat 37 (Prompt 2.6-FE-fix) BCR Workflow Defect Fixes ✓ COMPLETE
+
+Frontend-only defect pass on top of Chat 36 (commit `52a4288`).
+Backend FROZEN — alembic head `0038_sc_valuations`, perms 129
+(re-verified post-fix). Push-to-main via operator's Save-to-GitHub.
+
+Three operator-reproduced defects fixed:
+- **Bug 1 (CRITICAL):** `EditBCRDialog` crashed with `ReferenceError:
+  DialogDescription is not defined`. Root cause: missing named
+  import in `pages/projects/BudgetChangeDetail.jsx` (line 23).
+  Audit confirmed every other budgetChanges dialog already
+  imported it correctly. Fix: add the import.
+- **Bug 2 (HIGH):** Negative deltas displayed but evaluated to
+  positive on submit/net. Root cause: `<Input type="number">` in
+  `BCRLineEditor.jsx` — browsers strip a lone leading minus, so
+  state never receives the sign. Fix: switch to
+  `type="text" inputMode="decimal"` (mirrors actuals' working
+  signed-money pattern), apply DELTA_REGEX in `EditBCRDialog.submit`,
+  and strip commas in onChange so pasted `-1,234` parses to `-1234`.
+- **Bug 3 (MEDIUM):** Picker + detail rows showed every line as
+  "Untitled line". Root cause: components read `bl.description`
+  (does not exist) and `bl.cost_code` (UUID-only emitted). Backend
+  emits `line_description`. Fix (frontend-only per LD1): read
+  `line_description` and, when null, fall back to
+  `` `Line ${display_order ?? id.slice(0,8)}` `` (operator-confirmed
+  option c).
+
+**Testing:** added 11 new tests across `BCRLineEditor.test.jsx` and
+`BudgetChangeDetail.test.jsx` (R5 acceptance gates: sign preservation,
+Transfer £0 net, lone `-`, pasted `-1,234`, picker labels for all
+three fallback branches, detail row labels). **FE suite: 416/416
+passing** (was 405). ESLint clean. Backend untouched (alembic head
+`0038_sc_valuations`, perms 129).
+
+Files modified:
+- `frontend/src/pages/projects/BudgetChangeDetail.jsx`
+- `frontend/src/components/budgetChanges/BCRLineEditor.jsx`
+- `frontend/src/components/budgetChanges/CreateBudgetChangeDialog.jsx`
+
+Files added:
+- `frontend/src/components/budgetChanges/__tests__/BCRLineEditor.test.jsx`
+- `frontend/src/pages/projects/__tests__/BudgetChangeDetail.test.jsx`
+
+
+
 ### 2026-06-01 — Chat 36 (Prompt 2.6-FE) BCR Workflow Frontend ✓ COMPLETE
 
 Frontend slice surfacing the full Budget Change Request workflow.

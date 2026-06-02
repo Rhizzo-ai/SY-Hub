@@ -11,6 +11,104 @@ Each entry: date, prompt reference (if applicable), change, rationale.
 
 ## Entries
 
+## Chat 37 — Track 2.6-FE-fix BCR Workflow Defect Fixes (2026-06-01)
+
+Build Pack 2.6-FE-fix. Frontend-only defect pass on top of Chat 36
+(commit `52a4288`). Push-to-main via operator's Save-to-GitHub.
+Backend FROZEN — zero changes, alembic head `0038_sc_valuations`,
+129 permissions (re-verified post-fix).
+
+- **§R0 Pre-flight.** Provision Postgres / pip install / bootstrap
+  (rc=0); alembic head `0038_sc_valuations`; perms 129. FE test
+  baseline: **405 tests passing** (62 suites) — recorded before any
+  patch.
+
+- **§R0.2 Root-cause report (STOP gate honoured).** Three bugs
+  diagnosed AND reported to operator BEFORE patching, plus the
+  Bug 3 label-fallback decision. Operator confirmed option (c):
+  `line_description` → `Line ${display_order ?? id.slice(0,8)}`.
+
+- **Bug 1 — `EditBCRDialog` ReferenceError on open (CRITICAL).**
+  Root cause: `frontend/src/pages/projects/BudgetChangeDetail.jsx`
+  line 23 imported `Dialog, DialogContent, DialogFooter,
+  DialogHeader, DialogTitle` from `@/components/ui/dialog` but
+  `<DialogDescription>` was used at line 348. Audit of every other
+  budgetChanges dialog (`CreateBudgetChangeDialog`, `BCRRejectDialog`,
+  the withdraw modal inside `BCRActionButtons`) confirmed they all
+  already imported `DialogDescription` correctly — only this file
+  was broken. **Fix:** add `DialogDescription` to the named import.
+
+- **Bug 2 — Negative deltas not registering (HIGH).**
+  Root cause: `BCRLineEditor.jsx` rendered the delta `Input` as
+  `type="number" step="0.01"`. With a controlled React input of
+  `type=number`, typing a lone `-` sets `e.target.value = ""`
+  (lone minus is invalid as a number); when the user then types `4`
+  the DOM still visually shows `-` but `e.target.value = "4"`, so
+  state holds `"4"` (positive) and `Number(state) = 4`. Net stays
+  positive — exactly the operator's symptom. **Fix:** switch to
+  `type="text" inputMode="decimal"` (mirrors actuals' working
+  signed-money pattern in `CreateActualSheet.jsx` + the regex in
+  `lib/schemas/actuals.js`). Also added the same signed-decimal
+  regex guard (`/^-?\d+(\.\d{1,2})?$/`) to `EditBCRDialog.submit()`
+  (matching `CreateBudgetChangeDialog`), and a comma-stripping
+  sanitiser in `onChange` so a pasted `-1,234` parses to `-1234`
+  (R5 §6 edge case).
+
+- **Bug 3 — All lines show "Untitled line" (MEDIUM).**
+  Root cause: the picker (and the detail line table) read
+  `bl.description` and `bl.cost_code`. Backend `_serialise_line`
+  (`backend/app/routers/budgets.py:145+`) returns `line_description`
+  (the correct field), `cost_code_id` (UUID only — no human-readable
+  `cost_code` is emitted today). So `bl.description` was always
+  undefined → fallback `"Untitled line"` fired for every row.
+  **Fix (frontend-only per LD1):** read the correct backend field
+  `line_description`; when it's null/empty, fall back to
+  `` `Line ${display_order ?? id.slice(0,8)}` `` (operator decision
+  — distinguishes rows by their integer position; raw UUID short
+  hash only as a last resort if `display_order` is also absent).
+  No backend change required.
+
+- **Tests added.** 11 new tests across 2 files following the
+  existing `__tests__/` convention:
+  - `frontend/src/components/budgetChanges/__tests__/BCRLineEditor.test.jsx`
+    (8 tests — Bug 2 sign-preservation, Transfer £0 net, comma paste,
+    lone `-`, plus Bug 3 picker labels for `line_description`,
+    `display_order` fallback, short-id fallback, and distinguishability
+    of two null-description rows).
+  - `frontend/src/pages/projects/__tests__/BudgetChangeDetail.test.jsx`
+    (3 tests — Bug 1 page mounts with no ReferenceError, Bug 3 detail
+    row uses `line_description`, Bug 3 detail row uses `Line N`
+    fallback when description is null).
+
+- **FE suite post-fix: 416 / 416 passing** (63 suites; +11 tests vs.
+  the 405 baseline). Zero regressions. ESLint clean for all edited
+  files.
+
+- **Backend unchanged (re-verified post-patch).** `alembic heads`
+  → `0038_sc_valuations`; `len(PERMISSION_CATALOGUE)` → 129;
+  `git diff --stat backend/` → empty.
+
+- **Files modified:**
+  - `frontend/src/pages/projects/BudgetChangeDetail.jsx` —
+    added `DialogDescription` import (Bug 1); detail line table now
+    uses `line_description` with `Line N` fallback (Bug 3); added
+    DELTA_REGEX guard in `EditBCRDialog.submit()` (Bug 2).
+  - `frontend/src/components/budgetChanges/BCRLineEditor.jsx` —
+    delta input switched to `type="text" inputMode="decimal"` with
+    comma-stripping onChange (Bug 2); picker uses `line_description`
+    + `Line ${display_order ?? id.slice(0,8)}` fallback (Bug 3).
+  - `frontend/src/components/budgetChanges/CreateBudgetChangeDialog.jsx`
+    — hoisted DELTA_REGEX to module scope, validate against it on
+    submit, `.trim()` delta payload string (Bug 2 ancillary).
+
+- **Files added:**
+  - `frontend/src/components/budgetChanges/__tests__/BCRLineEditor.test.jsx`
+  - `frontend/src/pages/projects/__tests__/BudgetChangeDetail.test.jsx`
+
+- **NOT pushed.** Operator pushes via Save-to-GitHub.
+
+
+
 
 ## Chat 36 — Track 2.6-FE BCR Workflow Frontend (2026-06-01)
 
@@ -996,7 +1094,7 @@ with two new issues. Both fixed in-place; no new Build Pack.
   incompatible with a wildcard CORS_ORIGINS. ... Currently CORS_ORIGINS=''`.
   The CI env block hadn't set `CORS_ORIGINS` — locally it lives in
   `backend/.env`. Added `CORS_ORIGINS:
-  "https://workflow-surface.preview.emergentagent.com"` to the backend
+  "https://bcr-workflow-fixes.preview.emergentagent.com"` to the backend
   job env block in `.github/workflows/ci.yml` (value copied verbatim from
   `backend/.env`) plus a 6-line explanatory comment noting that CORS is
   never exercised in CI (pytest speaks server-to-server, no browser

@@ -18,7 +18,7 @@ load_dotenv("/app/backend/.env")
 
 BASE_URL = (
     os.environ.get("REACT_APP_BACKEND_URL", "").rstrip("/")
-    or "https://workflow-surface.preview.emergentagent.com"
+    or "https://bcr-workflow-fixes.preview.emergentagent.com"
 )
 DATABASE_URL = os.environ["DATABASE_URL"]
 TEST_PASSWORD = "TestUser-Dev-2026!"

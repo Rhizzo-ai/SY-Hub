@@ -100,11 +100,9 @@ export default function BCRLineEditor({
                   <SelectContent>
                     {budgetLines.map((bl) => (
                       <SelectItem key={bl.id} value={bl.id}>
-                        <span className="font-mono text-xs text-slate-500">
-                          {bl.cost_code ?? bl.cost_code_id?.slice(0, 6) ?? '—'}
-                        </span>
-                        <span className="ml-2">
-                          {bl.description || 'Untitled line'}
+                        <span>
+                          {bl.line_description
+                            || `Line ${bl.display_order ?? bl.id.slice(0, 8)}`}
                         </span>
                         {bl.is_contingency ? (
                           <span className="ml-2 text-xs text-amber-700">
@@ -126,10 +124,10 @@ export default function BCRLineEditor({
                 ) : null}
               </div>
               <Input
-                type="number"
-                step="0.01"
+                type="text"
+                inputMode="decimal"
                 value={ln.delta}
-                onChange={(e) => update(i, { delta: e.target.value })}
+                onChange={(e) => update(i, { delta: e.target.value.replace(/,/g, '') })}
                 placeholder="0.00"
                 className="text-right"
                 disabled={disabled}

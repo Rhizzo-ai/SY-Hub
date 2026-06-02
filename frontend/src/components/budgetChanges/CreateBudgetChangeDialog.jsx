@@ -45,6 +45,10 @@ const CHANGE_TYPES = [
     hint: 'Net change to the budget total. Net must be non-zero.' },
 ];
 
+// Mirrors the `actualSchema.net_amount` regex (lib/schemas/actuals.js) —
+// the working signed-money pattern used elsewhere in the app.
+const DELTA_REGEX = /^-?\d+(\.\d{1,2})?$/;
+
 function validateBeforeSubmit({ changeType, title, lines, budgetLinesById }) {
   if (!changeType) return 'Choose a change type.';
   if (!title.trim()) return 'Title is required.';
@@ -53,7 +57,11 @@ function validateBeforeSubmit({ changeType, title, lines, budgetLinesById }) {
   }
   for (const ln of lines) {
     if (!ln.budget_line_id) return 'Every line needs a budget-line selection.';
-    const n = Number(ln.delta);
+    const raw = String(ln.delta ?? '').trim();
+    if (!DELTA_REGEX.test(raw)) {
+      return 'Every line needs a numeric delta (e.g. -40000 or 1500.50).';
+    }
+    const n = Number(raw);
     if (!Number.isFinite(n) || n === 0) {
       return 'Every line needs a non-zero delta.';
     }
@@ -130,7 +138,7 @@ export default function CreateBudgetChangeDialog({
         reason: reason.trim() || null,
         lines: lines.map((ln) => ({
           budget_line_id: ln.budget_line_id,
-          delta: String(ln.delta),
+          delta: String(ln.delta).trim(),
         })),
       });
       toast.success(`BCR ${bcr.reference} created`);
