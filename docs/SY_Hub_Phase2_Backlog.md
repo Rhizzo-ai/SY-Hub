@@ -620,3 +620,24 @@ per locked decisions LD2/LD3 and single-session scope discipline.
   break existing data or a legitimate blank-then-fill workflow. Likely backend
   (creation rule) + frontend (form validation). From Chat 35 (2.6-FE manual
   review).
+
+- **B62** — Budget-line serialiser emits no human-readable cost code.
+  `_serialise_line` returns `cost_code_id` (UUID) but no cost-code text. The
+  BCR picker can only show `line_description`. Join the cost code's text and
+  add a `cost_code` field to the serialised line so the picker and detail
+  table can show "{cost_code} · {line_description}". Half-session backend.
+  From Chat 37 (2.6-FE-fix).
+  
+- **B63** — Budget lines can be created without a name. (Pairs with B61.)
+  `line_description` is nullable with no UI gate, which is why a frontend
+  "Line N" fallback was needed. Fix: require line_description at create-time
+  (API-layer validator, no migration) + a "name your lines" prompt in the
+  budget editor after a from-appraisal import. Lets us drop the fallback.
+  Backend + small FE. From Chat 37 (2.6-FE-fix).
+  
+- **B64** — Add a lint gate for missing JSX imports. Chat 37's crash bug was a
+  one-line missing import that the test suite and Playwright never caught
+  (the dialog was never opened in tests). ESLint's `react/jsx-no-undef` catches
+  exactly this. Confirm it's enabled and set to error (not warn) in the
+  frontend lint config; run one sweep to expose any other lurking missing
+  imports. Tiny prompt. From Chat 37 (2.6-FE-fix).
