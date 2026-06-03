@@ -641,3 +641,14 @@ per locked decisions LD2/LD3 and single-session scope discipline.
   exactly this. Confirm it's enabled and set to error (not warn) in the
   frontend lint config; run one sweep to expose any other lurking missing
   imports. Tiny prompt. From Chat 37 (2.6-FE-fix).
+
+### Chat 39 — out-of-scope items from Build Pack 2.6-FIX (added by hand)
+
+- **B65** — Multi-BCR live crash + "uncategorised" flash. Root-caused in audit 2026-06-02 and fixed in 2.6-FIX (A1/A2/A3 race + C-UNCAT grid guard). Re-test in the live app once deployed to confirm closed: raise + approve several BCRs in close succession, confirm no crash and no line shows "Uncategorised".
+- **B66** — Reconciliation tool. Small admin endpoint that re-runs the new Python `recompute_for_line` over every line on a budget. Cleans up any figures written under the pre-0039 dual-writer regime. Do before go-live. Emergent offered to build this.
+- **A5** — Dead `commitments.*` permissions defined but never enforced. Remove or wire up.
+- **A7** — Reference numbering is count-based; move to a proper DB sequence to avoid collisions.
+- **A8** — BCR withdraw stamp columns + apply action-verb label tidy-up.
+- **B-DESIGN** — Teal token drift (`sy-teal-600/700` vs `sy-teal`) — align to one token.
+- **B-MONEY** — Two separate `fmtGBP` money formatters — consolidate to one.
+- **B-SIZE** — `ProjectDetail.jsx` is 831 lines — split into smaller components.
