@@ -11,7 +11,154 @@ Each entry: date, prompt reference (if applicable), change, rationale.
 
 ## Entries
 
-## Chat 39 — Build Pack 2.6-FIX Budget Integrity & BCR Fix-Pack (2026-02)
+## Chat 40 — Build Pack 2.7-FE Suppliers / Subcontractors / CIS / Documents (Frontend) (2026-02)
+
+Frontend-only delivery against the frozen 2.7 backend. Two halves shipped
+together: **FIX** (D1–D7 corrections to drifted 2.5 supplier pages) and
+**ADD** (subcontractor + CIS verifications + supplier documents UI). No
+backend changes. Permissions count unchanged at **129**.
+
+### §R2 — FIX half (D1–D7 — 2.5 drift corrections)
+
+- **D1 `pages/SupplierForm.jsx`.** CIS-status dropdown was offering
+  `(None, Gross, Net_20, Net_30)` — wrong casing AND missing
+  `not_registered`, so every save was either rejected or wrote a
+  non-enum string. Replaced with the verbatim backend enum
+  `('', gross, net_20, net_30, not_registered)`, blank submits as
+  `null`, labels are human-readable ("—", "Gross", "Net 20%",
+  "Net 30%", "Not registered").
+- **D2 `pages/SupplierForm.jsx` + `lib/api/suppliers.js`.** Form was
+  writing `bank_account_number` — a field the backend's serialiser
+  silently drops; no banking detail had ever persisted. Renamed to
+  `bank_account_no` (the actual backend key). Added the two missing
+  sensitive fields the backend supports but the 2.5 UI never surfaced:
+  `bank_name` and `company_number`.
+- **D3 `pages/SupplierList.jsx` + `SupplierDetail.jsx`.** Both pages
+  read a phantom `s.status` and compared it to the string `'Archived'`.
+  The backend has no `status` field — it has `is_archived: bool`. The
+  filter was a permanent no-op and archived rows looked active.
+  Replaced everywhere with `s.is_archived` (bool) + an Active/Archived
+  chip.
+- **D4 `lib/api/suppliers.js` + `hooks/purchaseOrders.js`.** Client
+  was POSTing to `/v1/suppliers/{id}/restore` — backend mounts
+  `/unarchive`. Every restore-from-archive click silently 404'd.
+  Renamed `restoreSupplier`→`unarchiveSupplier`, route corrected, hook
+  renamed to `useUnarchiveSupplier`. URL-contract pin updated in
+  `__tests__/po-url-contracts.test.js`.
+- **D5 `pages/SupplierList.jsx`.** Sent `{status, search}` against an
+  endpoint that accepts `{q, include_archived, supplier_type}` — every
+  filter param was ignored. Switched to the real param names; the new
+  Type filter UI (§R4.1) drives `supplier_type`.
+- **D6 `pages/SupplierDetail.jsx`.** Read `s.bank_account_number`
+  (always `undefined` → em-dash regardless of permission). Switched to
+  `s.bank_account_no`; added `bank_name` + `company_number` rows in
+  the sensitive block (gated through `<SensitiveValue/>`).
+- **D7 `components/AppShell.jsx`.** Suppliers + Subcontractors had no
+  nav entries; the only access path was hand-typing `/suppliers`.
+  Added both entries (gated on `suppliers.view`). Subcontractors links
+  to `/suppliers?type=Subcontractor`; `SupplierList` seeds the Type
+  filter from that query param.
+
+> Self-approval rationale: D1–D6 are corrections to shipped 2.5 code
+> that are objectively broken against the current backend — wrong
+> field names are silent data loss, wrong routes are 404. Fixing them
+> is mandatory for 2.7-FE to function. No behaviour changes beyond
+> aligning to the frozen backend contract.
+
+### §R3 / §R4 — ADD half (new surfaces)
+
+- **`pages/SupplierList.jsx` — Type filter + CIS column + §R6
+  unverified cue.** Type dropdown (All/Supplier/Subcontractor) drives
+  `supplier_type`; on subcontractor view, rows with
+  `current_cis_status ∈ {null, 'Unverified', 'Unmatched'}` get an amber
+  dot + tooltip and a header summary line counts them. Type filter is
+  seeded from `?type=` and writes back to the URL on change so the nav
+  "Subcontractors" link lands pre-filtered and the URL stays
+  shareable.
+- **`pages/SupplierForm.jsx` — Subcontractor block.** Type selector
+  at top; when set to Subcontractor reveals `cis_subtype`,
+  `cis_registered` checkbox, and `utr` (sensitive). UTR validated
+  client-side as exactly 10 digits (HMRC SA reference format) or
+  empty; save is disabled while invalid. On Subcontractor→Supplier
+  edits the form explicitly sends `cis_subtype: null` so the backend
+  clears the stored value (it rejects `cis_subtype` on
+  non-subcontractor records; null is the documented cleanup signal).
+- **`pages/SupplierDetail.jsx` — tabbed (shadcn `Tabs`).** Overview /
+  CIS / Documents / Contracts (2.8-FE placeholder). Tabs render
+  per-visibility: CIS only for subcontractors with `cis.view`,
+  Documents only with `supplier_documents.view`, Contracts only for
+  subcontractors. URL `?tab=` deep-link supported.
+- **`components/suppliers/CISTab.jsx`.** Current-status banner
+  (`useCurrentVerification`) + append-only history table
+  (`useVerifications`) + record-verification form gated on
+  `cis.verify`. Match-status options are exactly the 3 backend
+  values (Gross / Net / Unmatched); 'Unverified' is **never** a
+  `match_status` choice (the 3+null model in §R1 is preserved).
+  On success the mutation invalidates exactly:
+  `['cis','verifications',id]`, `['cis','current',id]`,
+  `['supplier', id]`, `['suppliers']` — these literal keys match
+  `suppliersKeys.detail(id)` / `suppliersKeys.all` in
+  `hooks/purchaseOrders.js`. 409 from backend (non-subcontractor)
+  toasts the detail defensively.
+- **`components/suppliers/DocumentsTab.jsx`.** Toolbar (Add +
+  show-archived toggle) + table + add/edit shadcn `Dialog`. Archive /
+  Unarchive actions confirm + Sonner toast. Sensitive fields
+  (`file_ref`, `notes`) gated on
+  `supplier_documents.view_sensitive`. Archived rows visually
+  de-emphasised + "Archived" chip.
+- **`components/suppliers/CISStatusBadge.jsx`.** Single source of
+  truth mapping `current_cis_status` → shadcn Badge variant:
+  Gross → default, Net → secondary, Unmatched → destructive,
+  Unverified | null → outline labelled "Unverified".
+- **`components/suppliers/DocExpiryBadge.jsx` (§R6a).** Pure frontend
+  expiry bucketing — backend stores `expires_on` but never flags.
+  `< today` → destructive "Expired"; `≤ 30 days` → orange
+  "Expiring soon"; else → no badge. Pure-logic `_bucketForTests`
+  export for deterministic boundary tests.
+- **`lib/cisFormat.js`.** Label maps (cis_status / cis_subtype /
+  match_status / current_cis_status / doc_type) + `formatDate(iso)`
+  via `Intl.DateTimeFormat('en-GB')`. Pure module; imported by 5
+  callers + 1 test.
+- **`lib/api/cis.js` + `hooks/cis.js`.** Verifications API client +
+  TanStack Query wrappers. `useRecordVerification` is the single
+  invalidation gate.
+- **`lib/api/supplierDocuments.js` + `hooks/supplierDocuments.js`.**
+  Documents API client + hooks. List key includes the
+  `includeArchived` flag so the filtered + unfiltered views don't
+  share cache.
+- **`lib/poCapability.js` — new helpers (§R3 #3).** `canViewCIS`,
+  `canViewSensitiveCIS`, `canVerifyCIS`, `canViewDocs`,
+  `canViewSensitiveDocs`, `canCreateDocs`, `canEditDocs`,
+  `canArchiveDocs`. Same pattern as the existing supplier / PO
+  helpers.
+
+### §R5 — Tests (9 new test files + Jest URL-contract pin update)
+
+1. `frontend/src/pages/__tests__/SupplierList.test.jsx` (11 tests)
+2. `frontend/src/pages/__tests__/SupplierForm.test.jsx` (12 tests)
+3. `frontend/src/pages/__tests__/SupplierDetail.test.jsx` (8 tests)
+4. `frontend/src/components/suppliers/__tests__/CISTab.test.jsx` (7 tests)
+5. `frontend/src/components/suppliers/__tests__/DocumentsTab.test.jsx` (10 tests)
+6. `frontend/src/components/suppliers/__tests__/CISStatusBadge.test.jsx` (7 tests)
+7. `frontend/src/components/suppliers/__tests__/DocExpiryBadge.test.jsx` (10 tests)
+8. `frontend/src/lib/__tests__/cisFormat.test.js` (12 tests)
+9. `frontend/src/lib/api/__tests__/suppliers.test.js` (3 tests — D4 regression)
+
+Also updated `frontend/src/lib/api/__tests__/po-url-contracts.test.js`
+to pin the new `/unarchive` route.
+
+Final count: **513 tests / 75 suites green** (was 424 / 67 at start of
+2.7-FE).
+
+### §R9 — Out of scope (kept out, by design)
+
+- Subcontracts / variations / valuations UI — 2.8-FE.
+- Single-document GET surface — list endpoint already returns full
+  rows.
+- Any backend change.
+- Supplier portal (2.9).
+
+
 
 Backend race / integrity fix-pack plus two frontend defects, surfaced
 by the 2026-06-02 Claude Code audit (`docs/audits/AUDIT_REPORT_2026-06-02.md`).

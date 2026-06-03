@@ -22,6 +22,20 @@ export function canEditSupplier(me)   { return hasPerm(me, 'suppliers.edit'); }
 export function canArchiveSupplier(me){ return hasPerm(me, 'suppliers.archive'); }
 
 
+// ─── CIS (Chat 40 §R3 #3) ────────────────────────────────────────────
+export function canViewCIS(me)          { return hasPerm(me, 'cis.view'); }
+export function canViewSensitiveCIS(me) { return hasPerm(me, 'cis.view_sensitive'); }
+export function canVerifyCIS(me)        { return hasPerm(me, 'cis.verify'); }
+
+
+// ─── Supplier documents (Chat 40 §R3 #3) ─────────────────────────────
+export function canViewDocs(me)          { return hasPerm(me, 'supplier_documents.view'); }
+export function canViewSensitiveDocs(me) { return hasPerm(me, 'supplier_documents.view_sensitive'); }
+export function canCreateDocs(me)        { return hasPerm(me, 'supplier_documents.create'); }
+export function canEditDocs(me)          { return hasPerm(me, 'supplier_documents.edit'); }
+export function canArchiveDocs(me)       { return hasPerm(me, 'supplier_documents.archive'); }
+
+
 // ─── Purchase Orders ─────────────────────────────────────────────────
 export function canViewPOs(me)                { return hasPerm(me, 'pos.view'); }
 export function canViewSensitivePO(me)        { return hasPerm(me, 'pos.view_sensitive'); }

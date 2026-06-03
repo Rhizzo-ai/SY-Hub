@@ -1,27 +1,19 @@
 /**
- * SupplierForm — Chat 24 §R5 · Chat 40 §R2 D1/D2 fixes.
+ * SupplierForm — Chat 24 §R5 · Chat 40 §R2 D1/D2 + §R4.2 ADD half.
  *
- * One component handles both create (`/suppliers/new`) and edit
- * (`/suppliers/:id/edit`). Minimal fields; banking + VAT + UTR sit
- * behind `suppliers.view_sensitive` (hidden in the form if the caller
- * can't see them, since editing what you can't see leaks info).
+ * Handles both create (`/suppliers/new`) and edit
+ * (`/suppliers/:id/edit`). Banking + VAT + UTR sit behind
+ * `suppliers.view_sensitive`.
  *
- * §R2 D1 — backend `cis_status` enum is lowercase
- *   `(gross, net_20, net_30, not_registered)` with null allowed. The
- *   2.5 client offered `(None, Gross, Net_20, Net_30)`, so every save
- *   either 422'd or wrote the wrong casing. Replaced with the verbatim
- *   enum + a blank "—" option that submits `null`. Labels are
- *   human-readable.
- * §R2 D2 — backend persists `bank_account_no` (not `bank_account_number`)
- *   and accepts `bank_name` + `company_number` in the sensitive block.
- *   2.5 client wrote `bank_account_number` → silently dropped by the
- *   serialiser, no banking ever saved. Renamed the field + added the
- *   two missing inputs.
+ * §R4.2 — Type selector at top (Supplier / Subcontractor, default
+ *   Supplier). Subcontractor-only block (cis_subtype, cis_registered,
+ *   utr) renders only when type=Subcontractor. On submit, if type is
+ *   not Subcontractor, those keys are omitted. On Subcontractor→Supplier
+ *   edit transitions, explicitly send `cis_subtype: null` so the
+ *   backend clears the stored value (backend rejects cis_subtype on
+ *   non-subcontractor records; null is the cleanup signal).
  *
- * Subcontractor-only fields (`supplier_type`, `cis_subtype`,
- * `cis_registered`, `utr`) are part of the 2.7-FE ADD half (§R4.2);
- * not surfaced here yet. Backend tolerates their absence (defaults to
- * `supplier_type='Supplier'`).
+ * `current_cis_status` is NEVER in the form — read-only, CIS-owned.
  */
 import React, { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
@@ -34,9 +26,6 @@ import {
   canCreateSupplier, canEditSupplier, canViewSensitiveSupplier,
 } from '@/lib/poCapability';
 
-// §R2 D1 — verbatim backend enum + blank → null. Human labels in
-// CIS_STATUS_LABEL so the dropdown reads naturally without changing
-// the submitted value.
 const CIS_STATUS_OPTIONS = ['', 'gross', 'net_20', 'net_30', 'not_registered'];
 const CIS_STATUS_LABEL = {
   '': '—',
@@ -45,6 +34,20 @@ const CIS_STATUS_LABEL = {
   net_30: 'Net 30%',
   not_registered: 'Not registered',
 };
+
+const SUPPLIER_TYPES = ['Supplier', 'Subcontractor'];
+
+const CIS_SUBTYPE_OPTIONS = ['', 'Labour_Only', 'Labour_And_Plant', 'Supply_And_Fix'];
+const CIS_SUBTYPE_LABEL = {
+  '': '—',
+  Labour_Only: 'Labour only',
+  Labour_And_Plant: 'Labour and plant',
+  Supply_And_Fix: 'Supply and fix',
+};
+
+// UTR: HMRC self-assessment Unique Taxpayer Reference is exactly 10
+// digits. Client-side: trim, allow empty, otherwise enforce.
+const UTR_RE = /^\d{10}$/;
 
 function emptyForm() {
   return {
@@ -60,6 +63,10 @@ function emptyForm() {
     contact_email: '',
     contact_phone: '',
     notes: '',
+    supplier_type: 'Supplier',
+    cis_subtype: '',
+    cis_registered: false,
+    utr: '',
   };
 }
 
@@ -76,18 +83,24 @@ export default function SupplierForm() {
   const patch = usePatchSupplier(id);
   const [form, setForm] = useState(emptyForm());
   const [error, setError] = useState(null);
+  // Track the original type so we can detect Subcontractor→Supplier
+  // transitions on edit and explicitly nullify cis_subtype.
+  const [originalType, setOriginalType] = useState('Supplier');
 
   useEffect(() => {
     if (existing) {
-      // Overlay backend keys onto the empty form. Null sensitive
-      // fields stay as empty strings so React stays controlled.
       const overlay = { ...existing };
       Object.keys(overlay).forEach((k) => {
         if (overlay[k] === null && typeof emptyForm()[k] === 'string') {
           overlay[k] = '';
         }
       });
+      // cis_registered is a bool; backend may serialize null on legacy rows.
+      if (overlay.cis_registered === null || overlay.cis_registered === undefined) {
+        overlay.cis_registered = false;
+      }
       setForm({ ...emptyForm(), ...overlay });
+      setOriginalType(existing.supplier_type ?? 'Supplier');
     }
   }, [existing]);
 
@@ -98,23 +111,55 @@ export default function SupplierForm() {
   }
 
   const onChange = (k) => (e) => setForm({ ...form, [k]: e.target.value });
+  const onCheckChange = (k) => (e) => setForm({ ...form, [k]: e.target.checked });
+
+  const isSub = form.supplier_type === 'Subcontractor';
+
+  // UTR validation — only enforced when shown (subcontractor block).
+  const utrError = (() => {
+    if (!isSub) return null;
+    const utr = (form.utr ?? '').trim();
+    if (utr === '') return null;
+    if (!UTR_RE.test(utr)) return 'UTR must be exactly 10 digits.';
+    return null;
+  })();
 
   const onSubmit = async (e) => {
     e.preventDefault();
     setError(null);
+    if (utrError) {
+      setError(utrError);
+      return;
+    }
     const payload = {
       name: form.name?.trim(),
-      // §R2 D1 — '' submits as null; backend treats null as
-      // "no CIS status set".
       cis_status: form.cis_status === '' ? null : form.cis_status,
       default_vat_rate: Number(form.default_vat_rate),
       payment_terms_days: Number(form.payment_terms_days) || 0,
       contact_email: form.contact_email || null,
       contact_phone: form.contact_phone || null,
       notes: form.notes || null,
+      supplier_type: form.supplier_type,
     };
+
+    if (isSub) {
+      payload.cis_subtype = form.cis_subtype === '' ? null : form.cis_subtype;
+      payload.cis_registered = !!form.cis_registered;
+      if (canSensitive) {
+        payload.utr = form.utr?.trim() || null;
+      }
+    } else {
+      // §R4.2 — On Subcontractor→Supplier transition, explicitly send
+      // cis_subtype: null so the backend clears the prior value.
+      if (isEdit && originalType === 'Subcontractor') {
+        payload.cis_subtype = null;
+      }
+      // Otherwise omit cis_subtype / cis_registered / utr entirely so
+      // the backend (which rejects cis_subtype on non-subcontractors)
+      // is happy.
+    }
+
     if (canSensitive) {
-      // §R2 D2 — exact backend keys; bank_name + company_number added.
       payload.vat_number = form.vat_number || null;
       payload.company_number = form.company_number || null;
       payload.bank_name = form.bank_name || null;
@@ -140,6 +185,17 @@ export default function SupplierForm() {
       <h1 className="text-xl font-semibold">{isEdit ? 'Edit supplier' : 'New supplier'}</h1>
 
       <label className="block text-sm">
+        <span className="text-xs text-sy-grey-700">Type *</span>
+        <select
+          className="w-full px-2 py-1 border rounded text-sm"
+          value={form.supplier_type} onChange={onChange('supplier_type')}
+          data-testid="supplier-form-type"
+        >
+          {SUPPLIER_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+        </select>
+      </label>
+
+      <label className="block text-sm">
         <span className="text-xs text-sy-grey-700">Name *</span>
         <input
           type="text" required
@@ -161,6 +217,55 @@ export default function SupplierForm() {
           ))}
         </select>
       </label>
+
+      {isSub && (
+        <div
+          className="space-y-2 p-2 border border-dashed rounded bg-slate-50"
+          data-testid="supplier-form-subcontractor-block"
+        >
+          <div className="text-xs text-sy-grey-700">Subcontractor details</div>
+          <div className="grid grid-cols-2 gap-2">
+            <label className="block text-sm">
+              <span className="text-xs text-sy-grey-700">CIS sub-type</span>
+              <select
+                className="w-full px-2 py-1 border rounded text-sm"
+                value={form.cis_subtype ?? ''} onChange={onChange('cis_subtype')}
+                data-testid="supplier-form-cis-subtype"
+              >
+                {CIS_SUBTYPE_OPTIONS.map((c) => (
+                  <option key={c || 'blank'} value={c}>{CIS_SUBTYPE_LABEL[c]}</option>
+                ))}
+              </select>
+            </label>
+            <label className="text-sm flex items-center gap-2 pt-5">
+              <input
+                type="checkbox"
+                checked={!!form.cis_registered}
+                onChange={onCheckChange('cis_registered')}
+                data-testid="supplier-form-cis-registered"
+              />
+              <span>CIS registered</span>
+            </label>
+          </div>
+          {canSensitive && (
+            <label className="block text-sm">
+              <span className="text-xs text-sy-grey-700">UTR (10 digits)</span>
+              <input
+                type="text" inputMode="numeric"
+                className="w-full px-2 py-1 border rounded text-sm tabular-nums"
+                value={form.utr ?? ''} onChange={onChange('utr')}
+                data-testid="supplier-form-utr"
+                placeholder="0123456789"
+              />
+              {utrError && (
+                <span className="text-xs text-red-600" data-testid="supplier-form-utr-error">
+                  {utrError}
+                </span>
+              )}
+            </label>
+          )}
+        </div>
+      )}
 
       <div className="grid grid-cols-2 gap-2">
         <label className="block text-sm">
@@ -280,7 +385,7 @@ export default function SupplierForm() {
 
       <div className="flex gap-2">
         <button
-          type="submit" disabled={create.isPending || patch.isPending}
+          type="submit" disabled={create.isPending || patch.isPending || !!utrError}
           className="px-3 py-1.5 rounded bg-sy-teal-600 text-white text-sm disabled:opacity-50"
           data-testid="supplier-form-save"
         >

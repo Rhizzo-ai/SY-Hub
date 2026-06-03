@@ -18,6 +18,43 @@ Frontend / actuals / commitments / Xero are out of scope until later prompts.
 
 ## What's been implemented
 
+### Chat 40 — Build Pack 2.7-FE (2026-02)
+
+Frontend-only. Backend FROZEN at `0039_committed_single_writer`. No
+permission/role changes (129/10).
+
+**FIX half (D1–D7):** 2.5 supplier surface drift corrections.
+  - D1 SupplierForm CIS enum (lowercase) `(gross, net_20, net_30, not_registered)` + null
+  - D2 Bank fields use `bank_account_no` + new `bank_name`, `company_number`
+  - D3 `is_archived: bool` everywhere (phantom `s.status` removed)
+  - D4 Suppliers restore route `/restore` → `/unarchive`; hook renamed
+  - D5 SupplierList params switched to `{q, include_archived, supplier_type}`
+  - D6 SupplierDetail reads `bank_account_no` + adds `bank_name`/`company_number`
+  - D7 Suppliers + Subcontractors nav entries in AppShell
+
+**ADD half (§R4):**
+  - SupplierList: Type filter (All/Supplier/Subcontractor), CIS badge column,
+    §R6 unverified cue (amber dot + header count) on subcontractor view,
+    `useSearchParams` URL sync.
+  - SupplierForm: Type selector + Subcontractor block (cis_subtype,
+    cis_registered, UTR 10-digit-validated); explicit
+    `cis_subtype: null` on Subcontractor→Supplier transitions.
+  - SupplierDetail: tabbed (Overview / CIS / Documents / Contracts
+    placeholder); per-permission tab visibility.
+  - New `CISTab` (current banner + history + record form), `DocumentsTab`
+    (toolbar + table + dialog form + expiry badges + archive/restore),
+    `CISStatusBadge`, `DocExpiryBadge` (pure frontend bucketing).
+  - New `cisFormat.js` label maps + `formatDate` helper.
+  - New `lib/api/cis.js`, `lib/api/supplierDocuments.js` + hooks.
+  - 8 new capability helpers in `lib/poCapability.js`.
+
+**Tests:** 9 new files named exactly per §R5 — final **513 passed / 75
+suites green** (was 424 / 67 at start of 2.7-FE).
+
+**Deferred to ADD-pack follow-up / future chats:**
+- Playwright spec `frontend/e2e/suppliers-subcontractors.spec.ts` —
+  repo has no Playwright runner wired at HEAD.
+
 ### Chat 39 — Build Pack 2.6-FIX (2026-02)
 - Alembic head: `0038_sc_valuations` → `0039_committed_single_writer`
 - Permissions count unchanged: **129**. Roles unchanged: **10**.
