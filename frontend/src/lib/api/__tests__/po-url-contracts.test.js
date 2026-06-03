@@ -63,9 +63,10 @@ describe('Suppliers URL contracts', () => {
     expect(api.post).toHaveBeenCalledWith('/v1/suppliers/S1/archive', {});
   });
 
-  test('restoreSupplier → POST /v1/suppliers/{id}/restore', async () => {
-    await suppliersApi.restoreSupplier('S1');
-    expect(api.post).toHaveBeenCalledWith('/v1/suppliers/S1/restore', {});
+  test('unarchiveSupplier → POST /v1/suppliers/{id}/unarchive', async () => {
+    // §R2 D4 — was `restoreSupplier`→`/restore` (404'd); backend mounts `/unarchive`.
+    await suppliersApi.unarchiveSupplier('S1');
+    expect(api.post).toHaveBeenCalledWith('/v1/suppliers/S1/unarchive', {});
   });
 });
 

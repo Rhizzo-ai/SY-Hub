@@ -61,6 +61,19 @@ export function useArchiveSupplier() {
   });
 }
 
+// §R2 D4 — was `useRestoreSupplier` calling `/restore`; backend mounts
+// `/unarchive`, so the old hook silently 404'd. Rename + reroute.
+export function useUnarchiveSupplier() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id) => suppliersApi.unarchiveSupplier(id),
+    onSuccess: (_d, id) => {
+      qc.invalidateQueries({ queryKey: suppliersKeys.detail(id) });
+      qc.invalidateQueries({ queryKey: suppliersKeys.all });
+    },
+  });
+}
+
 
 // ─── Purchase Orders ─────────────────────────────────────────────────
 export const poKeys = {

@@ -1,10 +1,21 @@
 /**
- * SupplierList — Chat 24 §R5.
+ * SupplierList — Chat 24 §R5 · Chat 40 §R2 D3/D5 fixes.
  *
- * Lightweight supplier directory (table). Status filter (Active /
- * Archived), free-text search, "+ New supplier" gated on
- * suppliers.create. Sensitive columns (bank, VAT) are not in the list
- * view — they only appear on SupplierDetail.
+ * Lightweight supplier directory (table). Free-text search + a
+ * show-archived toggle, "+ New supplier" gated on suppliers.create.
+ * Sensitive columns (bank, VAT) are not in the list view — they only
+ * appear on SupplierDetail.
+ *
+ * §R2 D3 — backend has no `status` field; it has `is_archived: bool`.
+ *   The 2.5 client read `s.status` and compared to the string
+ *   'Archived', which never matched → archived rows looked active and
+ *   the filter was a no-op.
+ * §R2 D5 — backend list params are `{q, include_archived, supplier_type, limit, offset}`,
+ *   not `{status, search}`. The 2.5 client sent params the router
+ *   ignored, so filters appeared to work locally but had no effect on
+ *   the query. We now send `{q, include_archived}`. The `supplier_type`
+ *   filter UI is part of the 2.7-FE ADD half (§R4.1) and is not wired
+ *   here yet.
  */
 import React, { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
@@ -15,11 +26,14 @@ import { canCreateSupplier, canViewSuppliers } from '@/lib/poCapability';
 
 export default function SupplierList() {
   const { me } = useAuth();
-  const [statusFilter, setStatusFilter] = useState('Active');
+  const [includeArchived, setIncludeArchived] = useState(false);
   const [search, setSearch] = useState('');
 
   const { data, isLoading, isError } = useSuppliers({
-    params: { status: statusFilter, search: search || undefined },
+    params: {
+      include_archived: includeArchived || undefined,
+      q: search || undefined,
+    },
   });
 
   const rows = useMemo(() => data?.items ?? [], [data]);
@@ -47,19 +61,15 @@ export default function SupplierList() {
         )}
       </header>
 
-      <div className="flex gap-2 items-end">
-        <label className="text-sm flex flex-col">
-          <span className="text-xs text-sy-grey-600">Status</span>
-          <select
-            className="px-2 py-1 border rounded text-sm"
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-            data-testid="supplier-list-status-filter"
-          >
-            <option value="Active">Active</option>
-            <option value="Archived">Archived</option>
-            <option value="">All</option>
-          </select>
+      <div className="flex gap-3 items-end">
+        <label className="text-sm flex items-center gap-2">
+          <input
+            type="checkbox"
+            checked={includeArchived}
+            onChange={(e) => setIncludeArchived(e.target.checked)}
+            data-testid="supplier-list-archived-toggle"
+          />
+          <span>Show archived</span>
         </label>
         <label className="text-sm flex flex-col flex-1">
           <span className="text-xs text-sy-grey-600">Search</span>
@@ -101,7 +111,11 @@ export default function SupplierList() {
                   </Link>
                 </td>
                 <td className="py-2 pr-2">{s.cis_status ?? '—'}</td>
-                <td className="py-2 pr-2">{s.status ?? '—'}</td>
+                <td className="py-2 pr-2">
+                  {s.is_archived
+                    ? <span className="text-sy-grey-500" data-testid={`supplier-row-archived-${s.id}`}>Archived</span>
+                    : <span>Active</span>}
+                </td>
                 <td className="py-2 pr-2 tabular-nums">
                   {s.default_vat_rate != null ? `${s.default_vat_rate}%` : '—'}
                 </td>

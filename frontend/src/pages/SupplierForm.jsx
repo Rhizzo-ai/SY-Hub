@@ -1,10 +1,27 @@
 /**
- * SupplierForm — Chat 24 §R5.
+ * SupplierForm — Chat 24 §R5 · Chat 40 §R2 D1/D2 fixes.
  *
  * One component handles both create (`/suppliers/new`) and edit
- * (`/suppliers/:id/edit`). Minimal fields; banking + VAT number sit
+ * (`/suppliers/:id/edit`). Minimal fields; banking + VAT + UTR sit
  * behind `suppliers.view_sensitive` (hidden in the form if the caller
  * can't see them, since editing what you can't see leaks info).
+ *
+ * §R2 D1 — backend `cis_status` enum is lowercase
+ *   `(gross, net_20, net_30, not_registered)` with null allowed. The
+ *   2.5 client offered `(None, Gross, Net_20, Net_30)`, so every save
+ *   either 422'd or wrote the wrong casing. Replaced with the verbatim
+ *   enum + a blank "—" option that submits `null`. Labels are
+ *   human-readable.
+ * §R2 D2 — backend persists `bank_account_no` (not `bank_account_number`)
+ *   and accepts `bank_name` + `company_number` in the sensitive block.
+ *   2.5 client wrote `bank_account_number` → silently dropped by the
+ *   serialiser, no banking ever saved. Renamed the field + added the
+ *   two missing inputs.
+ *
+ * Subcontractor-only fields (`supplier_type`, `cis_subtype`,
+ * `cis_registered`, `utr`) are part of the 2.7-FE ADD half (§R4.2);
+ * not surfaced here yet. Backend tolerates their absence (defaults to
+ * `supplier_type='Supplier'`).
  */
 import React, { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
@@ -17,16 +34,28 @@ import {
   canCreateSupplier, canEditSupplier, canViewSensitiveSupplier,
 } from '@/lib/poCapability';
 
-const CIS_STATUSES = ['None', 'Gross', 'Net_20', 'Net_30'];
+// §R2 D1 — verbatim backend enum + blank → null. Human labels in
+// CIS_STATUS_LABEL so the dropdown reads naturally without changing
+// the submitted value.
+const CIS_STATUS_OPTIONS = ['', 'gross', 'net_20', 'net_30', 'not_registered'];
+const CIS_STATUS_LABEL = {
+  '': '—',
+  gross: 'Gross',
+  net_20: 'Net 20%',
+  net_30: 'Net 30%',
+  not_registered: 'Not registered',
+};
 
 function emptyForm() {
   return {
     name: '',
-    cis_status: 'None',
+    cis_status: '',
     default_vat_rate: 20.0,
     payment_terms_days: 30,
     vat_number: '',
-    bank_account_number: '',
+    company_number: '',
+    bank_name: '',
+    bank_account_no: '',
     bank_sort_code: '',
     contact_email: '',
     contact_phone: '',
@@ -49,7 +78,17 @@ export default function SupplierForm() {
   const [error, setError] = useState(null);
 
   useEffect(() => {
-    if (existing) setForm({ ...emptyForm(), ...existing });
+    if (existing) {
+      // Overlay backend keys onto the empty form. Null sensitive
+      // fields stay as empty strings so React stays controlled.
+      const overlay = { ...existing };
+      Object.keys(overlay).forEach((k) => {
+        if (overlay[k] === null && typeof emptyForm()[k] === 'string') {
+          overlay[k] = '';
+        }
+      });
+      setForm({ ...emptyForm(), ...overlay });
+    }
   }, [existing]);
 
   if (!canSubmit) {
@@ -65,7 +104,9 @@ export default function SupplierForm() {
     setError(null);
     const payload = {
       name: form.name?.trim(),
-      cis_status: form.cis_status,
+      // §R2 D1 — '' submits as null; backend treats null as
+      // "no CIS status set".
+      cis_status: form.cis_status === '' ? null : form.cis_status,
       default_vat_rate: Number(form.default_vat_rate),
       payment_terms_days: Number(form.payment_terms_days) || 0,
       contact_email: form.contact_email || null,
@@ -73,8 +114,11 @@ export default function SupplierForm() {
       notes: form.notes || null,
     };
     if (canSensitive) {
+      // §R2 D2 — exact backend keys; bank_name + company_number added.
       payload.vat_number = form.vat_number || null;
-      payload.bank_account_number = form.bank_account_number || null;
+      payload.company_number = form.company_number || null;
+      payload.bank_name = form.bank_name || null;
+      payload.bank_account_no = form.bank_account_no || null;
       payload.bank_sort_code = form.bank_sort_code || null;
     }
     try {
@@ -109,10 +153,12 @@ export default function SupplierForm() {
         <span className="text-xs text-sy-grey-700">CIS status</span>
         <select
           className="w-full px-2 py-1 border rounded text-sm"
-          value={form.cis_status} onChange={onChange('cis_status')}
+          value={form.cis_status ?? ''} onChange={onChange('cis_status')}
           data-testid="supplier-form-cis"
         >
-          {CIS_STATUSES.map((c) => <option key={c} value={c}>{c}</option>)}
+          {CIS_STATUS_OPTIONS.map((c) => (
+            <option key={c || 'blank'} value={c}>{CIS_STATUS_LABEL[c]}</option>
+          ))}
         </select>
       </label>
 
@@ -164,13 +210,33 @@ export default function SupplierForm() {
           data-testid="supplier-form-sensitive-block"
         >
           <div className="text-xs text-sy-grey-700">Sensitive (visible because you have suppliers.view_sensitive)</div>
+          <div className="grid grid-cols-2 gap-2">
+            <label className="block text-sm">
+              <span className="text-xs text-sy-grey-700">VAT number</span>
+              <input
+                type="text"
+                className="w-full px-2 py-1 border rounded text-sm"
+                value={form.vat_number ?? ''} onChange={onChange('vat_number')}
+                data-testid="supplier-form-vat-number"
+              />
+            </label>
+            <label className="block text-sm">
+              <span className="text-xs text-sy-grey-700">Company number</span>
+              <input
+                type="text"
+                className="w-full px-2 py-1 border rounded text-sm"
+                value={form.company_number ?? ''} onChange={onChange('company_number')}
+                data-testid="supplier-form-company-number"
+              />
+            </label>
+          </div>
           <label className="block text-sm">
-            <span className="text-xs text-sy-grey-700">VAT number</span>
+            <span className="text-xs text-sy-grey-700">Bank name</span>
             <input
               type="text"
               className="w-full px-2 py-1 border rounded text-sm"
-              value={form.vat_number ?? ''} onChange={onChange('vat_number')}
-              data-testid="supplier-form-vat-number"
+              value={form.bank_name ?? ''} onChange={onChange('bank_name')}
+              data-testid="supplier-form-bank-name"
             />
           </label>
           <div className="grid grid-cols-2 gap-2">
@@ -188,8 +254,8 @@ export default function SupplierForm() {
               <input
                 type="text"
                 className="w-full px-2 py-1 border rounded text-sm"
-                value={form.bank_account_number ?? ''}
-                onChange={onChange('bank_account_number')}
+                value={form.bank_account_no ?? ''}
+                onChange={onChange('bank_account_no')}
                 data-testid="supplier-form-account-number"
               />
             </label>

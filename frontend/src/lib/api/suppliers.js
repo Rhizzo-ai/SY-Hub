@@ -1,14 +1,19 @@
 /**
- * Suppliers API client — Chat 24 §R5 (Prompt 2.5).
+ * Suppliers API client — Chat 24 §R5 (Prompt 2.5) · Chat 40 §R2 D4 fix.
  *
  * Thin axios wrappers around the v1 suppliers endpoints. Same shape
  * convention as lib/api/actuals.js: `lib/api.js` baseURL is `/api`, so
  * we prepend `/v1/...` ourselves.
  *
- * Sensitive fields (bank_account_number, bank_sort_code, vat_number)
- * are stripped server-side for callers without `suppliers.view_sensitive`.
- * Frontend renders an em-dash placeholder via <SensitiveValue/> when the
- * field comes back null.
+ * Sensitive fields (bank_account_no, bank_sort_code, bank_name,
+ * vat_number, company_number, utr) are stripped server-side for
+ * callers without `suppliers.view_sensitive`. Frontend renders an
+ * em-dash placeholder via <SensitiveValue/> when the field comes back
+ * null.
+ *
+ * §R2 D4 — `restoreSupplier`→`unarchiveSupplier`, route `/restore`→`/unarchive`
+ * (backend mounts `/v1/suppliers/{id}/unarchive`; the 2.5 client wrote
+ * `/restore` which silently 404'd).
  */
 import { api } from '@/lib/api';
 
@@ -37,7 +42,7 @@ export async function archiveSupplier(supplierId) {
   return data;
 }
 
-export async function restoreSupplier(supplierId) {
-  const { data } = await api.post(`/v1/suppliers/${supplierId}/restore`, {});
+export async function unarchiveSupplier(supplierId) {
+  const { data } = await api.post(`/v1/suppliers/${supplierId}/unarchive`, {});
   return data;
 }
