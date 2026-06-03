@@ -184,7 +184,18 @@ class TestAuditEmission:
         )
         val_id = r.json()["id"]
         submit_valuation(admin, val_id)
-        certify_valuation(admin, val_id)
+        # Chat 39 §R2 A4: budget_line_id is now required on certify.
+        from app.db import SessionLocal as _SL
+        _db = _SL()
+        try:
+            bl_id = _db.scalar(text("""
+                SELECT bl.id FROM budget_lines bl
+                  JOIN budgets b ON b.id = bl.budget_id
+                 WHERE b.project_id=:p LIMIT 1
+            """), {"p": project_id})
+        finally:
+            _db.close()
+        certify_valuation(admin, val_id, body={"budget_line_id": str(bl_id)})
 
         db = SessionLocal()
         try:

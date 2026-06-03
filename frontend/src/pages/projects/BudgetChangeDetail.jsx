@@ -14,7 +14,7 @@
  * :580 (apply) are separate transitions; approve does NOT mutate
  * budget_lines, only apply does.
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { ArrowLeft } from 'lucide-react';
@@ -30,6 +30,7 @@ import { Label } from '@/components/ui/label';
 import { useAuth } from '@/context/AuthContext';
 import { useBCR, usePatchBCR } from '@/hooks/budgetChanges';
 import { useBudget } from '@/hooks/budgets';
+import { useCostCodes, buildCostCodeMap } from '@/hooks/costCodes';
 import {
   canEditBCR, canViewBCR, isBCRCreator,
 } from '@/lib/budgetChangeCapability';
@@ -62,6 +63,12 @@ export default function BudgetChangeDetail() {
   const { data: budget } = useBudget(bcr?.budget_id, {
     enabled: !!bcr?.budget_id,
   });
+  // Chat 39 §R2 B-DATA: cost code is resolved client-side via the
+  // useCostCodes map (the API returns cost_code_id only). Mirrors the
+  // grid's BudgetGridColumns.jsx:99 resolution pattern.
+  const projectId = budget?.project_id;
+  const { data: costCodes } = useCostCodes(projectId);
+  const costCodeMap = useMemo(() => buildCostCodeMap(costCodes ?? []), [costCodes]);
 
   const [editOpen, setEditOpen] = useState(false);
 
@@ -223,7 +230,7 @@ export default function BudgetChangeDetail() {
                     ) : null}
                   </td>
                   <td className="px-3 py-2 font-mono text-xs text-slate-600">
-                    {bl?.cost_code ?? '—'}
+                    {bl ? (costCodeMap.get(bl.cost_code_id)?.code ?? '—') : '—'}
                   </td>
                   <td
                     className={`px-3 py-2 text-right font-mono tabular-nums ${

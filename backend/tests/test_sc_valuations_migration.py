@@ -78,11 +78,15 @@ class TestMigration0038Structure:
             assert "PC" in r and "DLP" in r
 
     def test_alembic_head_is_0038(self, db_engine):
+        """Chat 39 (Build Pack 2.6-FIX) bumped head 0038 → 0039. The
+        0038-specific structure asserted above still applies; this
+        sentinel tracks the latest head, not 0038 specifically.
+        """
         with db_engine.connect() as c:
             r = c.execute(text(
                 "SELECT version_num FROM alembic_version"
             )).scalar()
-            assert r == "0038_sc_valuations"
+            assert r == "0039_committed_single_writer"
 
 
 class TestMigration0038RoundTrip:

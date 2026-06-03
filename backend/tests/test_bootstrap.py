@@ -235,9 +235,12 @@ def test_alembic_heads_helper_returns_single_head():
     # subcontracts + variations landed.
     # Bumped again by Chat 35 (Prompt 2.8b): 0037_ → 0038_ when
     # subcontract valuations + payment notices + retention releases landed.
+    # Bumped again by Chat 39 (Build Pack 2.6-FIX): 0038_ → 0039_ when
+    # the PG trigger stopped writing committed_not_invoiced (Python is
+    # now the sole writer — single-writer integrity fix §R2 A1).
     # See chat-15-closing §3 — this sentinel is "part of any migration's
     # bookkeeping" and must be bumped whenever the head moves.
-    assert head.startswith("0038_"), f"unexpected head id: {head}"
+    assert head.startswith("0039_"), f"unexpected head id: {head}"
 
 
 # ----------------------------------------------------------------------

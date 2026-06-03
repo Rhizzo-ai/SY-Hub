@@ -170,6 +170,10 @@ def _serialise_line(l: BudgetLine, *, include_sensitive: bool,
         "display_order": l.display_order,
         "notes": l.notes,
         "variance_status": l.variance_status,
+        # Chat 39 §R2 B-CONTINGENCY: exposed so the contingency-drawdown
+        # BCR dialog can validate the source line. Default false; never
+        # null in DB (server_default on the column).
+        "is_contingency": bool(l.is_contingency),
         "created_at": l.created_at.isoformat() if l.created_at else None,
         "updated_at": l.updated_at.isoformat() if l.updated_at else None,
     }

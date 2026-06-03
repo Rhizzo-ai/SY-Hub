@@ -85,7 +85,19 @@ def _certify_one(admin, project_id, sub_id, *, retention_pct: str = "5.00",
     )
     val_id = r.json()["id"]
     submit_valuation(admin, val_id)
-    cr = certify_valuation(admin, val_id)
+    # Chat 39 §R2 A4: budget_line_id required.
+    from app.db import SessionLocal as _SL
+    from sqlalchemy import text as _t
+    _db = _SL()
+    try:
+        bl_id = _db.scalar(_t("""
+            SELECT bl.id FROM budget_lines bl
+              JOIN budgets b ON b.id = bl.budget_id
+             WHERE b.project_id=:p LIMIT 1
+        """), {"p": project_id})
+    finally:
+        _db.close()
+    cr = certify_valuation(admin, val_id, body={"budget_line_id": str(bl_id)})
     assert cr.status_code == 200, cr.text
     return sc, val_id
 

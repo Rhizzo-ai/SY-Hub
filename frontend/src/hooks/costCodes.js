@@ -14,7 +14,7 @@
  * staleTime is 5min — cost codes change rarely; aggressive caching is
  * worth the staleness window.
  */
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 
 async function fetchCostCodes(projectId, signal) {
@@ -36,6 +36,11 @@ export function useCostCodes(projectId) {
     queryFn: ({ signal }) => fetchCostCodes(projectId, signal),
     enabled: !!projectId,
     staleTime: 5 * 60_000,
+    // Chat 39 §R2 C-UNCAT: keep the previous payload during a refetch
+    // so the cost-code map never blanks mid-render. Without this the
+    // grid briefly groups every line under "— Uncategorised —" while
+    // a post-mutation refetch is in flight.
+    placeholderData: keepPreviousData,
   });
 }
 

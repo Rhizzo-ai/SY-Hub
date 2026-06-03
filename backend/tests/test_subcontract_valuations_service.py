@@ -72,6 +72,24 @@ def project_id(admin):
 
 
 @pytest.fixture(scope="module")
+def budget_line_id(admin, project_id):
+    """Chat 39 §R2 A4: certify now requires an explicit budget_line_id.
+    Reuse the line seeded by the project_id fixture."""
+    from app.db import SessionLocal
+    from sqlalchemy import text as _t
+    db = SessionLocal()
+    try:
+        bl = db.scalar(_t("""
+            SELECT bl.id FROM budget_lines bl
+              JOIN budgets b ON b.id = bl.budget_id
+             WHERE b.project_id=:p LIMIT 1
+        """), {"p": project_id})
+        return str(bl)
+    finally:
+        db.close()
+
+
+@pytest.fixture(scope="module")
 def sub_id(admin):
     sid = make_subcontractor(admin)
     set_cis_status_for_supplier(sid, "Net")  # default 20% CIS
@@ -126,7 +144,11 @@ class TestValuationCreate:
 
 class TestValuationStateMachine:
     def test_certify_from_draft_is_409(self, admin, project_id, sub_id):
-        """Gate 5 — certify from Draft (skip submit) → 409."""
+        """Gate 5 — certify from Draft (skip submit) → 409.
+
+        Chat 39 §R2 A4: send a valid budget_line_id so the request
+        passes Pydantic validation and hits the state-machine check.
+        """
         sc = make_active_subcontract(
             admin, project_id=project_id, subcontractor_id=sub_id,
             title="Gate5", original_contract_sum="50000.00",
@@ -137,7 +159,8 @@ class TestValuationStateMachine:
             labour_portion="100.00", materials_portion="0.00",
         )
         val_id = r.json()["id"]
-        r = certify_valuation(admin, val_id)
+        bl_id = _get_budget_line_for_project(project_id)
+        r = certify_valuation(admin, val_id, body={"budget_line_id": bl_id})
         assert r.status_code == 409, r.text
 
     def test_submit_moves_to_submitted(self, admin, project_id, sub_id):
@@ -209,13 +232,31 @@ class TestValuationStateMachine:
 # Certification math (gates 8–17) — the core
 # ==========================================================================
 
+def _get_budget_line_for_project(project_id: str) -> str:
+    """Chat 39 §R2 A4: certify now requires an explicit budget_line_id.
+    Resolve the first budget line on the project for legacy test
+    helpers that historically relied on the silent first-line guess."""
+    from app.db import SessionLocal
+    from sqlalchemy import text as _t
+    db = SessionLocal()
+    try:
+        return str(db.scalar(_t("""
+            SELECT bl.id FROM budget_lines bl
+              JOIN budgets b ON b.id = bl.budget_id
+             WHERE b.project_id=:p LIMIT 1
+        """), {"p": project_id}))
+    finally:
+        db.close()
+
+
 def _certify_first(
-    admin, *, project_id, subcontractor_id,
+    admin, *, project_id, subcontractor_id, budget_line_id=None,
     retention_pct: str = "5.00", cis_applies: bool = True,
     gross: str = "10000.00", labour: str = "6000.00",
     materials: str = "4000.00",
     contract_sum: str = "100000.00",
 ):
+    bl_id = budget_line_id or _get_budget_line_for_project(project_id)
     sc = make_active_subcontract(
         admin, project_id=project_id, subcontractor_id=subcontractor_id,
         original_contract_sum=contract_sum,
@@ -231,7 +272,9 @@ def _certify_first(
     assert r.status_code == 201, r.text
     val_id = r.json()["id"]
     submit_valuation(admin, val_id)
-    cr = certify_valuation(admin, val_id)
+    cr = certify_valuation(
+        admin, val_id, body={"budget_line_id": bl_id},
+    )
     assert cr.status_code == 200, cr.text
     return sc, cr.json()
 
@@ -360,7 +403,10 @@ class TestCertificationMath:
         )
         v1 = r1.json()["id"]
         submit_valuation(admin, v1)
-        certify_valuation(admin, v1)
+        certify_valuation(
+            admin, v1,
+            body={"budget_line_id": _get_budget_line_for_project(project_id)},
+        )
         # Second cert: 25000 cumulative.
         r2 = create_valuation(
             admin, subcontract_id=sc["id"],
@@ -369,7 +415,10 @@ class TestCertificationMath:
         )
         v2_id = r2.json()["id"]
         submit_valuation(admin, v2_id)
-        cr = certify_valuation(admin, v2_id)
+        cr = certify_valuation(
+            admin, v2_id,
+            body={"budget_line_id": _get_budget_line_for_project(project_id)},
+        )
         assert cr.status_code == 200, cr.text
         body = cr.json()
         # gross_this_cert = 25000 - 10000 = 15000 (matches labour+materials).
@@ -393,7 +442,10 @@ class TestCertificationMath:
         )
         v1 = r1.json()["id"]
         submit_valuation(admin, v1)
-        certify_valuation(admin, v1)
+        certify_valuation(
+            admin, v1,
+            body={"budget_line_id": _get_budget_line_for_project(project_id)},
+        )
         # Second cert 25000 cumulative → cumulative retention 1250,
         # movement = 1250 - 500 = 750.
         r2 = create_valuation(
@@ -403,7 +455,10 @@ class TestCertificationMath:
         )
         v2_id = r2.json()["id"]
         submit_valuation(admin, v2_id)
-        cr = certify_valuation(admin, v2_id)
+        cr = certify_valuation(
+            admin, v2_id,
+            body={"budget_line_id": _get_budget_line_for_project(project_id)},
+        )
         body = cr.json()
         assert Decimal(body["retention_this_cert"]) == Decimal("750.00")
 
@@ -425,7 +480,10 @@ class TestCertificationMath:
         )
         val_id = r.json()["id"]
         submit_valuation(admin, val_id)
-        cr = certify_valuation(admin, val_id)
+        cr = certify_valuation(
+            admin, val_id,
+            body={"budget_line_id": _get_budget_line_for_project(project_id)},
+        )
         assert cr.status_code == 200, cr.text  # not blocked
         body = cr.json()
         assert body["over_claim_flag"] is True

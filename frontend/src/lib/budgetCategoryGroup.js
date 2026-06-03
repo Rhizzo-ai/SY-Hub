@@ -41,8 +41,26 @@ function computeTotals(lines) {
 }
 
 export function groupLinesByCategory(lines, costCodeMap) {
+  // Chat 39 §R2 C-UNCAT: when the cost-code map is empty but lines
+  // carry valid cost_code_ids, the codes hook is mid-load. Returning
+  // the normal grouping would route every line into "— Uncategorised
+  // —" (because code.split('-')[0] === ''), which the operator sees as
+  // a render flash. Surface a single "Loading…" bucket instead so the
+  // grid keeps a stable shape until the codes arrive.
+  const linesArr = lines ?? [];
+  const mapIsEmpty = !costCodeMap || costCodeMap.size === 0;
+  const someHaveCode = linesArr.some((l) => l && l.cost_code_id);
+  if (mapIsEmpty && someHaveCode) {
+    return [{
+      isGroup: true,
+      groupKey: 'loading',
+      groupLabel: 'Loading…',
+      totals: computeTotals(linesArr),
+      subRows: linesArr.map((line) => ({ ...line })),
+    }];
+  }
   const buckets = new Map();
-  for (const line of lines) {
+  for (const line of linesArr) {
     const code = costCodeMap.get(line.cost_code_id)?.code ?? '';
     const prefix = code.split('-')[0].toUpperCase();
     const cat = CATEGORY_BY_PREFIX[prefix]

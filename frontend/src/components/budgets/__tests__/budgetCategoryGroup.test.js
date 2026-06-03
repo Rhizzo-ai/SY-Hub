@@ -64,10 +64,16 @@ describe('groupLinesByCategory', () => {
     expect(groupLinesByCategory([], ccMap)).toEqual([]);
   });
 
-  test('cost code missing from map -> "— Uncategorised —"', () => {
+  test('cost code missing from a populated map -> "— Uncategorised —"', () => {
+    // Chat 39 §R2 C-UNCAT: an EMPTY map is treated as "codes loading"
+    // (returns a single Loading… group). To assert the genuine
+    // "code id not in catalogue" case, populate the map with at
+    // least one unrelated entry so the empty-map heuristic does
+    // not fire.
+    const map = new Map([['other', { id: 'other', code: 'XYZ-001' }]]);
     const out = groupLinesByCategory(
       [{ id: 'lx', cost_code_id: 'missing', current_budget: 1 }],
-      new Map(),
+      map,
     );
     expect(out[0].groupLabel).toBe('— Uncategorised —');
   });

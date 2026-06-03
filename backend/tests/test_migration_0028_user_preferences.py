@@ -34,10 +34,10 @@ class TestMigration0028Schema:
             ).scalar()
         # Live head bumped again by Chat 24 R1/R2/R3/R4 (Prompt 2.5),
         # Chat 33 (Prompt 2.6: 0036), Chat 34 (Prompt 2.8a: 0037), and
-        # Chat 35 (Prompt 2.8b: 0038_sc_valuations).
+        # Chat 35 (Prompt 2.8b: 0039_committed_single_writer).
         # Function name retained per Future_Tasks polish entry.
-        assert head == "0038_sc_valuations", (
-            f"expected 0038_sc_valuations, got {head!r}"
+        assert head == "0039_committed_single_writer", (
+            f"expected 0039_committed_single_writer, got {head!r}"
         )
 
     def test_table_and_partial_unique_indexes_present(self, engine):

@@ -102,6 +102,11 @@ export const BudgetLineSchema = z.object({
   display_order: z.number().int(),
   notes: z.string().nullable(),
   variance_status: VarianceStatus,
+  // Chat 39 §R2 B-CONTINGENCY: surfaces the contingency flag so the
+  // ContingencyDrawdown source-line guard in CreateBudgetChangeDialog
+  // sees a concrete boolean instead of `undefined` (which inverted to
+  // truthy and blocked every drawdown attempt).
+  is_contingency: z.boolean().default(false),
   // Timestamps (added in backend 2.4A.2 for §R7 refetch-on-save banner)
   created_at: z.string().nullable().optional(),
   updated_at: z.string().nullable().optional(),

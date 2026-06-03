@@ -18,6 +18,35 @@ Frontend / actuals / commitments / Xero are out of scope until later prompts.
 
 ## What's been implemented
 
+### Chat 39 — Build Pack 2.6-FIX (2026-02)
+- Alembic head: `0038_sc_valuations` → `0039_committed_single_writer`
+- Permissions count unchanged: **129**. Roles unchanged: **10**.
+- Backend integrity (A1/A2/A3/A4):
+  - `committed_not_invoiced` is now single-writer (Python).
+    Trigger writes `committed_value` only.
+  - `recompute_for_line` acquires parent-budget + line FOR UPDATE
+    locks (parity with `apply_bcr`).
+  - Subcontract-valuation certify requires explicit `budget_line_id`
+    (422 on omission); silent first-line guess removed.
+- Frontend defects (B-CONTINGENCY / B-DATA / C-UNCAT):
+  - `is_contingency` exposed in API + Zod schema.
+  - BCR detail resolves cost code via `useCostCodes` map.
+  - `useCostCodes` uses `keepPreviousData`; `groupLinesByCategory`
+    falls back to a Loading bucket while codes are mid-load.
+- 16 new tests (4 backend files + 3 frontend files, exact filenames
+  per §R5). Test #5 is a genuine two-connection psycopg-3 lock probe.
+- Backend suite double-run: **1228 passed, 3 xpassed** both runs.
+- Frontend suite: **421 passed across 66 suites**.
+- A6 (CIS-in-rollup): investigated, no code change. Finding: CIS is
+  correctly payment-side only; cost ledger tracks gross, Payment
+  notice carries `cis_deducted`. See
+  `docs/chat-summaries/chat-39-closing.md` §A6.
+- Backlog (`docs/SY_Hub_Phase2_Backlog.md`) NOT touched. Out-of-scope
+  items (A5, A7, A8, B-DESIGN, B-MONEY, B-SIZE) listed in closing
+  summary for operator triage.
+
+
+
 ### 2026-06-01 — Chat 37 (Prompt 2.6-FE-fix) BCR Workflow Defect Fixes ✓ COMPLETE
 
 Frontend-only defect pass on top of Chat 36 (commit `52a4288`).

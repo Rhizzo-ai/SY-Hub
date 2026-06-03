@@ -48,6 +48,7 @@ from app.models.po_receipts import (
 from app.models.purchase_orders import PurchaseOrder, PurchaseOrderLine
 from app.models.user import User
 from app.services.audit import field_diff, record_audit
+from app.services.budgets_reconciliation import recompute_for_po
 from app.services.po_authz import PoNotFound, load_po_for_write
 
 
@@ -201,6 +202,7 @@ def _recompute_po_status_after_receipt_change(
     prev = po.status
     po.status = target
     db.flush()
+    recompute_for_po(db, po.id)
     record_audit(
         db, action="Status_Change",
         resource_type="purchase_order",

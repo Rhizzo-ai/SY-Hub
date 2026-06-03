@@ -36,6 +36,7 @@ from app.models.suppliers import Supplier
 from app.models.user import User
 from app.services import po_numbering, po_transitions
 from app.services.audit import field_diff, record_audit
+from app.services.budgets_reconciliation import recompute_for_po
 from app.services.po_authz import (
     EditPermission,
     PoNotFound,
@@ -550,6 +551,9 @@ def submit_po(
     po.updated_by = user.id
     po.updated_at = datetime.now(timezone.utc)
     db.flush()
+    # Chat 39 §R2 A1: PG trigger updated committed_value; Python is the
+    # sole writer of committed_not_invoiced — recompute touched lines.
+    recompute_for_po(db, po.id)
     after = _snap_po(po)
     # Pick the action verb appropriate to the resulting status.
     action = "Submit" if target == "pending_approval" else "Status_Change"
@@ -585,6 +589,7 @@ def issue_po(
     po.updated_by = user.id
     po.updated_at = datetime.now(timezone.utc)
     db.flush()
+    recompute_for_po(db, po.id)
     after = _snap_po(po)
     record_audit(
         db, action="Status_Change",
@@ -615,6 +620,7 @@ def void_po(
     po.updated_by = user.id
     po.updated_at = datetime.now(timezone.utc)
     db.flush()
+    recompute_for_po(db, po.id)
     after = _snap_po(po)
     record_audit(
         db, action="Void",
@@ -649,6 +655,7 @@ def close_po(
     po.updated_by = user.id
     po.updated_at = datetime.now(timezone.utc)
     db.flush()
+    recompute_for_po(db, po.id)
     after = _snap_po(po)
     record_audit(
         db, action="Status_Change",

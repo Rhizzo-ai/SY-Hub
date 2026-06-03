@@ -454,26 +454,19 @@ def reject_valuation(
 def _pick_budget_line_for_subcontract(
     db: Session, sc: Subcontract,
 ) -> BudgetLine:
-    """Return any non-terminal budget line on the project (the actual
-    must hit a real budget line, per actuals service).
+    """REMOVED (Chat 39 §R2 A4): the silent ``LIMIT 1`` guess is gone.
 
-    In a fully wired ledger this is configured per-subcontract; for now
-    we pick the first available active budget line. If none exists,
-    raise — the caller cannot proceed.
+    Callers MUST pass an explicit ``budget_line_id`` to
+    :func:`certify_valuation`. Kept as a hard-failing shim so any
+    accidental reintroduction surfaces immediately instead of silently
+    posting an actual to an arbitrary line.
     """
-    line = db.scalar(
-        select(BudgetLine).join(Budget, BudgetLine.budget_id == Budget.id)
-        .where(
-            Budget.project_id == sc.project_id,
-            Budget.status.notin_(("Superseded", "Closed")),
-        ).limit(1)
+    raise ValuationStateError(
+        "budget_line_id is required to certify a valuation — the "
+        "previous silent first-line guess has been removed (Chat 39 "
+        "§R2 A4). Specify the budget line that bears this subcontract "
+        "cost."
     )
-    if line is None:
-        raise ValuationStateError(
-            "No active budget line available on the project — "
-            "cannot post the certified valuation as an actual."
-        )
-    return line
 
 
 def certify_valuation(
@@ -488,10 +481,20 @@ def certify_valuation(
     posts the actual via the EXISTING actuals service, creates the
     Payment notice.
 
-    Per §R0.2 the posted actual carries `net_amount = gross_this_cert`
+    Chat 39 §R2 A4: ``budget_line_id`` is REQUIRED. Omitting it raises
+    ``ValuationStateError`` (router maps to 422 with a clear message).
+    No silent first-line guess.
+
+    Per §R0.2 the posted actual carries ``net_amount = gross_this_cert``
     (PRE-deduction basis); retention + CIS are recorded as separate
     columns on the actual.
     """
+    if budget_line_id is None:
+        raise ValuationStateError(
+            "budget_line_id is required — specify the budget line that "
+            "bears this subcontract cost (Chat 39 §R2 A4: silent "
+            "first-line guess removed)."
+        )
     # Local imports to avoid circular deps.
     from app.schemas.actuals import CreateActualRequest
     from app.services import actuals as actuals_svc
@@ -599,11 +602,7 @@ def certify_valuation(
     #    actuals_to_date itself). Confirmed by reading
     #    services/actuals._compute_retention + _compute_cis_deduction
     #    + budgets_reconciliation.recompute_for_line.
-    line = (
-        db.get(BudgetLine, budget_line_id)
-        if budget_line_id is not None
-        else _pick_budget_line_for_subcontract(db, sc)
-    )
+    line = db.get(BudgetLine, budget_line_id)
     if line is None:
         raise ValuationStateError(
             "budget_line_id not found"

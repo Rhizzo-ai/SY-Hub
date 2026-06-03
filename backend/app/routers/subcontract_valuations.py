@@ -54,7 +54,9 @@ class ValuationCreateBody(BaseModel):
 class ValuationCertifyBody(BaseModel):
     transaction_date: Optional[date] = None
     description: Optional[str] = Field(None, max_length=500)
-    budget_line_id: Optional[uuid.UUID] = None
+    # Chat 39 §R2 A4: required. No silent LIMIT-1 guess on the project.
+    # Caller MUST specify which budget line bears the subcontractor cost.
+    budget_line_id: uuid.UUID
 
 
 class ValuationRejectBody(BaseModel):

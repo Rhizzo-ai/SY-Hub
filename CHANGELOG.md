@@ -11,6 +11,108 @@ Each entry: date, prompt reference (if applicable), change, rationale.
 
 ## Entries
 
+## Chat 39 — Build Pack 2.6-FIX Budget Integrity & BCR Fix-Pack (2026-02)
+
+Backend race / integrity fix-pack plus two frontend defects, surfaced
+by the 2026-06-02 Claude Code audit (`docs/audits/AUDIT_REPORT_2026-06-02.md`).
+Alembic head advances `0038_sc_valuations` → `0039_committed_single_writer`.
+Permissions count unchanged at **129**.
+
+- **§R2 A1 — single writer of `committed_not_invoiced` (Critical).**
+  The PG trigger `fn_budget_line_recompute_commitments` was clobbering
+  Python's retention-pending write on every PO change, and vice versa
+  (the stale `services/budgets_reconciliation.py:77-79` "for now"
+  comment had become a confirmed bug). Migration `0039` rewrites the
+  trigger to stop writing `committed_not_invoiced` entirely; the trigger
+  now only maintains `committed_value`. Python's `recompute_for_line`
+  becomes the sole writer with the formula
+  `committed_not_invoiced = retention_pending + po_committed_not_invoiced`,
+  mirroring the trigger's WHERE clause column-for-column
+  (`PO.status IN ('approved','issued','partially_receipted','receipted')`)
+  so the figure matches what the trigger used to produce. Application
+  PO mutation paths (`services/purchase_orders.py`, `services/po_approvals.py`,
+  `services/po_receipts.py`) now call a new `recompute_for_po(db, po_id)`
+  helper after each `db.flush()` to keep the column fresh on PO changes.
+
+- **§R2 A2/A3 — lock parity on the recompute paths (Critical).**
+  `recompute_for_line` now acquires the parent-budget FOR UPDATE lock
+  first, then the BudgetLine FOR UPDATE lock — same order as
+  `budget_changes.apply_bcr` — so BCR apply / valuation certify /
+  actual transitions racing on the same budget serialise instead of
+  losing each other's updates. The valuation certify path picks this
+  up automatically via its `recompute_for_line` call.
+
+- **§R2 A4 — explicit `budget_line_id` on valuation certify (High).**
+  `_pick_budget_line_for_subcontract`'s silent `LIMIT 1` guess is
+  removed. Pydantic now declares `budget_line_id` as a required field
+  on `ValuationCertifyBody`; omission returns 422 from FastAPI with
+  the missing-field locator. The service-level shim raises
+  `ValuationStateError` so any accidental reintroduction surfaces
+  immediately rather than landing an actual on the wrong cost code.
+
+- **§R2 B-CONTINGENCY — `is_contingency` exposed on the API (High).**
+  Backend `_serialise_line` now emits `is_contingency` as a real
+  boolean (was missing → frontend `!undefined === true` blocked every
+  contingency drawdown). Frontend `BudgetLineSchema` (Zod) adds the
+  field with `default(false)` so the validator and the
+  "(contingency)" tags in `BudgetChangeDetail` / `BCRLineEditor`
+  render as designed.
+
+- **§R2 B-DATA — BCR detail resolves cost code via `useCostCodes` (High).**
+  `BudgetChangeDetail.jsx:226` was binding to the non-existent
+  `bl?.cost_code` field. Switched to the same `costCodeMap.get(bl.cost_code_id)?.code`
+  pattern the grid already uses. No API change.
+
+- **§R2 C-UNCAT — grid no longer flashes "— Uncategorised —" (High).**
+  Two-part fix: `useCostCodes` query now sets `placeholderData: keepPreviousData`
+  so the map doesn't blank during a post-mutation refetch, and
+  `groupLinesByCategory` returns a single "Loading…" bucket when the
+  cost-code map is empty AND lines carry valid `cost_code_id` values.
+  Lines with a valid id never get bucketed as Uncategorised while the
+  catalogue is mid-load.
+
+- **§R5 Tests (no consolidation; EXACT filenames).** 7 new test files
+  / 16 new test functions land:
+  - `backend/tests/test_budget_integrity_committed.py` (#1-4, A1 — Test #2 includes the explicit retention-RELEASE transition)
+  - `backend/tests/test_budget_recompute_locking.py` (#5-7, A2/A3 — Test #5 is a genuine two-connection psycopg-3 `FOR UPDATE` + `statement_timeout` probe, no mocks)
+  - `backend/tests/test_valuation_budget_line_required.py` (#8-10, A4)
+  - `backend/tests/test_budget_line_serialisation.py` (#11-12, B-CONTINGENCY / B-DATA)
+  - `frontend/src/components/budgetChanges/__tests__/CreateBudgetChangeDialog.contingency.test.jsx` (#13-14)
+  - `frontend/src/pages/projects/__tests__/BudgetChangeDetail.costcode.test.jsx` (#15)
+  - `frontend/src/components/budgets/grid/__tests__/budgetCategoryGroup.test.js` (#16)
+  Money-path tests assert resulting financial state (combined sums,
+  retention-release flow-through, BCR + actual no-lost-update), not
+  status codes alone.
+
+- **A6 — CIS-in-rollup (INVESTIGATE-ONLY, no code change).** See
+  `docs/chat-summaries/chat-39-closing.md` §A6 for the read-only
+  finding presented to the operator.
+
+- **§R6 acceptance.** Backend suite ran twice on warm DB; both runs:
+  **1228 passed, 3 xpassed** (identical). Frontend suite: **421
+  passing across 66 suites**. Alembic head verified
+  `0039_committed_single_writer`; permission count verified 129.
+
+- **Bookkeeping bumps.** Eight test files that pinned to the prior
+  head now reference `0039_committed_single_writer`:
+  `test_bootstrap.py`, `test_sc_valuations_migration.py`,
+  `test_subcontractors.py`, `test_subcontracts_migration.py`,
+  `test_budget_changes_migration.py`, `test_migration_0025_actuals.py`,
+  `test_migration_0028_user_preferences.py` (the head-sentinel pattern
+  per `chat-15-closing §3`).
+
+- **Test-helper updates (Chat 39 §R2 A4 follow-through).** The
+  `_certify_first` helper and the certify call-sites in
+  `test_subcontract_valuations_service.py`,
+  `test_subcontract_valuations_api.py`,
+  `test_retention_releases_service.py`, and
+  `test_payment_notices_service.py` now pass an explicit
+  `budget_line_id` (resolved from the test project's first budget
+  line) so the existing 2.8b certify gates keep passing under the
+  stricter API contract.
+
+
+
 ## Chat 37 — Track 2.6-FE-fix BCR Workflow Defect Fixes (2026-06-01)
 
 Build Pack 2.6-FE-fix. Frontend-only defect pass on top of Chat 36

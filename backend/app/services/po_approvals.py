@@ -38,6 +38,7 @@ from app.models.purchase_orders import PurchaseOrder
 from app.models.user import User
 from app.services import po_transitions
 from app.services.audit import field_diff, record_audit
+from app.services.budgets_reconciliation import recompute_for_po
 from app.services.po_authz import PoNotFound, load_po_for_write
 from app.services.po_commitments import (
     build_budget_snapshot,
@@ -174,6 +175,7 @@ def submit_po_with_budget_gate(
         po.updated_by = user.id
         po.updated_at = datetime.now(timezone.utc)
         db.flush()
+        recompute_for_po(db, po.id)
         after = _snap_po(po)
         record_audit(
             db, action="Status_Change",
@@ -218,6 +220,7 @@ def submit_po_with_budget_gate(
     po.updated_by = user.id
     po.updated_at = now
     db.flush()
+    recompute_for_po(db, po.id)
     after = _snap_po(po)
     record_audit(
         db, action="Submit",
@@ -303,6 +306,7 @@ def approve_po(
     po.updated_by = user.id
     po.updated_at = now
     db.flush()
+    recompute_for_po(db, po.id)
     after = _snap_po(po)
     record_audit(
         db, action="Approve",
@@ -379,6 +383,7 @@ def reject_po(
     po.updated_by = user.id
     po.updated_at = now
     db.flush()
+    recompute_for_po(db, po.id)
     after = _snap_po(po)
     record_audit(
         db, action="Reject",
@@ -461,6 +466,7 @@ def send_back_po(
     po.updated_by = user.id
     po.updated_at = now
     db.flush()  # fires trg_po_status_commitments → committed_value recomputed
+    recompute_for_po(db, po.id)
 
     after = _snap_po(po)
     record_audit(
@@ -523,6 +529,7 @@ def unlock_po(
     po.updated_by = user.id
     po.updated_at = datetime.now(timezone.utc)
     db.flush()
+    recompute_for_po(db, po.id)
     after = _snap_po(po)
     record_audit(
         db, action="Unlock",

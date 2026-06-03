@@ -49,7 +49,11 @@ const CHANGE_TYPES = [
 // the working signed-money pattern used elsewhere in the app.
 const DELTA_REGEX = /^-?\d+(\.\d{1,2})?$/;
 
-function validateBeforeSubmit({ changeType, title, lines, budgetLinesById }) {
+// Exported for direct unit testing (Chat 39 §R5 contingency tests). The
+// validator is the entire shape of the bug-fix's frontend behaviour;
+// driving the modal UI just to assert the validator output would not
+// add coverage and would flake on aria-changes in the Dialog primitive.
+export function validateBeforeSubmit({ changeType, title, lines, budgetLinesById }) {
   if (!changeType) return 'Choose a change type.';
   if (!title.trim()) return 'Title is required.';
   if (!Array.isArray(lines) || lines.length === 0) {
