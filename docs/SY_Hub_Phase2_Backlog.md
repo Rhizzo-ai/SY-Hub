@@ -670,3 +670,30 @@ Build sequence: 2.7-BE-rev-A (small backend: trade, vat_registered, drop default
 
 - **B68** — Playwright E2E runner not wired. The repo has no Playwright runner at HEAD, so the §R5 spec `frontend/e2e/suppliers-subcontractors.spec.ts` from 2.7-FE was deferred (Jest unit tests cover the same paths at the contract boundary). Wire a Playwright runner into the frontend test setup and author the deferred spec in a future test-infra chat. Applies platform-wide, not just suppliers.
 
+### Chat 41 — new items added at chat-end (2026-06-04)
+
+Logged during the 2.7-BE-rev-A drafting session. Both concern access control for
+modules not yet built (Track 4/5 documents/site-ops); neither touches rev-A.
+RBAC premise verified against code in Chat 41: effective permissions =
+union of active role grants, minus per-assignment `view_overrides` (SUBTRACT
+only), with per-assignment project/entity scoping. No additive per-user grant
+path exists today.
+
+- **B69** — Sensitive/general permission split for new modules. As documents,
+  drawings, QA check sheets, contracts, quotes, and variations are built, apply
+  the existing `view_sensitive` layer so sensitive surfaces (quotes, contracts,
+  budgets) lock tighter than general operational data (POs, variations, QA
+  sheets). The machinery exists (`view_sensitive` action + serialise-layer
+  gating, as used on suppliers/POs today) — this is about applying it
+  consistently to each new resource as it lands, designed WITH the module rather
+  than retrofitted. Owner: Track 4/5 module design. From Chat 41.
+
+- **B70** — Evaluate additive per-individual permission grants. Current RBAC =
+  role perms + per-assignment project/entity scoping + per-assignment
+  `view_overrides` (SUBTRACT only). There is no path to ADD a single permission
+  to one person on top of their role — today that requires a custom role or a
+  second role assignment. Decide during the Track 4/5 documents/site-ops build
+  whether to build an additive user-grant layer (e.g. a `user_permission_grants`
+  table folded into `compute_effective_permissions`) or rely on finer-grained
+  roles. Verified against `backend/app/auth/permissions.py` Chat 41.
+  Owner: Track 4/5 design. From Chat 41.
