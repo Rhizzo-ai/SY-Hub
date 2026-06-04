@@ -81,9 +81,10 @@ from app.models.actuals import (
     VALID_TRANSITIONS, CHANGE_LOG_EVENT_TYPES,
 )
 from app.models.user_preferences import UserPreference
+from app.models.trades import Trade
 from app.models.suppliers import (
     Supplier, SUPPLIER_CIS_STATUSES,
-    SUPPLIER_TYPES, CIS_SUBTYPES, CURRENT_CIS_STATUSES,
+    SUPPLIER_TYPES, CURRENT_CIS_STATUSES,
 )
 from app.models.cis import (
     SubcontractorCISVerification, CIS_MATCH_STATUSES,

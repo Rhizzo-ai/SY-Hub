@@ -49,6 +49,8 @@ RESOURCES = (
     # cumulative JCT valuations + Payment / PayLess notices.
     "subcontract_valuations",
     "payment_notices",
+    # Chat 41 §R2 (Prompt 2.7-BE-rev-A) — trades managed vocabulary.
+    "trades",
 )
 
 ACTIONS = (

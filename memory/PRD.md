@@ -18,6 +18,28 @@ Frontend / actuals / commitments / Xero are out of scope until later prompts.
 
 ## What's been implemented
 
+### Chat 41 — Build Pack 2.7-BE-rev-A · Gate 1 (2026-02)
+
+**§R1 (migration) + §R2 (models) only.** Operator opener: "STOP at Gate 1 with the VERIFY query outputs." Services / routers / tests / seed are Gate 2 / Gate 3 work.
+
+- **Migration**: `0040_contact_book_rework` (down_rev `0039_committed_single_writer`). Reversible round-trip verified (up → down → up).
+- **Schema**:
+  - NEW `trades` table (tenant-scoped, audit cols) + `ux_trades_tenant_name_ci` unique on `(tenant_id, lower(name))`.
+  - `suppliers.trade_id` UUID FK → trades.id `ON DELETE SET NULL`, nullable, indexed.
+  - `suppliers.vat_registered` BOOL NOT NULL DEFAULT false (independent of `vat_number`).
+  - DROP `suppliers.cis_subtype` (per D1) + `suppliers.default_vat_rate` (per D2). Column-scoped CHECK `ck_suppliers_vat_rate_range` auto-dropped (verified).
+  - `supplier_type` PG enum recreated to `{Contractor, Supplier, Consultant, Other}` via the standard rename → create → drop default → cast (USING CASE) → re-set default → drop old sequence. Data map: `Subcontractor → Contractor`, `Supplier → Supplier`. New default `'Supplier'`.
+  - `permission_resource` enum += `'trades'` (autocommit helper, mirrors 0035).
+- **Downgrade**: fully reversible with a documented lossy-cast caveat (`Consultant/Other → Supplier` on collapse) and the `trades` enum value remaining in place (PG limitation).
+- **Models**:
+  - NEW `app/models/trades.py` — `Trade` ORM (tenant-scoped, standard audit cols), exported via `models/__init__`.
+  - `app/models/suppliers.py` reshaped: `SUPPLIER_TYPES` to the new 4-tuple; `CIS_SUBTYPES` and the `cis_subtype` / `default_vat_rate` columns removed; `vat_registered` + `trade_id` added; `trade` `lazy="joined"` one-directional relationship (no back_populates) to avoid N+1 in serialise.
+  - `app/models/rbac.py`: `RESOURCES += "trades"`.
+- **Gate 1 VERIFY artefacts**: `/app/memory/Gate1_VERIFY_2.7-BE-rev-A.md` (head, enum labels, data-mapping seeded row check, dropped/added columns, CHECK constraint gone, trades table + unique index, permission_resource enum extension).
+- **Expected intermediate state**: services/routers still reference `CIS_SUBTYPES` and the dropped columns, so the live backend will not import-clean until Gate 2 lands. This is explicitly per §R7 ("Do not touch services/routers until the operator confirms the schema is clean").
+
+**Alembic head**: `0040_contact_book_rework`. Permission count unchanged at **129** at Gate 1 (will become 131 after `seed_rbac.py` + bootstrap at Gate 2).
+
 ### Chat 40 — Build Pack 2.7-FE (2026-02)
 
 Frontend-only. Backend FROZEN at `0039_committed_single_writer`. No
