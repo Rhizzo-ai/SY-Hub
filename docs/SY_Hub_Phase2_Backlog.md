@@ -645,6 +645,7 @@ per locked decisions LD2/LD3 and single-session scope discipline.
 ### Chat 39 — out-of-scope items from Build Pack 2.6-FIX (added by hand)
 
 - **B65** — Multi-BCR live crash + "uncategorised" flash. Root-caused in audit 2026-06-02 and fixed in 2.6-FIX (A1/A2/A3 race + C-UNCAT grid guard). Re-test in the live app once deployed to confirm closed: raise + approve several BCRs in close succession, confirm no crash and no line shows "Uncategorised".
+
 - **B66** — Reconciliation tool. Small admin endpoint that re-runs the new Python `recompute_for_line` over every line on a budget. Cleans up any figures written under the pre-0039 dual-writer regime. Do before go-live. Emergent offered to build this.
 - **A5** — Dead `commitments.*` permissions defined but never enforced. Remove or wire up.
 - **A7** — Reference numbering is count-based; move to a proper DB sequence to avoid collisions.
@@ -652,3 +653,20 @@ per locked decisions LD2/LD3 and single-session scope discipline.
 - **B-DESIGN** — Teal token drift (`sy-teal-600/700` vs `sy-teal`) — align to one token.
 - **B-MONEY** — Two separate `fmtGBP` money formatters — consolidate to one.
 - **B-SIZE** — `ProjectDetail.jsx` is 831 lines — split into smaller components.
+
+### Chat 40 — 2.7-FE shipped + replan note (added by hand)
+
+2.7-FE (suppliers/subcontractors/CIS/documents frontend) shipped and verified on origin/main (513 tests / 75 suites green, checkpoint commit). After eyeballing the live build, the operator revised the 2.7 design — see CHANGELOG / chat-40-closing for the full record. Summary of the revision (now the active plan):
+- Merge Supplier + Subcontractor into ONE contact book / one "Suppliers" nav. `supplier_type` stays as the CIS-subcontractor flag (drives the CIS tab), no separate Subcontractors list.
+- Drop `cis_subtype`. Keep CIS deduction status (Gross/Net 20%/Net 30%).
+- Drop per-supplier `default_vat_rate`; add `vat_registered` boolean; keep `vat_number`.
+- Add a `trade` field (free-text, grow-as-you-type managed list).
+- Surface address on the contact.
+- Real document upload/download via SharePoint/OneDrive (MS Graph) — replaces today's text-reference-only storage.
+- Add seed/sample data.
+Build sequence: 2.7-BE-rev-A (small backend: trade, vat_registered, drop default_vat_rate + cis_subtype, seed data) → 2.7-FE-revision (merge UI) → 2.7-BE-rev-B (SharePoint integration, isolated).
+
+- **B67** — "Expiring soon this week" rollup banner on the Suppliers list. Frontend-only. Flags subcontractors whose Public Liability or Employers Liability documents are about to lapse, surfaced as a banner at the top of the list so compliance gaps are visible without drilling into each supplier. The DocExpiryBadge bucketing logic from 2.7-FE already does the date maths — this reuses it at list level. May be folded into the 2.7-FE-revision pass rather than built standalone. Distinct from B48 (B48 = backend CIS-verification auto-expiry; B67 = frontend document-expiry banner).
+
+- **B68** — Playwright E2E runner not wired. The repo has no Playwright runner at HEAD, so the §R5 spec `frontend/e2e/suppliers-subcontractors.spec.ts` from 2.7-FE was deferred (Jest unit tests cover the same paths at the contract boundary). Wire a Playwright runner into the frontend test setup and author the deferred spec in a future test-infra chat. Applies platform-wide, not just suppliers.
+
