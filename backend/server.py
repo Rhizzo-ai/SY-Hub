@@ -53,6 +53,7 @@ from app.routers.system_config import router as system_config_router  # noqa: E4
 from app.routers.users import router as users_router  # noqa: E402
 from app.routers.user_preferences import router as user_preferences_router  # noqa: E402
 from app.routers.suppliers import router as suppliers_router  # noqa: E402
+from app.routers.trades import router as trades_router  # noqa: E402
 from app.routers.number_prefixes import router as number_prefixes_router  # noqa: E402
 from app.routers.purchase_orders import router as purchase_orders_router  # noqa: E402
 from app.routers.cis import router as cis_router  # noqa: E402
@@ -169,6 +170,8 @@ v1_router.include_router(inbound_router)
 v1_router.include_router(user_preferences_router)
 # Chat 24 §R1 (Prompt 2.5) — suppliers + project number prefixes.
 v1_router.include_router(suppliers_router)
+# Chat 41 §R4 (Prompt 2.7-BE-rev-A) — trades managed vocabulary.
+v1_router.include_router(trades_router)
 v1_router.include_router(number_prefixes_router)
 # Chat 24 §R2 (Prompt 2.5) — purchase orders.
 v1_router.include_router(purchase_orders_router)

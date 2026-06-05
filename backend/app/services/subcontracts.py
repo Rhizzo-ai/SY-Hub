@@ -281,15 +281,15 @@ def create_subcontract(
         select(Project).where(Project.id == project_id).with_for_update()
     )
 
-    # LD2 — subcontractor type guard.
+    # LD2 — contractor (CIS subcontractor) type guard.
     supplier = db.get(Supplier, subcontractor_id)
     if supplier is None:
-        raise ValueError("Subcontractor not found")
+        raise ValueError("Contractor not found")
     if supplier.tenant_id != user.tenant_id and not perms.is_super_admin:
-        raise ValueError("Subcontractor not found")
-    if supplier.supplier_type != "Subcontractor":
+        raise ValueError("Contractor not found")
+    if supplier.supplier_type != "Contractor":
         raise ValueError(
-            f"Counterparty must be a Subcontractor (got "
+            f"Counterparty must be a Contractor (got "
             f"supplier_type={supplier.supplier_type!r}). LD2."
         )
 

@@ -55,19 +55,23 @@ class SupplierCreateBody(BaseModel):
     postcode: Optional[str] = Field(None, max_length=20)
     country: Optional[str] = Field(None, max_length=50)
     vat_number: Optional[str] = Field(None, max_length=50)
+    vat_registered: Optional[bool] = Field(None)
     company_number: Optional[str] = Field(None, max_length=50)
     cis_status: Optional[str] = Field(None)
     bank_name: Optional[str] = Field(None, max_length=200)
     bank_account_no: Optional[str] = Field(None, max_length=50)
     bank_sort_code: Optional[str] = Field(None, max_length=20)
     payment_terms_days: Optional[int] = Field(None, ge=0, le=365)
-    default_vat_rate: Optional[float] = Field(None, ge=0, le=100)
     notes: Optional[str] = Field(None)
-    # Chat 32 §R4.1 (Prompt 2.7) — subcontractor + CIS extension fields.
+    # Chat 32 §R4.1 (Prompt 2.7) — CIS / type label fields.
+    # Chat 41 §R4.2 (Prompt 2.7-BE-rev-A) — supplier_type is now the
+    # 4-value contact-type label; cis_subtype + default_vat_rate dropped.
     supplier_type: Optional[str] = Field(None, max_length=20)
-    cis_subtype: Optional[str] = Field(None, max_length=30)
     cis_registered: Optional[bool] = Field(None)
     utr: Optional[str] = Field(None, max_length=30)
+    # Chat 41 §R4.2 — trade resolution (either id or name; see _resolve_trade).
+    trade_id: Optional[str] = Field(None)
+    trade: Optional[str] = Field(None, max_length=100)
 
 
 class SupplierUpdateBody(BaseModel):
@@ -83,19 +87,20 @@ class SupplierUpdateBody(BaseModel):
     postcode: Optional[str] = Field(None, max_length=20)
     country: Optional[str] = Field(None, max_length=50)
     vat_number: Optional[str] = Field(None, max_length=50)
+    vat_registered: Optional[bool] = Field(None)
     company_number: Optional[str] = Field(None, max_length=50)
     cis_status: Optional[str] = Field(None)
     bank_name: Optional[str] = Field(None, max_length=200)
     bank_account_no: Optional[str] = Field(None, max_length=50)
     bank_sort_code: Optional[str] = Field(None, max_length=20)
     payment_terms_days: Optional[int] = Field(None, ge=0, le=365)
-    default_vat_rate: Optional[float] = Field(None, ge=0, le=100)
     notes: Optional[str] = Field(None)
-    # Chat 32 §R4.1 (Prompt 2.7) — subcontractor + CIS extension fields.
+    # Chat 32 §R4.1 / Chat 41 §R4.2 — see SupplierCreateBody.
     supplier_type: Optional[str] = Field(None, max_length=20)
-    cis_subtype: Optional[str] = Field(None, max_length=30)
     cis_registered: Optional[bool] = Field(None)
     utr: Optional[str] = Field(None, max_length=30)
+    trade_id: Optional[str] = Field(None)
+    trade: Optional[str] = Field(None, max_length=100)
 
 
 # ---------------------------------------------------------------------------
@@ -126,7 +131,10 @@ def list_endpoint(
     include_archived: bool = Query(False),
     supplier_type: Optional[str] = Query(
         None,
-        description="Chat 32 §R4.1: filter to 'Supplier' or 'Subcontractor'.",
+        description=(
+            "Chat 41 §R4.2: filter to one of the 4 contact-type labels "
+            "— 'Contractor', 'Supplier', 'Consultant', or 'Other'."
+        ),
     ),
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),

@@ -127,6 +127,14 @@ PERMISSION_CATALOGUE += _perms_for(
     include=["view", "view_sensitive", "create", "edit", "archive"],
     sensitive={"view_sensitive", "archive"},
 )
+# Chat 41 §R1.5 / §R4.1 (Prompt 2.7-BE-rev-A) — trades managed vocabulary.
+# `trades.view` mirrors `suppliers.view` distribution; `trades.create`
+# mirrors `suppliers.create` (and also acts as the mutate gate for
+# archive/unarchive in rev-A — no separate archive perm).
+PERMISSION_CATALOGUE += _perms_for(
+    "trades",
+    include=["view", "create"],
+)
 # Chat 24 §R2 (Prompt 2.5) — purchase orders.
 # Spec §2.3: exactly 11 pos.* permissions. Sensitive: view_sensitive
 # (pricing), delete, void.
@@ -313,6 +321,9 @@ ROLE_PERMISSIONS["project_manager"] = {
     "entities.view",
     # Chat 24 §R1 (Prompt 2.5) — suppliers
     "suppliers.view", "suppliers.create", "suppliers.edit",
+    # Chat 41 §R4.1 (Prompt 2.7-BE-rev-A) — trades managed vocabulary.
+    # PM holds suppliers.create → PM holds trades.create.
+    "trades.view", "trades.create",
     # Chat 24 §R2 (Prompt 2.5) — purchase orders.
     # Spec §2.3 contracts_manager set: view, view_sensitive, create,
     # edit, issue, receipt, close, delete. NO edit_issued, NO approve,
@@ -370,6 +381,8 @@ ROLE_PERMISSIONS["finance"] = {
     # Chat 24 §R1 (Prompt 2.5) — suppliers (full incl. sensitive + archive)
     "suppliers.view", "suppliers.view_sensitive",
     "suppliers.create", "suppliers.edit", "suppliers.archive",
+    # Chat 41 §R4.1 (Prompt 2.7-BE-rev-A) — trades managed vocabulary.
+    "trades.view", "trades.create",
     # Chat 24 §R2 (Prompt 2.5) — purchase orders (finance_director per
     # build pack §9.2 — finance APPROVES and SEES money but does NOT
     # raise/issue/receipt POs).
@@ -414,6 +427,9 @@ ROLE_PERMISSIONS["site_manager"] = {
     "entities.view",
     # Chat 24 §R1 (Prompt 2.5) — read-only supplier directory access
     "suppliers.view",
+    # Chat 41 §R4.1 (Prompt 2.7-BE-rev-A) — read-only trade list (mirrors
+    # suppliers.view distribution).
+    "trades.view",
     # Chat 24 §R2 (Prompt 2.5) — PO read + receipt-only access
     "pos.view", "pos.receipt",
     # Chat 32 §R2 (Prompt 2.7) — site_manager mirrors suppliers.view
@@ -448,6 +464,8 @@ ROLE_PERMISSIONS["read_only"] = {
     # pattern). NO view_sensitive (price/PII) and NO write actions.
     "suppliers.view",
     "pos.view",
+    # Chat 41 §R4.1 (Prompt 2.7-BE-rev-A) — read-only trade list.
+    "trades.view",
     # Chat 32 §R2 (Prompt 2.7) — read-only mirrors suppliers.view for
     # CIS only. supplier_documents.* is intentionally restricted to
     # roles holding suppliers.create per test gate 27.

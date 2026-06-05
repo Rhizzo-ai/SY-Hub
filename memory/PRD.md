@@ -18,6 +18,38 @@ Frontend / actuals / commitments / Xero are out of scope until later prompts.
 
 ## What's been implemented
 
+### Chat 41 — Build Pack 2.7-BE-rev-A · Gate 2 (2026-02)
+
+**§R3 (services) + §R4 (routers) + seed_rbac additions.** Continues from Gate 1's `0040_contact_book_rework` migration + model layer. STOP at Gate 2 with grep VERIFY + new permission count.
+
+- **`services/trades.py`** (new): `list_trades`, `get_trade`, `get_or_create_trade` (concurrency-safe via `begin_nested()` SAVEPOINT + IntegrityError retry — both racers resolve to the same row), `set_archived`, `serialise`. Whitespace-collapse + length validate on name.
+- **`services/suppliers.py`** reshaped:
+  - Dropped `_validate_cis_subtype` + `_coerce_vat_rate`.
+  - Added `_UNSET` sentinel + `_resolve_trade` (priority: `trade_id` → `trade` name (grow-as-you-type) → explicit null clears → absent key leaves untouched).
+  - `_AUDIT_COLS` no longer includes `cis_subtype` / `default_vat_rate`; now includes `vat_registered` + `trade_id`.
+  - `create_supplier` / `update_supplier`: drop dropped fields; honour `vat_registered`; resolve trade. `current_cis_status` default is `'Unverified'` iff `supplier_type='Contractor'` (was `'Subcontractor'`).
+  - `serialise` omits `cis_subtype` + `default_vat_rate`; adds `vat_registered`, `trade_id`, and a null-safe `trade` (the joined relationship name).
+- **`services/cis.py`** gate (§R3.3): `supplier_type != "Subcontractor"` → `supplier_type != "Contractor"`; error message updated to "CIS verification only valid for contractors (CIS subcontractors)".
+- **`services/subcontracts.py`** LD2 gate (§R3.4): `"Subcontractor"` → `"Contractor"`; cosmetic "Subcontractor not found" messages updated to "Contractor not found".
+- **`routers/trades.py`** (new): `GET /trades`, `POST /trades` (idempotent grow-as-you-type, returns 201), `POST /trades/{id}/archive` + `/unarchive` (gated on `trades.create` — `mutate` gate reused per §R4.1 NOTE).
+- **`routers/suppliers.py`**: bodies reshaped — dropped `cis_subtype` + `default_vat_rate`; added `vat_registered`, `trade_id`, `trade`. `supplier_type` filter description updated to the 4-value label set.
+- **`routers/cis.py`**: 409-detector string updated from "only valid for subcontractors" to "only valid for contractors".
+- **`server.py`**: mounts `trades_router` directly after `suppliers_router`.
+- **`seed_rbac.py`**: `trades.{view,create}` added to catalogue; role grants — `trades.create` to super_admin/director/finance/PM (mirrors `suppliers.create`); `trades.view` additionally to site_manager + read_only (mirrors `suppliers.view`).
+
+**Gate 2 verification (end-to-end live API + grep):**
+- §R3.2 grep on `services/suppliers.py` for `cis_subtype | default_vat_rate | _coerce_vat_rate | _validate_cis_subtype | CIS_SUBTYPES` → 3 hits, ALL docstring/comment notes (zero functional references). ✓
+- §R3.4 precise grep for `supplier_type == / != "Subcontractor"` in `app/services/` → **zero hits**. ✓
+- CIS verify on a plain `Supplier` → **409** with the new "only valid for contractors (CIS subcontractors)" message.
+- `?supplier_type=Subcontractor` filter → **422** (relabel confirmed).
+- `?supplier_type=Contractor` filter → 200 with the right total.
+- Trade idempotent CI re-create returns the same id (no duplicate row).
+- `_UNSET` sentinel verified: trade_id swap → explicit null clear → absent key no-op all behave correctly.
+- Bootstrap verify: `permissions=131 actual=131`, `roles=10`, alembic head `0040_contact_book_rework`. ✓
+
+**Alembic head**: `0040_contact_book_rework`. Permission count **129 → 131** (target hit exactly).
+**Gate 2 VERIFY artefacts**: `/app/memory/Gate2_VERIFY_2.7-BE-rev-A.md`.
+
 ### Chat 41 — Build Pack 2.7-BE-rev-A · Gate 1 (2026-02)
 
 **§R1 (migration) + §R2 (models) only.** Operator opener: "STOP at Gate 1 with the VERIFY query outputs." Services / routers / tests / seed are Gate 2 / Gate 3 work.

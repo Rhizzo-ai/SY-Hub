@@ -176,9 +176,9 @@ def record_verification(
                      match_status, bad tax_rate, bad dates).
     """
     supplier = _load_supplier(db, tenant_id, supplier_id)
-    if supplier.supplier_type != "Subcontractor":
+    if supplier.supplier_type != "Contractor":
         raise ValueError(
-            "CIS verification only valid for subcontractors"
+            "CIS verification only valid for contractors (CIS subcontractors)"
         )
 
     ms = _validate_match_status(match_status)

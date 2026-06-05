@@ -1,11 +1,19 @@
 """Suppliers service — tenant-scoped CRUD + archive lifecycle.
 
-Chat 24 §R1 (Prompt 2.5).
+Chat 24 §R1 (Prompt 2.5) — initial supplier directory.
+Chat 32 §R3 (Prompt 2.7) — subcontractor + CIS extension.
+Chat 41 §R3.2 (Prompt 2.7-BE-rev-A) — Contact-Book rework:
+  - `cis_subtype` + `default_vat_rate` validators / writes removed.
+  - `vat_registered` accepted as a standalone boolean (no inference
+    from `vat_number`).
+  - `trade_id` / `trade` resolved via `_resolve_trade` + `_UNSET` sentinel
+    (grow-as-you-type via `services.trades.get_or_create_trade`).
+  - CIS gates key off `Contractor` (was `Subcontractor`); see services/cis
+    + services/subcontracts.
 
 Responsibility:
   - Validate uniqueness of supplier name (case-insensitive) within tenant.
   - Validate cis_status against the SUPPLIER_CIS_STATUSES tuple.
-  - Validate default_vat_rate ∈ [0, 100].
   - Honour the archive lifecycle:
       * archive: is_archived=true, archived_at=NOW, archived_by=user.
       * unarchive: is_archived=false, archived_at=NULL, archived_by=NULL.
@@ -20,17 +28,17 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
-from decimal import Decimal, InvalidOperation
-from typing import Any, Iterable, Optional
+from decimal import Decimal
+from typing import Any, Optional
 
 from fastapi import Request
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.models.suppliers import (
-    Supplier, SUPPLIER_CIS_STATUSES,
-    SUPPLIER_TYPES, CIS_SUBTYPES,
+    Supplier, SUPPLIER_CIS_STATUSES, SUPPLIER_TYPES,
 )
+from app.services import trades as trades_svc
 from app.services.audit import field_diff, record_audit
 
 
@@ -39,15 +47,30 @@ _AUDIT_COLS: tuple[str, ...] = (
     "name", "trading_name",
     "contact_name", "contact_email", "contact_phone",
     "address_line1", "address_line2", "city", "postcode", "country",
-    "vat_number", "company_number", "cis_status",
+    "vat_number", "vat_registered", "company_number", "cis_status",
     "bank_name", "bank_account_no", "bank_sort_code",
-    "payment_terms_days", "default_vat_rate", "notes",
+    "payment_terms_days", "notes",
     "portal_enabled",
     "is_archived",
     # Chat 32 §R3 (Prompt 2.7) — subcontractor + CIS extension fields.
-    "supplier_type", "cis_subtype", "cis_registered", "utr",
-    "current_cis_status",
+    # Chat 41 §R3.2 (Prompt 2.7-BE-rev-A) — `cis_subtype` + `default_vat_rate`
+    # dropped; `trade_id` added.
+    "supplier_type", "cis_registered", "utr", "current_cis_status",
+    "trade_id",
 )
+
+
+# Sentinel used by `_resolve_trade` to distinguish "key absent in payload"
+# (leave row.trade_id untouched on update) from "key present but null/empty"
+# (clear row.trade_id to NULL). NEVER use this as a stored value.
+class _Unset:
+    __slots__ = ()
+
+    def __repr__(self) -> str:  # pragma: no cover — debugging aid only.
+        return "<_UNSET>"
+
+
+_UNSET: Any = _Unset()
 
 
 def _snapshot(s: Supplier) -> dict[str, Any]:
@@ -64,18 +87,6 @@ def _snapshot(s: Supplier) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Validation helpers
 # ---------------------------------------------------------------------------
-
-def _coerce_vat_rate(value: Any) -> Optional[Decimal]:
-    if value is None or value == "":
-        return None
-    try:
-        d = Decimal(str(value))
-    except (InvalidOperation, ValueError, TypeError) as e:
-        raise ValueError(f"default_vat_rate not numeric: {e}") from e
-    if d < 0 or d > 100:
-        raise ValueError("default_vat_rate must be between 0 and 100")
-    return d
-
 
 def _validate_cis(value: Optional[str]) -> Optional[str]:
     if value is None or value == "":
@@ -101,6 +112,8 @@ def _validate_payment_terms(value: Any) -> Optional[int]:
 
 # ---------------------------------------------------------------------------
 # Chat 32 §R3.1 (Prompt 2.7) — subcontractor field validators.
+# Chat 41 §R3.2 — `cis_subtype` validator removed; `supplier_type` enum
+# now carries the 4-value contact-type label.
 # ---------------------------------------------------------------------------
 
 def _validate_supplier_type(value: Any) -> str:
@@ -109,23 +122,6 @@ def _validate_supplier_type(value: Any) -> str:
     if value not in SUPPLIER_TYPES:
         raise ValueError(
             f"supplier_type must be one of {SUPPLIER_TYPES}, got {value!r}"
-        )
-    return value
-
-
-def _validate_cis_subtype(
-    value: Any, *, supplier_type: str,
-) -> Optional[str]:
-    """`cis_subtype` is only permitted when `supplier_type='Subcontractor'`."""
-    if value is None or value == "":
-        return None
-    if value not in CIS_SUBTYPES:
-        raise ValueError(
-            f"cis_subtype must be one of {CIS_SUBTYPES}, got {value!r}"
-        )
-    if supplier_type != "Subcontractor":
-        raise ValueError(
-            "cis_subtype is only valid when supplier_type='Subcontractor'"
         )
     return value
 
@@ -141,6 +137,65 @@ def _validate_utr(value: Any) -> Optional[str]:
     if not cleaned.isdigit() or len(cleaned) != 10:
         raise ValueError("utr must be exactly 10 digits")
     return cleaned
+
+
+def _coerce_trade_id(value: Any) -> uuid.UUID:
+    """Accept a UUID or a UUID-shaped string. Raise ValueError on bad input."""
+    if isinstance(value, uuid.UUID):
+        return value
+    try:
+        return uuid.UUID(str(value))
+    except (ValueError, AttributeError, TypeError) as e:
+        raise ValueError(f"trade_id not a valid UUID: {value!r}") from e
+
+
+def _resolve_trade(
+    db: Session,
+    tenant_id: uuid.UUID,
+    user_id: uuid.UUID,
+    payload: dict[str, Any],
+    *,
+    request: Optional[Request] = None,
+) -> Any:
+    """Resolve the trade reference on a supplier create/update payload.
+
+    Returns one of:
+      - a UUID (existing or newly-created trade id) → caller assigns it,
+      - None → caller clears row.trade_id to NULL (explicit unset),
+      - `_UNSET` → caller leaves row.trade_id untouched (key absent).
+
+    Priority:
+      1. `trade_id` (UUID) — if present and non-empty, validate the trade
+         exists in the tenant. ValueError if not.
+      2. `trade` (name string) — if present and non-empty, get-or-create.
+      3. Either key present but explicitly null/empty → clear (None).
+      4. Neither key present → `_UNSET` (no change).
+    """
+    has_id = "trade_id" in payload
+    has_name = "trade" in payload
+    if not has_id and not has_name:
+        return _UNSET
+
+    tid_raw = payload.get("trade_id") if has_id else None
+    tname_raw = payload.get("trade") if has_name else None
+
+    # If trade_id is provided and non-empty, it wins (explicit).
+    if has_id and tid_raw not in (None, ""):
+        tid = _coerce_trade_id(tid_raw)
+        found = trades_svc.get_trade(db, tenant_id, tid)
+        if found is None:
+            raise ValueError(f"trade_id {tid} not found in tenant")
+        return found.id
+
+    # Else if a name is provided and non-empty, grow-as-you-type.
+    if has_name and isinstance(tname_raw, str) and tname_raw.strip():
+        trade = trades_svc.get_or_create_trade(
+            db, tenant_id, user_id, tname_raw, request=request,
+        )
+        return trade.id
+
+    # Either present but explicitly null/empty → clear.
+    return None
 
 
 def _name_collides(
@@ -175,8 +230,8 @@ def list_suppliers(
 ) -> tuple[list[Supplier], int]:
     """Tenant-scoped paginated list. Returns (rows, total_unpaged).
 
-    `supplier_type` (Chat 32 §R3.1) filters to Supplier-only or
-    Subcontractor-only when provided.
+    `supplier_type` (Chat 41 §R4.2) accepts one of the 4 contact-type
+    labels: Contractor / Supplier / Consultant / Other.
     """
     where = [Supplier.tenant_id == tenant_id]
     if not include_archived:
@@ -233,20 +288,23 @@ def create_supplier(
         raise ValueError(f"Supplier name {name!r} already exists in this tenant")
 
     cis = _validate_cis(payload.get("cis_status"))
-    vat = _coerce_vat_rate(payload.get("default_vat_rate"))
     terms = _validate_payment_terms(payload.get("payment_terms_days"))
 
-    # Chat 32 §R3.1 (Prompt 2.7) — subcontractor + CIS extension fields.
+    # Chat 41 §R3.2 — supplier_type now drives the CIS gate via "Contractor".
     stype = _validate_supplier_type(payload.get("supplier_type"))
-    cis_subtype = _validate_cis_subtype(
-        payload.get("cis_subtype"), supplier_type=stype,
-    )
     utr = _validate_utr(payload.get("utr"))
     cis_registered_raw = payload.get("cis_registered", False)
     cis_registered = bool(cis_registered_raw) if cis_registered_raw is not None else False
-    # current_cis_status is service-maintained. NEW subcontractors default
-    # to 'Unverified'; plain suppliers stay NULL.
-    current_cis_status = "Unverified" if stype == "Subcontractor" else None
+    vat_registered = bool(payload.get("vat_registered", False))
+    # current_cis_status is service-maintained. NEW Contractor (CIS
+    # subcontractor) rows default to 'Unverified'; other types stay NULL.
+    current_cis_status = "Unverified" if stype == "Contractor" else None
+
+    # Trade resolution — on create the _UNSET sentinel collapses to None.
+    resolved_trade = _resolve_trade(
+        db, tenant_id, user_id, payload, request=request,
+    )
+    trade_id = None if resolved_trade is _UNSET else resolved_trade
 
     row = Supplier(
         tenant_id=tenant_id,
@@ -261,21 +319,21 @@ def create_supplier(
         postcode=payload.get("postcode") or None,
         country=payload.get("country") or "United Kingdom",
         vat_number=payload.get("vat_number") or None,
+        vat_registered=vat_registered,
         company_number=payload.get("company_number") or None,
         cis_status=cis,
         bank_name=payload.get("bank_name") or None,
         bank_account_no=payload.get("bank_account_no") or None,
         bank_sort_code=payload.get("bank_sort_code") or None,
         payment_terms_days=terms if terms is not None else 30,
-        default_vat_rate=vat if vat is not None else Decimal("20.00"),
         notes=payload.get("notes") or None,
         portal_enabled=False,
         is_archived=False,
         supplier_type=stype,
-        cis_subtype=cis_subtype,
         cis_registered=cis_registered,
         utr=utr,
         current_cis_status=current_cis_status,
+        trade_id=trade_id,
         created_by=user_id,
         updated_by=user_id,
     )
@@ -343,29 +401,31 @@ def update_supplier(
     if "cis_status" in payload:
         row.cis_status = _validate_cis(payload["cis_status"])
 
-    # Chat 32 §R3.1 (Prompt 2.7) — subcontractor + CIS field updates.
+    # Chat 32 §R3.1 (Prompt 2.7) / Chat 41 §R3.2 — supplier_type updates.
     if "supplier_type" in payload:
         row.supplier_type = _validate_supplier_type(payload["supplier_type"])
-    # cis_subtype semantics depend on the (possibly updated) supplier_type.
-    if "cis_subtype" in payload:
-        row.cis_subtype = _validate_cis_subtype(
-            payload["cis_subtype"], supplier_type=row.supplier_type,
-        )
     if "cis_registered" in payload:
         row.cis_registered = bool(payload["cis_registered"])
+    if "vat_registered" in payload:
+        row.vat_registered = bool(payload["vat_registered"])
     if "utr" in payload:
         row.utr = _validate_utr(payload["utr"])
     # current_cis_status is NOT settable via update payload — it is
     # owned by services/cis.record_verification() exclusively. Silently
     # ignore the key if a client tries to set it.
 
-    if "default_vat_rate" in payload:
-        row.default_vat_rate = _coerce_vat_rate(payload["default_vat_rate"])
-
     if "payment_terms_days" in payload:
         row.payment_terms_days = _validate_payment_terms(
             payload["payment_terms_days"]
         )
+
+    # Trade resolution. Use the _UNSET sentinel to distinguish "key
+    # absent" (leave untouched) from "explicitly null/empty" (clear).
+    resolved_trade = _resolve_trade(
+        db, tenant_id, user_id, payload, request=request,
+    )
+    if resolved_trade is not _UNSET:
+        row.trade_id = resolved_trade
 
     if allow_sensitive:
         _sensitive_keys = (
@@ -479,9 +539,6 @@ def serialise(
         "country": row.country,
         "cis_status": row.cis_status,
         "payment_terms_days": row.payment_terms_days,
-        "default_vat_rate": (
-            str(row.default_vat_rate) if row.default_vat_rate is not None else None
-        ),
         "notes": row.notes,
         "portal_enabled": bool(row.portal_enabled),
         "is_archived": bool(row.is_archived),
@@ -490,12 +547,16 @@ def serialise(
         ),
         "created_at": row.created_at.isoformat() if row.created_at else None,
         "updated_at": row.updated_at.isoformat() if row.updated_at else None,
-        # Chat 32 §R4.1 (Prompt 2.7) — subcontractor + CIS fields. Always
-        # surfaced (not gated) except `utr`, which is sensitive.
+        # Chat 32 §R4.1 / Chat 41 §R3.2 — contact-type + CIS surface.
         "supplier_type": row.supplier_type,
-        "cis_subtype": row.cis_subtype,
         "cis_registered": bool(row.cis_registered),
         "current_cis_status": row.current_cis_status,
+        # Chat 41 §R3.2 — VAT registered (independent of vat_number) +
+        # trade managed-vocabulary reference (joined eagerly on read).
+        "vat_registered": bool(row.vat_registered),
+        "trade_id": str(row.trade_id) if row.trade_id else None,
+        # Null-safe: row.trade is None when trade_id is NULL.
+        "trade": row.trade.name if row.trade is not None else None,
     }
     if include_sensitive:
         base.update({

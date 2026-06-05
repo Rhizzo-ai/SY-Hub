@@ -99,7 +99,7 @@ def create_verification(
         msg = str(e)
         # Wrong supplier_type is a business-state conflict, not a payload
         # validation error → 409 per Build Pack §R4.2.
-        if "only valid for subcontractors" in msg:
+        if "only valid for contractors" in msg:
             raise HTTPException(status_code=409, detail=msg)
         raise HTTPException(status_code=422, detail=msg)
 
