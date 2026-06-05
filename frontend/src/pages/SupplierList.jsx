@@ -23,7 +23,7 @@
  */
 import React, { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { AlertCircle } from 'lucide-react';
+import { AlertCircle, ArrowDown, ArrowUp, ArrowUpDown } from 'lucide-react';
 
 import { useSuppliers } from '@/hooks/purchaseOrders';
 import { useAuth } from '@/context/AuthContext';
@@ -98,6 +98,61 @@ export default function SupplierList() {
   });
 
   const rows = useMemo(() => data?.items ?? [], [data]);
+
+  // Chat 41 §R-eyeball-Step2B Part 2 — click-to-sort.
+  // Cycle: unsorted → asc → desc → unsorted (third click clears).
+  // Clicking a different column resets to asc. Sort is CLIENT-SIDE
+  // over the currently-loaded rows (the list isn't paginated-heavy yet).
+  //
+  // CIS sorts on `current_cis_status` (the badge value), Trade on the
+  // serialised `trade` name; null/empty values sink to the bottom of
+  // an asc sort regardless of direction (a stable convention used by
+  // most data-grid libraries).
+  const SORT_VALUE_GETTERS = useMemo(() => ({
+    name:          (s) => (s.name || '').toLowerCase(),
+    type:          (s) => (s.supplier_type || '').toLowerCase(),
+    trade:         (s) => (s.trade || '').toLowerCase(),
+    cis:           (s) => (s.current_cis_status || ''),
+    payment_terms: (s) => (s.payment_terms_days ?? Number.POSITIVE_INFINITY),
+    email:         (s) => (s.contact_email || '').toLowerCase(),
+    phone:         (s) => (s.contact_phone || '').toLowerCase(),
+  }), []);
+
+  const [sortKey, setSortKey] = useState(null);
+  const [sortDir, setSortDir] = useState(null); // 'asc' | 'desc' | null
+
+  // When a hidden column was the active sort, drop it on the next
+  // render so the indicator doesn't ghost into the visible header set.
+  useEffect(() => {
+    if (sortKey && sortKey !== 'name' && sortKey !== 'type' && !visible.has(sortKey)) {
+      setSortKey(null); setSortDir(null);
+    }
+  }, [visible, sortKey]);
+
+  const onHeaderClick = (key) => {
+    if (sortKey !== key) {
+      setSortKey(key); setSortDir('asc'); return;
+    }
+    if (sortDir === 'asc')  { setSortDir('desc'); return; }
+    if (sortDir === 'desc') { setSortKey(null); setSortDir(null); return; }
+    setSortDir('asc');
+  };
+
+  const sortedRows = useMemo(() => {
+    if (!sortKey || !sortDir) return rows;
+    const getValue = SORT_VALUE_GETTERS[sortKey];
+    if (!getValue) return rows;
+    // Slice first — never mutate the React-Query cache result.
+    const copy = rows.slice();
+    copy.sort((a, b) => {
+      const va = getValue(a);
+      const vb = getValue(b);
+      if (va < vb) return sortDir === 'asc' ? -1 : 1;
+      if (va > vb) return sortDir === 'asc' ?  1 : -1;
+      return 0;
+    });
+    return copy;
+  }, [rows, sortKey, sortDir, SORT_VALUE_GETTERS]);
 
   // Unverified cue — only meaningful on the Contractor view.
   const unverifiedCount = useMemo(() => {
@@ -199,28 +254,28 @@ export default function SupplierList() {
         <table className="w-full text-sm border-collapse" data-testid="supplier-list-table">
           <thead>
             <tr className="text-left text-xs text-sy-grey-700 border-b">
-              <th className="py-2 pr-2" data-testid="supplier-list-col-name">Name</th>
-              <th className="py-2 pr-2" data-testid="supplier-list-col-type">Type</th>
+              <SortableTH colKey="name" label="Name" sortKey={sortKey} sortDir={sortDir} onClick={onHeaderClick} />
+              <SortableTH colKey="type" label="Type" sortKey={sortKey} sortDir={sortDir} onClick={onHeaderClick} />
               <th className="py-2 pr-2" data-testid="supplier-list-col-status">Status</th>
               {visible.has('trade') && (
-                <th className="py-2 pr-2" data-testid="supplier-list-col-trade">Trade</th>
+                <SortableTH colKey="trade" label="Trade" sortKey={sortKey} sortDir={sortDir} onClick={onHeaderClick} />
               )}
               {visible.has('cis') && (
-                <th className="py-2 pr-2" data-testid="supplier-list-col-cis">CIS</th>
+                <SortableTH colKey="cis" label="CIS" sortKey={sortKey} sortDir={sortDir} onClick={onHeaderClick} />
               )}
               {visible.has('payment_terms') && (
-                <th className="py-2 pr-2 w-32" data-testid="supplier-list-col-payment_terms">Payment terms</th>
+                <SortableTH colKey="payment_terms" label="Payment terms" className="w-32" sortKey={sortKey} sortDir={sortDir} onClick={onHeaderClick} />
               )}
               {visible.has('email') && (
-                <th className="py-2 pr-2" data-testid="supplier-list-col-email">Email</th>
+                <SortableTH colKey="email" label="Email" sortKey={sortKey} sortDir={sortDir} onClick={onHeaderClick} />
               )}
               {visible.has('phone') && (
-                <th className="py-2 pr-2" data-testid="supplier-list-col-phone">Phone</th>
+                <SortableTH colKey="phone" label="Phone" sortKey={sortKey} sortDir={sortDir} onClick={onHeaderClick} />
               )}
             </tr>
           </thead>
           <tbody>
-            {rows.length === 0 && (
+            {sortedRows.length === 0 && (
               <tr><td
                 colSpan={CORE_COLS.length + visible.size}
                 className="py-3 text-sy-grey-500"
@@ -229,7 +284,7 @@ export default function SupplierList() {
                 No suppliers match.
               </td></tr>
             )}
-            {rows.map((s) => {
+            {sortedRows.map((s) => {
               const isContractor = s.supplier_type === 'Contractor';
               // Cue only when the user is looking at the Contractor
               // view (Type filter = Contractor). On the mixed list the
@@ -293,5 +348,36 @@ export default function SupplierList() {
         </table>
       )}
     </div>
+  );
+}
+
+// Chat 41 §R-eyeball-Step2B Part 2 (Prompt 2.7-FE-revision) — clickable
+// header cell with arrow indicator. Lives at module scope (not nested
+// in render) so the JSX stays tidy; props are controlled by the parent
+// SupplierList.
+function SortableTH({ colKey, label, className = '', sortKey, sortDir, onClick }) {
+  const active = sortKey === colKey;
+  const Icon = !active ? ArrowUpDown : sortDir === 'asc' ? ArrowUp : ArrowDown;
+  const ariaSort = !active ? 'none' : (sortDir === 'asc' ? 'ascending' : 'descending');
+  return (
+    <th
+      className={`py-2 pr-2 ${className}`}
+      data-testid={`supplier-list-col-${colKey}`}
+      aria-sort={ariaSort}
+    >
+      <button
+        type="button"
+        onClick={() => onClick(colKey)}
+        className="inline-flex items-center gap-1 hover:text-sy-teal-700"
+        data-testid={`supplier-list-sort-${colKey}`}
+      >
+        <span>{label}</span>
+        <Icon
+          size={12}
+          className={active ? 'text-sy-teal-700' : 'text-sy-grey-400'}
+          data-testid={`supplier-list-sort-${colKey}-${active ? sortDir : 'none'}`}
+        />
+      </button>
+    </th>
   );
 }

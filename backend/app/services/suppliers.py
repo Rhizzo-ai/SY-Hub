@@ -40,6 +40,7 @@ from sqlalchemy.orm import Session
 from app.models.suppliers import (
     Supplier, SUPPLIER_CIS_STATUSES, SUPPLIER_TYPES,
 )
+from app.models.trades import Trade
 from app.services import trades as trades_svc
 from app.services.audit import field_diff, record_audit
 
@@ -238,11 +239,27 @@ def list_suppliers(
     where = [Supplier.tenant_id == tenant_id]
     if not include_archived:
         where.append(Supplier.is_archived.is_(False))
+    base = select(Supplier).where(and_(*where))
     if q:
+        # Chat 41 §R-eyeball-Step2B (Prompt 2.7-FE-revision) — widen the
+        # `q` filter beyond name. Single search box now matches across:
+        # name, trade (joined trades.name), trading_name, contact_name,
+        # and notes. Case-insensitive, partial (contains). The existing
+        # supplier_type filter + include_archived stay as separate AND
+        # conditions, so search narrows within the selected type.
+        #
+        # Trade join: Supplier.trade is `lazy="joined"` so the select
+        # already emits an OUTER JOIN to trades on read. We pin an
+        # explicit `outerjoin(Trade)` here so the WHERE clause can
+        # reference `Trade.name` directly (no N+1, no correlated
+        # subquery — single SELECT).
         like = f"%{q.lower()}%"
-        where.append(or_(
+        base = base.outerjoin(Trade, Supplier.trade_id == Trade.id).where(or_(
             func.lower(Supplier.name).like(like),
             func.lower(func.coalesce(Supplier.trading_name, "")).like(like),
+            func.lower(func.coalesce(Supplier.contact_name, "")).like(like),
+            func.lower(func.coalesce(Supplier.notes, "")).like(like),
+            func.lower(func.coalesce(Trade.name, "")).like(like),
         ))
     if supplier_type is not None:
         # Validate against the app-level enum tuple (DB enum will also
@@ -252,8 +269,7 @@ def list_suppliers(
                 f"supplier_type must be one of {SUPPLIER_TYPES}, "
                 f"got {supplier_type!r}"
             )
-        where.append(Supplier.supplier_type == supplier_type)
-    base = select(Supplier).where(and_(*where))
+        base = base.where(Supplier.supplier_type == supplier_type)
     total = db.scalar(select(func.count()).select_from(base.subquery())) or 0
     rows = list(db.scalars(
         base.order_by(Supplier.name.asc()).limit(limit).offset(offset)

@@ -273,3 +273,85 @@ describe('SupplierList — columns + column-picker (Chat 41 §R5.4 / §R6)', () 
     expect(screen.getByTestId('supplier-list-col-status')).toBeInTheDocument();
   });
 });
+
+describe('SupplierList — click-to-sort (Chat 41 §R-eyeball-Step2B Part 2)', () => {
+  // Row order is what we read; the visible <Link> wraps the name so we
+  // can read its text directly from the row testid.
+  function nameOrder() {
+    const tbody = screen.getByTestId('supplier-list-table').querySelector('tbody');
+    return Array.from(tbody.querySelectorAll('tr'))
+      .map((r) => (r.getAttribute('data-testid') ?? '').replace('supplier-row-', ''));
+  }
+
+  test('Name column: first click asc, second desc, indicator reflects state', () => {
+    setData([
+      { id: 'CHA', name: 'Charlie', supplier_type: 'Supplier' },
+      { id: 'ALP', name: 'Alpha',   supplier_type: 'Supplier' },
+      { id: 'BRA', name: 'Bravo',   supplier_type: 'Supplier' },
+    ]);
+    renderAt();
+
+    // unsorted at mount.
+    expect(screen.getByTestId('supplier-list-sort-name-none')).toBeInTheDocument();
+
+    // First click → ascending.
+    fireEvent.click(screen.getByTestId('supplier-list-sort-name'));
+    expect(nameOrder()).toEqual(['ALP', 'BRA', 'CHA']);
+    expect(screen.getByTestId('supplier-list-sort-name-asc')).toBeInTheDocument();
+    expect(screen.getByTestId('supplier-list-col-name'))
+      .toHaveAttribute('aria-sort', 'ascending');
+
+    // Second click → descending.
+    fireEvent.click(screen.getByTestId('supplier-list-sort-name'));
+    expect(nameOrder()).toEqual(['CHA', 'BRA', 'ALP']);
+    expect(screen.getByTestId('supplier-list-sort-name-desc')).toBeInTheDocument();
+    expect(screen.getByTestId('supplier-list-col-name'))
+      .toHaveAttribute('aria-sort', 'descending');
+
+    // Third click → clear (back to insertion order).
+    fireEvent.click(screen.getByTestId('supplier-list-sort-name'));
+    expect(nameOrder()).toEqual(['CHA', 'ALP', 'BRA']);
+    expect(screen.getByTestId('supplier-list-sort-name-none')).toBeInTheDocument();
+    expect(screen.getByTestId('supplier-list-col-name'))
+      .toHaveAttribute('aria-sort', 'none');
+  });
+
+  test('Trade column sort (non-name): asc then desc; null trades sink in asc', () => {
+    setData([
+      { id: 'R',  name: 'R-row', supplier_type: 'Supplier', trade: 'Roofing'    },
+      { id: 'E',  name: 'E-row', supplier_type: 'Supplier', trade: 'Electrical' },
+      { id: 'N',  name: 'N-row', supplier_type: 'Supplier', trade: null         },
+      { id: 'G',  name: 'G-row', supplier_type: 'Supplier', trade: 'Groundworks'},
+    ]);
+    renderAt();
+
+    fireEvent.click(screen.getByTestId('supplier-list-sort-trade'));
+    // asc: '' < Electrical < Groundworks < Roofing.
+    expect(nameOrder()).toEqual(['N', 'E', 'G', 'R']);
+    expect(screen.getByTestId('supplier-list-sort-trade-asc')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('supplier-list-sort-trade'));
+    expect(nameOrder()).toEqual(['R', 'G', 'E', 'N']);
+    expect(screen.getByTestId('supplier-list-sort-trade-desc')).toBeInTheDocument();
+  });
+
+  test('switching to a different sort column resets to asc', () => {
+    setData([
+      { id: 'A1', name: 'Acme',  supplier_type: 'Supplier' },
+      { id: 'Z1', name: 'Zenix', supplier_type: 'Contractor' },
+      { id: 'M1', name: 'Mango', supplier_type: 'Other' },
+    ]);
+    renderAt();
+
+    fireEvent.click(screen.getByTestId('supplier-list-sort-name'));
+    fireEvent.click(screen.getByTestId('supplier-list-sort-name'));
+    expect(screen.getByTestId('supplier-list-sort-name-desc')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('supplier-list-sort-type'));
+    expect(screen.getByTestId('supplier-list-sort-type-asc')).toBeInTheDocument();
+    // Name is back to unsorted (only one indicator highlighted at a time).
+    expect(screen.getByTestId('supplier-list-sort-name-none')).toBeInTheDocument();
+    // Type asc: Contractor < Other < Supplier.
+    expect(nameOrder()).toEqual(['Z1', 'M1', 'A1']);
+  });
+});

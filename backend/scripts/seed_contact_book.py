@@ -1,18 +1,32 @@
 """Chat 41 §R6 (Prompt 2.7-BE-rev-A) — idempotent contact-book seed.
 
-Seeds a small starter trade vocabulary and four sample contacts (one of
-each `supplier_type`: Contractor / Supplier / Consultant / Other) into
-the default tenant. Designed to give a freshly-bootstrapped pod a
-realistic Contact Book the moment it boots — useful for FE smoke checks
-and operator demos.
+Seeds a starter trade vocabulary and a varied sample of contacts across
+all four `supplier_type` values (Contractor / Supplier / Consultant /
+Other) into the default tenant.
+
+Chat 41 §R-eyeball-Step2B Part 3 (Prompt 2.7-FE-revision) — the seed
+was expanded from 4 contacts to ~12 with varied data to exercise the
+search/sort/filter flows on the Suppliers list:
+  * 2–3 contacts per type
+  * shared trades (two Electricians) to test sort grouping
+  * mix of CIS statuses on contractors (gross, net_20, net_30,
+    Unverified) — current_cis_status is service-maintained so we set
+    cis_status alongside Contractor rows; current_cis_status stays
+    'Unverified' on create
+  * a couple archived rows
+  * notes containing searchable keywords
+  * trading_name + contact_name populated on several
+  * a couple with full address blocks
 
 Idempotent semantics:
   * Trades are upserted by `(tenant_id, LOWER(name))` via
     `services.trades.get_or_create_trade` — re-runs return existing rows.
   * Suppliers are upserted by `(tenant_id, LOWER(name))` (matches the
     `ux_suppliers_tenant_name_ci` index). If a matching supplier exists,
-    only its `trade_id` is repaired (so re-running picks up new trade
-    rows without touching other fields).
+    its trade_id, supplier_type AND the §R-eyeball-Step2B "rich-data"
+    fields (cis_status, trading_name, contact_name, notes, address
+    block, is_archived) are repaired so a re-run converges on the same
+    final state — no duplicates.
 
 Run:
     python /app/backend/scripts/seed_contact_book.py
@@ -40,6 +54,9 @@ from app.services import trades as trades_svc  # noqa: E402
 
 
 # Starter trade vocabulary — small, opinionated, easy to extend.
+# The expanded sample below references some by name (case-insensitive)
+# and intentionally has two Contractor rows sharing a trade (Electrical)
+# so sort grouping is visible.
 STARTER_TRADES: tuple[str, ...] = (
     "Groundworks",
     "Bricklaying",
@@ -51,14 +68,108 @@ STARTER_TRADES: tuple[str, ...] = (
     "Painting & Decorating",
 )
 
-# Sample contacts — one of each supplier_type, tagged with the trade
-# they map to. Trade name lookup is case-insensitive at runtime.
-SAMPLE_CONTACTS: tuple[tuple[str, str, str | None], ...] = (
-    # (name,                         supplier_type, trade_name_or_None)
-    ("Sample Bricklayers Ltd",       "Contractor",  "Bricklaying"),
-    ("Sample Builders' Merchants",   "Supplier",    None),
-    ("Sample QS Consultants",        "Consultant",  None),
-    ("Sample Hire Plant Co",         "Other",       None),
+
+# Sample contacts — 2–3 per type, varied data to exercise search/sort.
+# Field shape: dict so we can omit cleanly. Names use the "Sample"
+# prefix on the starter four so re-runs match the existing rows.
+SAMPLE_CONTACTS: tuple[dict, ...] = (
+    # ─── Contractors (CIS subcontractor sub-type) ────────────────────
+    {
+        "name": "Sample Bricklayers Ltd",
+        "supplier_type": "Contractor",
+        "trade": "Bricklaying",
+        "cis_status": "gross",
+        "trading_name": "SBL Trading",
+        "contact_name": "Joseph Mason",
+        "notes": "Preferred bricklayer for Phase 1 schemes.",
+    },
+    {
+        "name": "Sample Sparks Electrical",
+        "supplier_type": "Contractor",
+        "trade": "Electrical",
+        "cis_status": "net_20",
+        "contact_name": "Lina Volt",
+    },
+    {
+        "name": "Wired-Up Contractors",
+        "supplier_type": "Contractor",
+        "trade": "Electrical",         # shares trade with Sample Sparks
+        "cis_status": "net_30",
+        "notes": "Backup electrical contractor.",
+    },
+    # ─── Suppliers ───────────────────────────────────────────────────
+    {
+        "name": "Sample Builders' Merchants",
+        "supplier_type": "Supplier",
+        "contact_name": "Reg Stock",
+        "notes": "Trade discount account #4421. Brickwork bulk orders.",
+        "address_line1": "Unit 5 Trade Park",
+        "city": "Shrewsbury",
+        "postcode": "SY1 3AB",
+        "country": "United Kingdom",
+    },
+    {
+        "name": "Severn Timber Supplies",
+        "supplier_type": "Supplier",
+        "trade": "Carpentry",
+        "trading_name": "STS Timber",
+    },
+    {
+        "name": "ArchivedCo Merchants",
+        "supplier_type": "Supplier",
+        "is_archived": True,            # tests "Show archived" toggle
+        "notes": "Legacy supplier - replaced by Severn Timber.",
+    },
+    # ─── Consultants ─────────────────────────────────────────────────
+    {
+        "name": "Sample QS Consultants",
+        "supplier_type": "Consultant",
+        "contact_name": "Priya Knott",
+        "address_line1": "Floor 4, 18 Castle St",
+        "city": "Shrewsbury",
+        "postcode": "SY1 2BQ",
+        "country": "United Kingdom",
+    },
+    {
+        "name": "Northern Planning Partners",
+        "supplier_type": "Consultant",
+        "notes": "Planning consultancy - used for Brickwork-heavy plots.",
+    },
+    # ─── Other (one-off / out-of-the-box) ────────────────────────────
+    {
+        "name": "Sample Hire Plant Co",
+        "supplier_type": "Other",
+        "trade": "Groundworks",
+        "trading_name": "Plant On Demand",
+    },
+    {
+        "name": "SkipsRUs",
+        "supplier_type": "Other",
+        "notes": "Weekly waste skips; favoured for Roofing tear-offs.",
+    },
+    {
+        "name": "Ghost Vendors (Archived)",
+        "supplier_type": "Other",
+        "is_archived": True,            # second archived row
+    },
+)
+
+# Fields the upsert path "repairs" so a re-run converges on the same
+# state. is_archived is included so flipping a sample to archived in
+# the script reliably re-applies on the next run.
+_REPAIRABLE_FIELDS: tuple[str, ...] = (
+    "supplier_type",
+    "trade_id",
+    "cis_status",
+    "trading_name",
+    "contact_name",
+    "notes",
+    "address_line1",
+    "address_line2",
+    "city",
+    "postcode",
+    "country",
+    "is_archived",
 )
 
 
@@ -85,12 +196,47 @@ def _resolve_seed_user(db, tenant_id: uuid.UUID) -> uuid.UUID:
     return user.id
 
 
+def _payload_for(spec: dict, trade_by_name: dict[str, uuid.UUID]) -> dict:
+    """Translate a SAMPLE_CONTACTS spec into the dict used by both the
+    create path and the upsert-repair path. `trade` (name) resolves to
+    `trade_id` here; unknown trade names hard-fail so a typo doesn't
+    silently NULL the column."""
+    payload: dict = {
+        "supplier_type": spec.get("supplier_type", "Supplier"),
+        "cis_status":    spec.get("cis_status"),     # None → NULL is fine
+        "trading_name":  spec.get("trading_name"),
+        "contact_name":  spec.get("contact_name"),
+        "notes":         spec.get("notes"),
+        "address_line1": spec.get("address_line1"),
+        "address_line2": spec.get("address_line2"),
+        "city":          spec.get("city"),
+        "postcode":      spec.get("postcode"),
+        "country":       spec.get("country") or "United Kingdom",
+        "is_archived":   bool(spec.get("is_archived", False)),
+    }
+    trade_name = spec.get("trade")
+    if trade_name:
+        tid = trade_by_name.get(trade_name.lower())
+        if tid is None:
+            raise SystemExit(
+                f"Sample contact {spec['name']!r} references unknown "
+                f"trade {trade_name!r}; add it to STARTER_TRADES."
+            )
+        payload["trade_id"] = tid
+    else:
+        payload["trade_id"] = None
+    return payload
+
+
 def _get_or_create_supplier(
     db, tenant_id: uuid.UUID, user_id: uuid.UUID,
-    *, name: str, supplier_type: str, trade_id: uuid.UUID | None,
-) -> Supplier:
-    """Upsert-by-name. If the supplier exists, repair its trade_id and
-    supplier_type; if it doesn't, create with the starter defaults.
+    *, name: str, fields: dict,
+) -> tuple[Supplier, bool]:
+    """Upsert-by-name. Returns (row, created_bool).
+
+    On repair the fields in `_REPAIRABLE_FIELDS` are set unconditionally
+    so a re-run converges on whatever the script asks for. Fields not
+    listed (created_at, banking PII, etc.) stay untouched.
     """
     existing = db.scalar(
         select(Supplier).where(
@@ -99,38 +245,46 @@ def _get_or_create_supplier(
         )
     )
     if existing is not None:
-        # Idempotent repair — touch trade + type only.
         changed = False
-        if existing.trade_id != trade_id:
-            existing.trade_id = trade_id
-            changed = True
-        if existing.supplier_type != supplier_type:
-            existing.supplier_type = supplier_type
-            changed = True
+        for key in _REPAIRABLE_FIELDS:
+            new_val = fields.get(key)
+            if getattr(existing, key) != new_val:
+                setattr(existing, key, new_val)
+                changed = True
         if changed:
             existing.updated_by = user_id
             db.flush()
-        return existing
+        return existing, False
 
     row = Supplier(
         tenant_id=tenant_id,
         name=name,
-        supplier_type=supplier_type,
-        trade_id=trade_id,
+        supplier_type=fields["supplier_type"],
+        trade_id=fields["trade_id"],
+        cis_status=fields["cis_status"],
+        trading_name=fields["trading_name"],
+        contact_name=fields["contact_name"],
+        notes=fields["notes"],
+        address_line1=fields["address_line1"],
+        address_line2=fields["address_line2"],
+        city=fields["city"],
+        postcode=fields["postcode"],
+        country=fields["country"],
+        is_archived=fields["is_archived"],
         # Contractor seed gets the default Unverified cache; others stay NULL.
-        current_cis_status="Unverified" if supplier_type == "Contractor" else None,
+        current_cis_status=(
+            "Unverified" if fields["supplier_type"] == "Contractor" else None
+        ),
         payment_terms_days=30,
-        country="United Kingdom",
         # Chat 41 §R-eyeball-Step2A — vat_registered dropped.
         cis_registered=False,
         portal_enabled=False,
-        is_archived=False,
         created_by=user_id,
         updated_by=user_id,
     )
     db.add(row)
     db.flush()
-    return row
+    return row, True
 
 
 def main() -> None:
@@ -155,22 +309,16 @@ def main() -> None:
             )
             trade_by_name[t.name.lower()] = t.id
 
-        # 2) Sample suppliers — upsert by name; tag with trade where given.
+        # 2) Sample suppliers — upsert by name with rich fields.
         created = 0
         repaired = 0
-        for sup_name, sup_type, trade_name in SAMPLE_CONTACTS:
-            tid = trade_by_name.get(trade_name.lower()) if trade_name else None
-            before_id = db.scalar(
-                select(Supplier.id).where(
-                    Supplier.tenant_id == tenant.id,
-                    func.lower(Supplier.name) == sup_name.lower(),
-                )
-            )
-            _get_or_create_supplier(
+        for spec in SAMPLE_CONTACTS:
+            fields = _payload_for(spec, trade_by_name)
+            _, was_created = _get_or_create_supplier(
                 db, tenant.id, user_id,
-                name=sup_name, supplier_type=sup_type, trade_id=tid,
+                name=spec["name"], fields=fields,
             )
-            if before_id is None:
+            if was_created:
                 created += 1
             else:
                 repaired += 1
@@ -179,6 +327,7 @@ def main() -> None:
         print(
             f"seed_contact_book: tenant={tenant.name!r} "
             f"trades={len(STARTER_TRADES)} "
+            f"contacts_total={len(SAMPLE_CONTACTS)} "
             f"contacts_created={created} contacts_repaired={repaired}"
         )
     finally:
