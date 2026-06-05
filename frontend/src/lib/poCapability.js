@@ -20,6 +20,8 @@ export function canViewSensitiveSupplier(me) {
 export function canCreateSupplier(me) { return hasPerm(me, 'suppliers.create'); }
 export function canEditSupplier(me)   { return hasPerm(me, 'suppliers.edit'); }
 export function canArchiveSupplier(me){ return hasPerm(me, 'suppliers.archive'); }
+// Chat 41 §R-eyeball-2 (Prompt 2.7-FE-revision) — hard delete.
+export function canDeleteSupplier(me) { return hasPerm(me, 'suppliers.delete'); }
 
 
 // ─── Trades (Chat 41 §R7.2 — Build Pack 2.7-FE-revision) ─────────────

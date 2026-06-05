@@ -46,15 +46,17 @@ class TestPermissionCount28a:
         subcontract_variations) → 122. Chat 35 (2.8b) adds 7 (4
         subcontract_valuations + 3 payment_notices) → 129. Chat 41
         (2.7-BE-rev-A) adds 2 (trades.view + trades.create) → 131.
-        Function name retains 'baseline_plus_10' per chat-15 §3
-        literal-drift convention."""
+        Chat 41 operator eyeball (2.7-FE-revision) adds 1
+        (suppliers.delete) → 132. Function name retains
+        'baseline_plus_10' per chat-15 §3 literal-drift convention."""
         with engine.connect() as c:
             count = c.execute(text(
                 "SELECT COUNT(*) FROM permissions"
             )).scalar()
-        assert count == 131, (
-            f"Expected 131 permissions (112 baseline + 10 from 2.8a "
-            f"+ 7 from 2.8b + 2 from 2.7-BE-rev-A); got {count}"
+        assert count == 132, (
+            f"Expected 132 permissions (112 baseline + 10 from 2.8a "
+            f"+ 7 from 2.8b + 2 from 2.7-BE-rev-A + 1 from 2.7-FE-rev "
+            f"eyeball); got {count}"
         )
 
     def test_new_perms_are_seeded(self, engine):

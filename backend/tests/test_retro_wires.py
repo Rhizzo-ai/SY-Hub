@@ -333,6 +333,8 @@ class TestPermissionsCatalogue:
             # subcontract_valuations.* +4 and payment_notices.* +3 → 129.
             # Chat 41 / mig 0040 (Prompt 2.7-BE-rev-A) adds trades.view
             # + trades.create (+2) → 131.
-            assert total == 131
+            # Chat 41 operator eyeball (Prompt 2.7-FE-revision) adds
+            # suppliers.delete (+1) → 132.
+            assert total == 132
         finally:
             db.close()

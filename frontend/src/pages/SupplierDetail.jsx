@@ -25,6 +25,7 @@
  */
 import React, { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { toast } from 'sonner';
 
 import {
   Tabs, TabsContent, TabsList, TabsTrigger,
@@ -32,11 +33,11 @@ import {
 
 import { useAuth } from '@/context/AuthContext';
 import {
-  useArchiveSupplier, useUnarchiveSupplier, useSupplier,
+  useArchiveSupplier, useDeleteSupplier, useUnarchiveSupplier, useSupplier,
 } from '@/hooks/purchaseOrders';
 import {
-  canArchiveSupplier, canEditSupplier, canViewSensitiveSupplier,
-  canViewCIS, canViewDocs,
+  canArchiveSupplier, canDeleteSupplier, canEditSupplier,
+  canViewSensitiveSupplier, canViewCIS, canViewDocs,
 } from '@/lib/poCapability';
 import SensitiveValue from '@/components/po/SensitiveValue';
 import CISStatusBadge from '@/components/suppliers/CISStatusBadge';
@@ -56,6 +57,7 @@ export default function SupplierDetail() {
   const { data: s, isLoading, isError } = useSupplier(id);
   const archive = useArchiveSupplier();
   const unarchive = useUnarchiveSupplier();
+  const del = useDeleteSupplier();
 
   const initialTab = searchParams.get('tab') || 'overview';
   const [tab, setTab] = useState(initialTab);
@@ -93,6 +95,32 @@ export default function SupplierDetail() {
     await unarchive.mutateAsync(s.id);
   };
 
+  // Chat 41 §R-eyeball-2 (Prompt 2.7-FE-revision) — hard delete.
+  // Backend returns 204 on success and 409 with a detail message when
+  // any linked record blocks the delete. The 409 path surfaces the
+  // backend's exact message via toast and does NOT navigate.
+  const onDelete = async () => {
+    if (!window.confirm(
+      `Permanently delete supplier "${s.name}"?\n\n`
+      + 'This cannot be undone. If the supplier has any linked records '
+      + '(POs, actuals, subcontracts, CIS verifications, documents), '
+      + 'the server will refuse and you should archive instead.',
+    )) return;
+    try {
+      await del.mutateAsync(s.id);
+      toast.success(`Supplier "${s.name}" deleted.`);
+      navigate('/suppliers');
+    } catch (err) {
+      const status = err?.response?.status;
+      const detail = err?.response?.data?.detail ?? err?.message ?? 'Delete failed.';
+      if (status === 409) {
+        toast.error(detail);
+      } else {
+        toast.error(`Delete failed: ${detail}`);
+      }
+    }
+  };
+
   return (
     <div className="p-6 max-w-3xl space-y-4" data-testid="supplier-detail">
       <header className="flex items-start justify-between">
@@ -128,6 +156,14 @@ export default function SupplierDetail() {
               className="px-3 py-1.5 rounded border text-sm text-sy-teal-700"
               data-testid="supplier-detail-restore-btn"
             >Restore</button>
+          )}
+          {canDeleteSupplier(me) && (
+            <button
+              type="button" onClick={onDelete}
+              disabled={del.isPending}
+              className="px-3 py-1.5 rounded border border-red-300 text-sm text-red-800 disabled:opacity-50"
+              data-testid="supplier-detail-delete-btn"
+            >Delete</button>
           )}
         </div>
       </header>

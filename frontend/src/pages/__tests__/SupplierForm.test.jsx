@@ -95,6 +95,42 @@ function renderEdit(existing, perms = ['suppliers.edit', 'suppliers.view_sensiti
   );
 }
 
+describe('SupplierForm — CIS field is Contractor-gated (post-Gate-1 fix, render-presence)', () => {
+  // These two tests pair on the SAME mount, querying the DOM by
+  // data-testid before and after flipping the type — defending the
+  // case where a payload-only assertion lets stale JSX slip through.
+  test('CIS select is NOT in the document for default type (Supplier)', () => {
+    renderCreate();
+    expect(screen.queryByTestId('supplier-form-cis')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('supplier-form-contractor-block')).not.toBeInTheDocument();
+  });
+
+  test('CIS select appears the instant type switches to Contractor and disappears on switch-back', () => {
+    renderCreate();
+    expect(screen.queryByTestId('supplier-form-cis')).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByTestId('supplier-form-type'),
+                     { target: { value: 'Contractor' } });
+    expect(screen.getByTestId('supplier-form-cis')).toBeInTheDocument();
+    expect(screen.getByTestId('supplier-form-contractor-block'))
+      .toContainElement(screen.getByTestId('supplier-form-cis'));
+
+    fireEvent.change(screen.getByTestId('supplier-form-type'),
+                     { target: { value: 'Supplier' } });
+    expect(screen.queryByTestId('supplier-form-cis')).not.toBeInTheDocument();
+  });
+
+  test.each(['Consultant', 'Other'])(
+    'CIS select stays hidden when type=%s',
+    (t) => {
+      renderCreate();
+      fireEvent.change(screen.getByTestId('supplier-form-type'),
+                       { target: { value: t } });
+      expect(screen.queryByTestId('supplier-form-cis')).not.toBeInTheDocument();
+    },
+  );
+});
+
 describe('SupplierForm — create (D1/D2)', () => {
   test('cis_status select is hidden on the default (Supplier) type — post-Gate-1 fix', () => {
     renderCreate();

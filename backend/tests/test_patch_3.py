@@ -71,9 +71,11 @@ class TestPatch3Permissions:
             #   subcontract_valuations.* +4 and payment_notices.* +3 → 129.
             # Chat 41 / mig 0040 (Prompt 2.7-BE-rev-A) adds trades.view
             #   + trades.create (+2) → 131.
+            # Chat 41 operator eyeball (Prompt 2.7-FE-revision) adds
+            #   suppliers.delete (+1) → 132.
             # Function name retains "81" — renaming is out of scope (see
             # chat-22 §2 + Future_Tasks polish entry).
-            assert total == 131
+            assert total == 132
         finally:
             db.close()
 

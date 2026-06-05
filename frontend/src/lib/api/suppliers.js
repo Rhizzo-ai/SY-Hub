@@ -46,3 +46,12 @@ export async function unarchiveSupplier(supplierId) {
   const { data } = await api.post(`/v1/suppliers/${supplierId}/unarchive`, {});
   return data;
 }
+
+// Chat 41 §R-eyeball-2 (Prompt 2.7-FE-revision) — hard delete.
+// Backend returns 204 on success and 409 (with `detail`) when the
+// supplier still has linked rows (POs, actuals, subcontracts, CIS
+// verifications, supplier_documents). The 409 path bubbles up via
+// axios as `err.response.data.detail` for the caller to surface.
+export async function deleteSupplier(supplierId) {
+  await api.delete(`/v1/suppliers/${supplierId}`);
+}

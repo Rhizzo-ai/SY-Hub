@@ -74,6 +74,21 @@ export function useUnarchiveSupplier() {
   });
 }
 
+// Chat 41 §R-eyeball-2 (Prompt 2.7-FE-revision) — hard delete.
+// Backend returns 204; the caller does not get a body. The component
+// surfaces 409 details via `error.response.data.detail` (see
+// pages/SupplierDetail.jsx).
+export function useDeleteSupplier() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id) => suppliersApi.deleteSupplier(id),
+    onSuccess: (_d, id) => {
+      qc.removeQueries({ queryKey: suppliersKeys.detail(id) });
+      qc.invalidateQueries({ queryKey: suppliersKeys.all });
+    },
+  });
+}
+
 
 // ─── Purchase Orders ─────────────────────────────────────────────────
 export const poKeys = {

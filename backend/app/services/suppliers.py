@@ -503,6 +503,92 @@ def set_archived(
 
 
 # ---------------------------------------------------------------------------
+# Hard delete — Chat 41 §R-eyeball-2 (Prompt 2.7-FE-revision)
+# ---------------------------------------------------------------------------
+
+class SupplierHasLinkedRecords(Exception):
+    """Raised when a hard delete is attempted but the supplier still has
+    linked rows. Carries a `kinds` list describing which relations
+    blocked (purchase_orders, actuals, subcontracts, cis_verifications,
+    supplier_documents) so the router can surface a helpful 409 message.
+    """
+    def __init__(self, kinds: list[str]):
+        self.kinds = kinds
+        super().__init__(", ".join(kinds))
+
+
+# (table, supplier_fk_column, label) triples that block a hard delete.
+# Listed as raw SQL so we don't have to import every linked model —
+# and so future tables that grow a supplier FK are obvious in one place.
+# CIS verif's and supplier_documents have CASCADE FKs but we still 409
+# on them so operators don't surprise-cascade audit-bearing data.
+_LINKED_RECORD_TABLES: tuple[tuple[str, str, str], ...] = (
+    ("purchase_orders",                "supplier_id",      "purchase_orders"),
+    ("actuals",                        "supplier_id",      "actuals"),
+    # subcontracts use `subcontractor_id` for the supplier FK.
+    ("subcontracts",                   "subcontractor_id", "subcontracts"),
+    ("subcontractor_cis_verifications","supplier_id",      "cis_verifications"),
+    ("supplier_documents",             "supplier_id",      "supplier_documents"),
+)
+
+
+def delete_supplier(
+    db: Session,
+    tenant_id: uuid.UUID,
+    user_id: uuid.UUID,
+    supplier_id: uuid.UUID,
+    *,
+    request: Optional[Request] = None,
+) -> dict[str, Any]:
+    """Hard-delete a supplier IFF no linked records exist.
+
+    Raises:
+        LookupError: supplier not found.
+        SupplierHasLinkedRecords: at least one linked row exists; carries
+            the list of relation kinds so the router can 409 with detail.
+
+    Returns:
+        A `{"id": "<uuid>", "name": "<...>"}` dict for audit confirmation.
+    """
+    from sqlalchemy import text
+
+    row = get_supplier(db, tenant_id, supplier_id)
+    if row is None:
+        raise LookupError(f"supplier {supplier_id} not found in tenant")
+
+    found: list[str] = []
+    for table, fk, label in _LINKED_RECORD_TABLES:
+        exists = db.execute(
+            text(f"SELECT 1 FROM {table} WHERE {fk} = :sid LIMIT 1"),
+            {"sid": str(supplier_id)},
+        ).first()
+        if exists:
+            found.append(label)
+    if found:
+        raise SupplierHasLinkedRecords(found)
+
+    before = _snapshot(row)
+    snapshot_name = row.name
+
+    # Record the audit row BEFORE the DELETE so the FK on the supplier row
+    # we're deleting doesn't fire. The audit table uses resource_id +
+    # resource_type strings (no FK back to suppliers), so this is safe.
+    record_audit(
+        db,
+        action="Delete",
+        resource_type="supplier",
+        resource_id=row.id,
+        actor_user_id=user_id,
+        field_changes=field_diff(before, {}),
+        metadata={"name": snapshot_name},
+        request=request,
+    )
+    db.delete(row)
+    db.flush()
+    return {"id": str(supplier_id), "name": snapshot_name}
+
+
+# ---------------------------------------------------------------------------
 # Serialisation
 # ---------------------------------------------------------------------------
 

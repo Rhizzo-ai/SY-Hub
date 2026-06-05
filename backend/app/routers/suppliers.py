@@ -10,6 +10,7 @@ Endpoints:
   PATCH  /suppliers/{id}               suppliers.edit
   POST   /suppliers/{id}/archive       suppliers.archive
   POST   /suppliers/{id}/unarchive     suppliers.archive
+  DELETE /suppliers/{id}               suppliers.delete  — 409 if linked
 
 Tenant scoping:
   All endpoints scope by `current_user.tenant_id`. Suppliers are
@@ -284,3 +285,40 @@ def unarchive_endpoint(
     db.commit()
     db.refresh(row)
     return svc.serialise(row, include_sensitive=include_sensitive)
+
+
+@router.delete("/{supplier_id}", status_code=204)
+def delete_endpoint(
+    supplier_id: uuid.UUID,
+    request: Request,
+    pair: tuple[Principal, UserPermissions] = Depends(_perm_dep),
+    db: Session = Depends(get_db),
+):
+    """Hard-delete a supplier — Chat 41 §R-eyeball-2 (Prompt 2.7-FE-revision).
+
+    Returns 204 on success.
+    Returns 409 with a clear message when the supplier still has any
+    linked records (purchase orders, actuals, subcontracts, CIS
+    verifications, supplier documents) — operator must archive instead.
+    """
+    principal, perms = pair
+    _check_perm(perms, "suppliers.delete")
+
+    try:
+        svc.delete_supplier(
+            db, principal.tenant_id, principal.user.id, supplier_id,
+            request=request,
+        )
+    except LookupError:
+        raise HTTPException(status_code=404, detail="Supplier not found")
+    except svc.SupplierHasLinkedRecords as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Cannot delete: supplier has linked records "
+                f"({', '.join(exc.kinds)}) — archive instead."
+            ),
+        )
+
+    db.commit()
+    return None

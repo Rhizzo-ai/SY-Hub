@@ -295,3 +295,123 @@ class TestSensitiveGating:
         # Non-sensitive fields still visible.
         assert out["name"] == f"GatedCo {sx}"
         assert out["is_archived"] is False
+
+
+# ==========================================================================
+# Chat 41 §R-eyeball-2 (Prompt 2.7-FE-revision) — hard delete.
+#
+# Endpoint: DELETE /api/v1/suppliers/{id}  (gated on suppliers.delete)
+#   - 204 when the supplier has no linked records
+#   - 409 when ANY linked record exists (PO, actual, subcontract,
+#     CIS verification, supplier_document) — with operator-readable msg
+#   - 403 when caller lacks suppliers.delete
+#   - 404 when the supplier doesn't exist (or is in another tenant)
+# ==========================================================================
+
+class TestSupplierDelete:
+    def test_delete_unlinked_supplier_returns_204_and_audits(
+        self, admin, engine, _wipe_between,
+    ):
+        sx = _suffix()
+        cr = admin.post(
+            f"{BASE_URL}/api/v1/suppliers",
+            json={"name": f"DeleteMe {sx}"},
+        )
+        assert cr.status_code == 201, cr.text
+        sid = cr.json()["id"]
+        t0 = datetime.now(timezone.utc)
+
+        dr = admin.delete(f"{BASE_URL}/api/v1/suppliers/{sid}")
+        assert dr.status_code == 204, dr.text
+
+        # Row really gone.
+        gr = admin.get(f"{BASE_URL}/api/v1/suppliers/{sid}")
+        assert gr.status_code == 404, gr.text
+
+        # Audit "Delete" row recorded.
+        rows = _audit_rows_for_supplier(engine, sid, action="Delete", since=t0)
+        assert len(rows) == 1, f"expected 1 Delete audit row, got {len(rows)}"
+
+    def test_delete_blocked_when_linked_purchase_order_exists(
+        self, admin, engine, _wipe_between,
+    ):
+        """Function name retains the original wording (PO was the
+        first-listed blocker); the test uses a `supplier_documents`
+        row as the linkage because it's the lightest-weight FK to set
+        up (no project / budget / cost-code prerequisites). The
+        backend handler iterates the same `_LINKED_RECORD_TABLES`
+        tuple — proving the gate fires for one entry proves the
+        wiring for all of them."""
+        sx = _suffix()
+        cr = admin.post(
+            f"{BASE_URL}/api/v1/suppliers",
+            json={"name": f"Linked {sx}"},
+        )
+        assert cr.status_code == 201, cr.text
+        sid = cr.json()["id"]
+
+        with engine.begin() as c:
+            tenant_id = c.execute(text(
+                "SELECT tenant_id FROM suppliers WHERE id = :sid"
+            ), {"sid": sid}).scalar()
+            user_id = c.execute(text(
+                "SELECT id FROM users WHERE email = :e"
+            ), {"e": ADMIN_EMAIL}).scalar()
+            c.execute(text("""
+                INSERT INTO supplier_documents
+                  (id, tenant_id, supplier_id, doc_type, title,
+                   created_by, updated_by, created_at, updated_at)
+                VALUES
+                  (gen_random_uuid(), :tid, :sid, 'Other', :title,
+                   :uid, :uid, NOW(), NOW())
+            """), {
+                "tid": str(tenant_id), "sid": sid,
+                "title": f"LinkProof-{sx}",
+                "uid": str(user_id),
+            })
+
+        dr = admin.delete(f"{BASE_URL}/api/v1/suppliers/{sid}")
+        assert dr.status_code == 409, dr.text
+        body = dr.json()
+        assert "Cannot delete" in body.get("detail", "")
+        assert "supplier_documents" in body["detail"], body["detail"]
+        assert "archive instead" in body["detail"]
+
+        # Row still present.
+        gr = admin.get(f"{BASE_URL}/api/v1/suppliers/{sid}")
+        assert gr.status_code == 200, gr.text
+
+        # Clean up the linked row so the module wipe can drop the supplier.
+        with engine.begin() as c:
+            c.execute(text(
+                "DELETE FROM supplier_documents WHERE supplier_id = :sid"
+            ), {"sid": sid})
+
+    def test_delete_forbidden_for_caller_without_suppliers_delete(
+        self, pm, admin, _wipe_between,
+    ):
+        """PM holds suppliers.archive=No (only view/create/edit) in seed
+        — so they can't delete either. We use the admin-created row
+        as the deletion target."""
+        sx = _suffix()
+        cr = admin.post(
+            f"{BASE_URL}/api/v1/suppliers",
+            json={"name": f"NoDelete {sx}"},
+        )
+        assert cr.status_code == 201, cr.text
+        sid = cr.json()["id"]
+
+        dr = pm.delete(f"{BASE_URL}/api/v1/suppliers/{sid}")
+        assert dr.status_code == 403, dr.text
+
+        # Row still present.
+        gr = admin.get(f"{BASE_URL}/api/v1/suppliers/{sid}")
+        assert gr.status_code == 200, gr.text
+
+    def test_delete_unknown_supplier_returns_404(
+        self, admin, _wipe_between,
+    ):
+        dr = admin.delete(
+            f"{BASE_URL}/api/v1/suppliers/{uuid.uuid4()}"
+        )
+        assert dr.status_code == 404, dr.text

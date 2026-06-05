@@ -17,9 +17,13 @@ jest.mock('@/hooks/purchaseOrders', () => ({
   useSupplier: jest.fn(),
   useArchiveSupplier: jest.fn(),
   useUnarchiveSupplier: jest.fn(),
+  useDeleteSupplier: jest.fn(),
 }));
 jest.mock('@/context/AuthContext', () => ({
   useAuth: jest.fn(),
+}));
+jest.mock('sonner', () => ({
+  toast: { success: jest.fn(), error: jest.fn() },
 }));
 jest.mock('@/components/suppliers/CISTab', () => () => (
   <div data-testid="cis-tab-stub" />
@@ -27,12 +31,14 @@ jest.mock('@/components/suppliers/CISTab', () => () => (
 jest.mock('@/components/suppliers/DocumentsTab', () => () => (
   <div data-testid="documents-tab-stub" />
 ));
+let mockNavigate = jest.fn();
+
 jest.mock('react-router-dom', () => {
   const actual = jest.requireActual('react-router-dom');
   return {
     ...actual,
     useParams: () => mockCurrentParams,
-    useNavigate: () => () => {},
+    useNavigate: () => mockNavigate,
     useSearchParams: () => {
       const params = new URLSearchParams(mockCurrentSearch);
       return [params, (next) => { mockCurrentSearch = next.toString(); }];
@@ -41,7 +47,7 @@ jest.mock('react-router-dom', () => {
 });
 
 import React from 'react';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import SupplierDetail from '@/pages/SupplierDetail';
 
@@ -54,16 +60,24 @@ function setMe(perms) {
 
 let archiveMutate;
 let unarchiveMutate;
+let deleteMutate;
 beforeEach(() => {
   archiveMutate = jest.fn().mockResolvedValue({});
   unarchiveMutate = jest.fn().mockResolvedValue({});
+  deleteMutate = jest.fn().mockResolvedValue(undefined);
   hooks.useArchiveSupplier.mockReset().mockReturnValue({ mutateAsync: archiveMutate });
   hooks.useUnarchiveSupplier.mockReset().mockReturnValue({ mutateAsync: unarchiveMutate });
+  hooks.useDeleteSupplier.mockReset()
+    .mockReturnValue({ mutateAsync: deleteMutate, isPending: false });
   hooks.useSupplier.mockReset();
   useAuth.mockReset();
   mockCurrentParams = { id: 'S1' };
   mockCurrentSearch = '';
+  mockNavigate = jest.fn();
   jest.spyOn(window, 'confirm').mockReturnValue(true);
+  const sonner = jest.requireMock('sonner');
+  sonner.toast.success.mockClear();
+  sonner.toast.error.mockClear();
 });
 
 function renderDetail(supplier, perms) {
@@ -249,5 +263,51 @@ describe('SupplierDetail — archive / restore (D3)', () => {
     renderDetail({ ...BASE_SUPPLIER, is_archived: true },
       ['suppliers.view']);
     expect(screen.getByTestId('supplier-detail')).toHaveTextContent('Archived');
+  });
+});
+
+describe('SupplierDetail — delete flow (Chat 41 §R-eyeball-2)', () => {
+  test('Delete button hidden without suppliers.delete', () => {
+    renderDetail(BASE_SUPPLIER, ['suppliers.view', 'suppliers.archive']);
+    expect(screen.queryByTestId('supplier-detail-delete-btn')).toBeNull();
+  });
+
+  test('Delete button shown when caller has suppliers.delete', () => {
+    renderDetail(BASE_SUPPLIER, ['suppliers.view', 'suppliers.delete']);
+    expect(screen.getByTestId('supplier-detail-delete-btn')).toBeInTheDocument();
+  });
+
+  test('Delete cancelled at confirm prompt does NOT call the hook', async () => {
+    window.confirm.mockReturnValue(false);
+    renderDetail(BASE_SUPPLIER, ['suppliers.view', 'suppliers.delete']);
+    fireEvent.click(screen.getByTestId('supplier-detail-delete-btn'));
+    expect(deleteMutate).not.toHaveBeenCalled();
+    expect(mockNavigate).not.toHaveBeenCalled();
+  });
+
+  test('Delete success: calls the hook, toasts, and navigates back to /suppliers', async () => {
+    const { toast } = jest.requireMock('sonner');
+    renderDetail(BASE_SUPPLIER, ['suppliers.view', 'suppliers.delete']);
+    fireEvent.click(screen.getByTestId('supplier-detail-delete-btn'));
+    await waitFor(() => expect(deleteMutate).toHaveBeenCalledWith('S1'));
+    await waitFor(() => expect(toast.success).toHaveBeenCalled());
+    expect(mockNavigate).toHaveBeenCalledWith('/suppliers');
+  });
+
+  test('Delete 409: surfaces backend detail via toast.error and does NOT navigate', async () => {
+    const { toast } = jest.requireMock('sonner');
+    deleteMutate.mockRejectedValueOnce({
+      response: {
+        status: 409,
+        data: { detail: 'Cannot delete: supplier has linked records (purchase_orders) — archive instead.' },
+      },
+    });
+    renderDetail(BASE_SUPPLIER, ['suppliers.view', 'suppliers.delete']);
+    fireEvent.click(screen.getByTestId('supplier-detail-delete-btn'));
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith(
+      'Cannot delete: supplier has linked records (purchase_orders) — archive instead.'
+    ));
+    expect(mockNavigate).not.toHaveBeenCalled();
+    expect(toast.success).not.toHaveBeenCalled();
   });
 });

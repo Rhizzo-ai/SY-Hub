@@ -108,11 +108,15 @@ PERMISSION_CATALOGUE += [
      "View aggregated AI capture cost / token / volume statistics", True),
 ]
 # Chat 24 §R1 (Prompt 2.5) — supplier directory (tenant-scoped).
-# sensitive: view_sensitive (banking/VAT/company numbers), archive.
+# sensitive: view_sensitive (banking/VAT/company numbers), archive, delete.
+# Chat 41 §R-eyeball-2 (Prompt 2.7-FE-revision) — `delete` added as a
+# hard-delete gate, distinct from `archive`. The router 409s if any
+# linked records exist (POs, actuals, subcontracts, CIS verifications,
+# supplier_documents).
 PERMISSION_CATALOGUE += _perms_for(
     "suppliers",
-    include=["view", "view_sensitive", "create", "edit", "archive"],
-    sensitive={"view_sensitive", "archive"},
+    include=["view", "view_sensitive", "create", "edit", "archive", "delete"],
+    sensitive={"view_sensitive", "archive", "delete"},
 )
 # Chat 32 §R2 (Prompt 2.7) — subcontractor CIS verifications.
 # sensitive: view_sensitive (UTR + verification_number), verify.
@@ -379,8 +383,12 @@ ROLE_PERMISSIONS["finance"] = {
     "audit.view",
     "ai_capture.view_costs",   # Chat 20 §R1.2 — cost dashboard visibility
     # Chat 24 §R1 (Prompt 2.5) — suppliers (full incl. sensitive + archive)
+    # Chat 41 §R-eyeball-2 (Prompt 2.7-FE-revision) — suppliers.delete
+    # mirrors suppliers.archive distribution (super_admin + director get
+    # it automatically; finance_director gets it here explicitly).
     "suppliers.view", "suppliers.view_sensitive",
     "suppliers.create", "suppliers.edit", "suppliers.archive",
+    "suppliers.delete",
     # Chat 41 §R4.1 (Prompt 2.7-BE-rev-A) — trades managed vocabulary.
     "trades.view", "trades.create",
     # Chat 24 §R2 (Prompt 2.5) — purchase orders (finance_director per
