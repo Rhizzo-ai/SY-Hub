@@ -70,8 +70,11 @@ def session(engine, tenant_and_user):
 
 def _mk_supplier(
     sess: Session, tenant_id: uuid.UUID, user_id: uuid.UUID,
-    *, supplier_type: str = "Subcontractor", name_suffix: str = "",
+    *, supplier_type: str = "Contractor", name_suffix: str = "",
 ) -> uuid.UUID:
+    """Create a supplier directly via the service. Default
+    `supplier_type='Contractor'` (the rev-A CIS subcontractor type;
+    Chat 41 §R3.2 relabel)."""
     from app.services.suppliers import create_supplier
     sx = uuid.uuid4().hex[:8].upper()
     row = create_supplier(
@@ -79,7 +82,7 @@ def _mk_supplier(
         {
             "name": f"CISSVC-{name_suffix}-{sx}",
             "supplier_type": supplier_type,
-            "utr": "1234567890" if supplier_type == "Subcontractor" else None,
+            "utr": "1234567890" if supplier_type == "Contractor" else None,
         },
     )
     sess.commit()
@@ -131,7 +134,7 @@ class TestRecordVerification:
             session, tenant_id, user_id,
             supplier_type="Supplier", name_suffix="plain",
         )
-        with pytest.raises(ValueError, match="only valid for subcontractors"):
+        with pytest.raises(ValueError, match="only valid for contractors"):
             svc.record_verification(
                 session, tenant_id, sid,
                 verification_number=None,

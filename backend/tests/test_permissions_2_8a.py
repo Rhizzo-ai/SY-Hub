@@ -44,16 +44,17 @@ class TestPermissionCount28a:
     def test_permission_count_baseline_plus_10(self, engine):
         """Baseline (post-2.6) = 112. 2.8a adds 10 (5 subcontracts + 5
         subcontract_variations) → 122. Chat 35 (2.8b) adds 7 (4
-        subcontract_valuations + 3 payment_notices) → 129. Function
-        name retains 'baseline_plus_10' per chat-15 §3 literal-drift
-        convention."""
+        subcontract_valuations + 3 payment_notices) → 129. Chat 41
+        (2.7-BE-rev-A) adds 2 (trades.view + trades.create) → 131.
+        Function name retains 'baseline_plus_10' per chat-15 §3
+        literal-drift convention."""
         with engine.connect() as c:
             count = c.execute(text(
                 "SELECT COUNT(*) FROM permissions"
             )).scalar()
-        assert count == 129, (
-            f"Expected 129 permissions (112 baseline + 10 from 2.8a "
-            f"+ 7 from 2.8b); got {count}"
+        assert count == 131, (
+            f"Expected 131 permissions (112 baseline + 10 from 2.8a "
+            f"+ 7 from 2.8b + 2 from 2.7-BE-rev-A); got {count}"
         )
 
     def test_new_perms_are_seeded(self, engine):

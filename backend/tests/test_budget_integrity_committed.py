@@ -77,9 +77,9 @@ def seeds(engine):
         supplier_id = uuid.uuid4()
         c.execute(text("""
             INSERT INTO suppliers
-              (id, tenant_id, name, default_vat_rate, is_archived,
+              (id, tenant_id, name, is_archived,
                created_by, updated_by)
-            VALUES (:id, :tid, :name, 20.0, false, :u, :u)
+            VALUES (:id, :tid, :name, false, :u, :u)
         """), {
             "id": supplier_id, "tid": admin.tenant_id,
             "name": f"Integrity39 supplier {supplier_id.hex[:6]}",

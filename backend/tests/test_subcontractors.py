@@ -1,6 +1,13 @@
 """Chat 32 §R5 (Prompt 2.7) — subcontractor field tests on /suppliers.
+Chat 41 §R5 (Prompt 2.7-BE-rev-A) — reworked for the contact-book reshape:
 
-Acceptance gates 1-8 (schema/migration + suppliers extension).
+  - alembic head bumped to 0040_contact_book_rework.
+  - supplier_type enum is now 4 values (`Contractor` replaces
+    `Subcontractor`; +Consultant +Other).
+  - `cis_subtype` column / API field DROPPED.
+  - `default_vat_rate` column DROPPED — independent `vat_registered`
+    boolean added.
+  - CIS gating now keys off `'Contractor'` (the new CIS subcontractor type).
 
 Test users (re-uses the same fixture pattern as test_suppliers.py):
   - test-admin@example.test     — super_admin (all perms, incl sensitive)
@@ -11,7 +18,6 @@ from __future__ import annotations
 
 import os
 import uuid
-from datetime import datetime, timezone
 
 import pytest
 from dotenv import load_dotenv
@@ -93,32 +99,38 @@ def pm(engine):
 
 
 # ---------------------------------------------------------------------------
-# Schema / migration — gates 1-3
+# Schema / migration — gates 1-3 (Chat 41 §R5 reworked)
 # ---------------------------------------------------------------------------
 
 class TestSchema:
-    def test_alembic_head_is_0035_subcontractors(self, engine):
-        """Gate 1: alembic upgrade head clean; new revision present."""
+    def test_alembic_head_is_0040_contact_book_rework(self, engine):
+        """Gate 1: alembic upgrade head clean; new revision present.
+
+        Chat 41 §R5 — head bumped from 0039 → 0040.
+        """
         with engine.connect() as c:
             head = c.execute(text(
                 "SELECT version_num FROM alembic_version"
             )).scalar()
-        assert head == "0039_committed_single_writer", (
-            f"expected head 0039_committed_single_writer, got {head!r}"
+        assert head == "0040_contact_book_rework", (
+            f"expected head 0040_contact_book_rework, got {head!r}"
         )
 
-    def test_supplier_type_enum_exists(self, engine):
-        """Gate 1: supplier_type PG enum exists with both values."""
+    def test_supplier_type_enum_has_four_values(self, engine):
+        """Chat 41 §R1.3 — enum has exactly 4 values in the new order."""
         with engine.connect() as c:
             labels = [r[0] for r in c.execute(text(
                 "SELECT enumlabel FROM pg_enum "
                 "WHERE enumtypid='supplier_type'::regtype "
                 "ORDER BY enumsortorder"
             )).all()]
-        assert labels == ["Supplier", "Subcontractor"], labels
+        assert labels == ["Contractor", "Supplier", "Consultant", "Other"], labels
 
     def test_new_tables_present(self, engine):
-        """Gate 1: subcontractor_cis_verifications + supplier_documents tables exist."""
+        """Subcontractor verifications + supplier_documents tables retained.
+
+        These were the Chat 32 additions; rev-A does NOT touch them.
+        """
         with engine.connect() as c:
             tables = {r[0] for r in c.execute(text(
                 "SELECT table_name FROM information_schema.tables "
@@ -127,92 +139,82 @@ class TestSchema:
             )).all()}
         assert tables == {"subcontractor_cis_verifications", "supplier_documents"}
 
-    def test_supplier_extension_columns_present(self, engine):
-        """Gate 1: 5 new columns added to suppliers."""
+    def test_dropped_columns_absent(self, engine):
+        """Chat 41 §R1.2 — cis_subtype and default_vat_rate columns dropped."""
+        with engine.connect() as c:
+            cols = {r[0] for r in c.execute(text(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name='suppliers'"
+            )).all()}
+        for dropped in ("cis_subtype", "default_vat_rate"):
+            assert dropped not in cols, (
+                f"expected dropped column {dropped!r} to be absent, "
+                f"but it is still present"
+            )
+
+    def test_new_columns_present(self, engine):
+        """Chat 41 §R1.2 — vat_registered + trade_id added.
+
+        Existing rev-A columns (supplier_type, cis_registered, utr,
+        current_cis_status) are still expected.
+        """
         with engine.connect() as c:
             cols = {r[0] for r in c.execute(text(
                 "SELECT column_name FROM information_schema.columns "
                 "WHERE table_name='suppliers'"
             )).all()}
         for required in (
-            "supplier_type", "cis_subtype", "cis_registered",
-            "utr", "current_cis_status",
+            "supplier_type", "cis_registered", "utr", "current_cis_status",
+            # Chat 41 §R1.2 additions:
+            "vat_registered", "trade_id",
         ):
             assert required in cols, f"missing supplier column: {required!r}"
 
-    def test_existing_rows_backfill_supplier_type(self, engine):
-        """Gate 3: existing rows backfill supplier_type='Supplier',
-        cis_registered=false. NULL-safe even when table is empty."""
-        with engine.connect() as c:
-            nulls_type = c.execute(text(
-                "SELECT count(*) FROM suppliers WHERE supplier_type IS NULL"
-            )).scalar()
-            nulls_reg = c.execute(text(
-                "SELECT count(*) FROM suppliers WHERE cis_registered IS NULL"
-            )).scalar()
-            non_default = c.execute(text(
-                "SELECT count(*) FROM suppliers "
-                "WHERE supplier_type NOT IN ('Supplier','Subcontractor')"
-            )).scalar()
-        assert nulls_type == 0
-        assert nulls_reg == 0
-        assert non_default == 0
-
 
 # ---------------------------------------------------------------------------
-# Suppliers extension — gates 4-8
+# Contractor (CIS subcontractor) fields — gates 4-8 (Chat 41 §R5 reworked)
 # ---------------------------------------------------------------------------
 
-class TestSubcontractorCreate:
-    def test_create_subcontractor_defaults_current_cis_status_unverified(
+class TestContractorCreate:
+    def test_create_contractor_defaults_current_cis_status_unverified(
         self, admin, engine, _wipe_between,
     ):
-        """Gate 4: create supplier with supplier_type='Subcontractor' +
-        valid UTR persists; current_cis_status defaults to 'Unverified'."""
+        """Gate 4: create supplier with supplier_type='Contractor' +
+        valid UTR persists; current_cis_status defaults to 'Unverified'.
+
+        Chat 41 §R5 — 'Subcontractor' was renamed to 'Contractor'.
+        cis_subtype is no longer sent / persisted.
+        """
         sx = _suffix()
         r = admin.post(
             f"{BASE_URL}/api/v1/suppliers",
             json={
-                "name": f"Sub-{sx}",
-                "supplier_type": "Subcontractor",
-                "cis_subtype": "Labour_Only",
+                "name": f"Con-{sx}",
+                "supplier_type": "Contractor",
                 "cis_registered": True,
                 "utr": "1234567890",
             },
         )
         assert r.status_code == 201, r.text
         out = r.json()
-        assert out["supplier_type"] == "Subcontractor"
-        assert out["cis_subtype"] == "Labour_Only"
+        assert out["supplier_type"] == "Contractor"
+        assert "cis_subtype" not in out, "cis_subtype must be dropped from response"
         assert out["cis_registered"] is True
         assert out["utr"] == "1234567890"  # admin has sensitive
         assert out["current_cis_status"] == "Unverified"
 
-    def test_plain_supplier_rejects_cis_subtype(
-        self, admin, engine, _wipe_between,
-    ):
-        """Gate 5: cis_subtype on a Supplier (non-subcontractor) rejected."""
-        sx = _suffix()
-        r = admin.post(
-            f"{BASE_URL}/api/v1/suppliers",
-            json={
-                "name": f"Plain-{sx}",
-                "supplier_type": "Supplier",
-                "cis_subtype": "Labour_Only",
-            },
-        )
-        assert r.status_code == 422, r.text
-        assert "cis_subtype" in r.json()["detail"]
-
     def test_malformed_utr_rejected(self, admin, engine, _wipe_between):
-        """Gate 6: malformed UTR (not 10 digits) → 422."""
+        """Gate 6: malformed UTR (not 10 digits) → 422.
+
+        Unchanged from 2.7 except for supplier_type label.
+        """
         sx = _suffix()
         for bad in ("123", "12345", "abcdefghij", "12345678901"):
             r = admin.post(
                 f"{BASE_URL}/api/v1/suppliers",
                 json={
                     "name": f"Bad-{sx}-{bad}",
-                    "supplier_type": "Subcontractor",
+                    "supplier_type": "Contractor",
                     "utr": bad,
                 },
             )
@@ -221,13 +223,14 @@ class TestSubcontractorCreate:
 
     def test_utr_with_spaces_normalised(self, admin, engine, _wipe_between):
         """Gate 6 (also): UTR with internal whitespace strips down to
-        10 digits and persists clean."""
+        10 digits and persists clean.
+        """
         sx = _suffix()
         r = admin.post(
             f"{BASE_URL}/api/v1/suppliers",
             json={
                 "name": f"Spaced-{sx}",
-                "supplier_type": "Subcontractor",
+                "supplier_type": "Contractor",
                 "utr": " 12 345  67890 ",
             },
         )
@@ -241,19 +244,38 @@ class TestSubcontractorCreate:
         sx = _suffix()
         r = admin.post(
             f"{BASE_URL}/api/v1/suppliers",
-            json={"name": f"Plain2-{sx}"},  # no supplier_type → defaults Supplier
+            json={"name": f"Plain-{sx}"},  # no supplier_type → defaults Supplier
         )
         assert r.status_code == 201, r.text
         out = r.json()
         assert out["supplier_type"] == "Supplier"
         assert out["current_cis_status"] is None
 
-
-class TestSupplierTypeFilter:
-    def test_list_filters_to_subcontractors_only(
+    def test_consultant_and_other_types_accepted(
         self, admin, engine, _wipe_between,
     ):
-        """Gate 7: GET /suppliers?supplier_type=Subcontractor returns subs only."""
+        """Chat 41 §R5 — the two new contact-type labels work and do NOT
+        get a default current_cis_status (only Contractor gets 'Unverified').
+        """
+        sx = _suffix()
+        for stype in ("Consultant", "Other"):
+            r = admin.post(
+                f"{BASE_URL}/api/v1/suppliers",
+                json={"name": f"{stype}-{sx}", "supplier_type": stype},
+            )
+            assert r.status_code == 201, r.text
+            out = r.json()
+            assert out["supplier_type"] == stype
+            assert out["current_cis_status"] is None
+
+
+class TestSupplierTypeFilter:
+    def test_list_filters_to_contractors_only(
+        self, admin, engine, _wipe_between,
+    ):
+        """Gate 7: GET /suppliers?supplier_type=Contractor returns
+        contractors only.
+        """
         sx = _suffix()
         admin.post(
             f"{BASE_URL}/api/v1/suppliers",
@@ -261,17 +283,17 @@ class TestSupplierTypeFilter:
         )
         admin.post(
             f"{BASE_URL}/api/v1/suppliers",
-            json={"name": f"Sub-{sx}", "supplier_type": "Subcontractor",
+            json={"name": f"Con-{sx}", "supplier_type": "Contractor",
                   "utr": "1111111111"},
         )
 
         r = admin.get(
             f"{BASE_URL}/api/v1/suppliers",
-            params={"q": sx, "supplier_type": "Subcontractor"},
+            params={"q": sx, "supplier_type": "Contractor"},
         )
         assert r.status_code == 200
         names = {item["name"] for item in r.json()["items"]}
-        assert f"Sub-{sx}" in names
+        assert f"Con-{sx}" in names
         assert f"Plain-{sx}" not in names
 
         # Inverse filter
@@ -281,17 +303,23 @@ class TestSupplierTypeFilter:
         )
         names2 = {item["name"] for item in r2.json()["items"]}
         assert f"Plain-{sx}" in names2
-        assert f"Sub-{sx}" not in names2
+        assert f"Con-{sx}" not in names2
 
     def test_list_invalid_supplier_type_returns_422(
         self, admin, engine, _wipe_between,
     ):
-        """Bad supplier_type filter value → 422."""
-        r = admin.get(
-            f"{BASE_URL}/api/v1/suppliers",
-            params={"supplier_type": "Bogus"},
-        )
-        assert r.status_code == 422
+        """Bad supplier_type filter value → 422.
+
+        'Subcontractor' is now invalid (it was replaced by 'Contractor').
+        """
+        for bogus in ("Bogus", "Subcontractor"):
+            r = admin.get(
+                f"{BASE_URL}/api/v1/suppliers",
+                params={"supplier_type": bogus},
+            )
+            assert r.status_code == 422, (
+                f"supplier_type={bogus!r} should be 422, got {r.status_code}"
+            )
 
 
 class TestUTRSensitiveGating:
@@ -304,7 +332,7 @@ class TestUTRSensitiveGating:
             f"{BASE_URL}/api/v1/suppliers",
             json={
                 "name": f"GateUTR-{sx}",
-                "supplier_type": "Subcontractor",
+                "supplier_type": "Contractor",
                 "utr": "9876543210",
             },
         )
@@ -320,6 +348,6 @@ class TestUTRSensitiveGating:
         pm_get = pm.get(f"{BASE_URL}/api/v1/suppliers/{sid}")
         assert pm_get.status_code == 200, pm_get.text
         assert pm_get.json()["utr"] is None
-        # Non-sensitive subcontractor fields still visible.
-        assert pm_get.json()["supplier_type"] == "Subcontractor"
+        # Non-sensitive contractor fields still visible.
+        assert pm_get.json()["supplier_type"] == "Contractor"
         assert pm_get.json()["current_cis_status"] == "Unverified"

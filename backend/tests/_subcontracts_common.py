@@ -125,12 +125,14 @@ def make_entity_and_project(
 def make_subcontractor(
     admin_session, *, name: Optional[str] = None,
 ) -> str:
-    """Create a `supplier_type='Subcontractor'` supplier; return its id."""
+    """Create a CIS subcontractor (`supplier_type='Contractor'` per
+    Chat 41 §R3.2 — the 4-value contact-type label relabel).
+    Returns its id."""
     if name is None:
         name = f"SC-Test-Sub-{uuid.uuid4().hex[:8]}"
     r = admin_session.post(f"{BASE_URL}/api/v1/suppliers", json={
         "name": name,
-        "supplier_type": "Subcontractor",
+        "supplier_type": "Contractor",
         "cis_registered": False,
     })
     assert r.status_code == 201, r.text

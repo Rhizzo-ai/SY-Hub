@@ -86,7 +86,7 @@ class TestMigration0038Structure:
             r = c.execute(text(
                 "SELECT version_num FROM alembic_version"
             )).scalar()
-            assert r == "0039_committed_single_writer"
+            assert r == "0040_contact_book_rework"
 
 
 class TestMigration0038RoundTrip:

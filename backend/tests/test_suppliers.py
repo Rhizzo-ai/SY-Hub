@@ -137,9 +137,9 @@ class TestCreate:
             "name": f"Acme Bricks {sx}",
             "contact_email": "acme@example.test",
             "vat_number": "GB123456789",
+            "vat_registered": True,
             "bank_account_no": "12345678",
             "bank_sort_code": "12-34-56",
-            "default_vat_rate": 20.0,
             "payment_terms_days": 30,
         }
         r = admin.post(f"{BASE_URL}/api/v1/suppliers", json=body)
@@ -150,6 +150,13 @@ class TestCreate:
         assert out["bank_account_no"] == "12345678"
         assert out["is_archived"] is False
         assert out["portal_enabled"] is False
+        # Chat 41 §R5 — serialised shape: vat_registered + trade fields
+        # present; dropped fields absent.
+        assert out["vat_registered"] is True
+        assert "trade_id" in out and out["trade_id"] is None
+        assert "trade" in out and out["trade"] is None
+        assert "cis_subtype" not in out
+        assert "default_vat_rate" not in out
         sid = out["id"]
 
         rows = _audit_rows_for_supplier(engine, sid, action="Create", since=start)

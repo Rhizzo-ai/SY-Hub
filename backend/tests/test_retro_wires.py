@@ -331,6 +331,8 @@ class TestPermissionsCatalogue:
             # and subcontract_variations.* +5 → 122.
             # Chat 35 / mig 0038 (Prompt 2.8b) adds
             # subcontract_valuations.* +4 and payment_notices.* +3 → 129.
-            assert total == 129
+            # Chat 41 / mig 0040 (Prompt 2.7-BE-rev-A) adds trades.view
+            # + trades.create (+2) → 131.
+            assert total == 131
         finally:
             db.close()

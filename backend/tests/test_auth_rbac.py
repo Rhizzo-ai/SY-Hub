@@ -158,7 +158,9 @@ class TestAuthMe:
         #              subcontract_variations.* +5):                  122 ← current
         # Function name retains "87" — renaming is out of scope (see
         # chat-22 §2 + Future_Tasks polish entry).
-        assert len(data["permissions"]) == 129
+        # Chat 41 (Prompt 2.7-BE-rev-A): +2 (trades.view + trades.create
+        # via wildcard) → 131.
+        assert len(data["permissions"]) == 131
         assert data["email"] == TEST_ADMIN_EMAIL
 
     def test_me_unauthenticated_returns_401(self):
@@ -211,7 +213,9 @@ class TestRoles:
         #   + Chat 33 (budget_changes.submit + .apply +2):         112
         #   + Chat 34 (subcontracts.* +5, subcontract_variations.* +5):
         #                                                          122 ← current
-        assert role_perms["super_admin"] == 129
+        # Chat 41 (Prompt 2.7-BE-rev-A): +2 (trades.view + trades.create
+        # via wildcard) → 131.
+        assert role_perms["super_admin"] == 131
         # director count history:
         #   Patch #3 baseline (after losing 4 orphan grants):       77
         #   + 2.2 (appraisals.submit, appraisals.view_financials):  79
@@ -226,7 +230,9 @@ class TestRoles:
         #              via wildcard):                              118
         #   + Chat 35 (subcontract_valuations.* +4, payment_notices.* +3,
         #              via wildcard):                              125 ← current
-        assert role_perms["director"] == 125
+        # Chat 41 (Prompt 2.7-BE-rev-A): +2 (trades.view + trades.create
+        # via wildcard) → 127.
+        assert role_perms["director"] == 127
         assert role_perms["project_manager"] >= 30
         assert role_perms["finance"] >= 25
         # 1.7: +system_config.view granted to all 10 roles.
@@ -237,7 +243,9 @@ class TestRoles:
         #   subcontract_variations.view (+2) → 15.
         # Chat 35 (Prompt 2.8b): read_only gets subcontract_valuations.view +
         #   payment_notices.view (+2) → 17.
-        assert role_perms["read_only"] == 17
+        # Chat 41 (Prompt 2.7-BE-rev-A): read_only gets trades.view
+        # (+1) → 18.
+        assert role_perms["read_only"] == 18
         assert role_perms["investor_read_only"] == 4  # 1.6: +cost_codes.view, 1.7: +system_config.view
         assert role_perms["subcontractor_portal"] == 3  # 1.7: +system_config.view
         assert role_perms["consultant_portal"] == 4  # 1.6: +cost_codes.view, 1.7: +system_config.view

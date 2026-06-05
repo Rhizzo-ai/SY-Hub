@@ -20,6 +20,8 @@ def db_engine():
 
 # ==========================================================================
 # Gate 27 — Permission count = baseline + 7 = 129.
+# Bumped by Chat 41 (Prompt 2.7-BE-rev-A): +2 (trades.view, trades.create)
+# → 131. Function names retained per the project convention.
 # ==========================================================================
 
 class TestPermissionCount:
@@ -28,7 +30,7 @@ class TestPermissionCount:
             n = c.execute(text(
                 "SELECT count(*) FROM permissions"
             )).scalar()
-        assert n == 129, f"expected 129 permissions, got {n}"
+        assert n == 131, f"expected 131 permissions, got {n}"
 
     def test_new_2_8b_codes_present(self, db_engine):
         expected = {
@@ -49,7 +51,9 @@ class TestPermissionCount:
 
     def test_permission_catalogue_count_in_python_is_129(self):
         from app.seed_rbac import PERMISSION_CATALOGUE
-        assert len(PERMISSION_CATALOGUE) == 129
+        # Chat 41 (Prompt 2.7-BE-rev-A): +2 catalogue rows
+        # (trades.view, trades.create) → 131.
+        assert len(PERMISSION_CATALOGUE) == 131
 
 
 # ==========================================================================

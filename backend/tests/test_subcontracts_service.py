@@ -128,7 +128,9 @@ class TestCreate:
             title="Bad — plain supplier",
         )
         assert r.status_code == 422, r.text
-        assert "Subcontractor" in r.json()["detail"]
+        # Chat 41 §R3.4 — error message updated to mention 'Contractor'
+        # (the new CIS subcontractor type label).
+        assert "Contractor" in r.json()["detail"]
 
     # Gate 8 — Second subcontract same project → SC-0002.
     def test_second_subcontract_same_project_is_sc0002(

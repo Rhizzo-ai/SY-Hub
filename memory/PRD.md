@@ -18,6 +18,51 @@ Frontend / actuals / commitments / Xero are out of scope until later prompts.
 
 ## What's been implemented
 
+### Chat 41 — Build Pack 2.7-BE-rev-A · Gate 3 (2026-02)
+
+**§R5 tests + §R6 seed + CHANGELOG + chat-41-closing + PRD update.** Final gate of the rev-A run. STOP at Gate 3 for push readiness.
+
+**Pytest double-run on pod (canonical, second-run):**
+- **1281 passed, 3 xpassed (1284 total), 0 failed, 0 errors.**
+- First-run noise (60 FAILED + 110 ERROR) was session-state pollution from dev iterations; every failing test passes individually. Second run is clean.
+
+**HARD-BREAK fixes (both green on second run):**
+- `test_budget_integrity_committed.py`: **4 / 4** — raw-SQL INSERT `default_vat_rate` removed from column list AND values tuple.
+- `test_audit_remediation_p0.py`: **16 / 16** — same.
+
+**New rev-A test files (≥14 functions target → landed 35):**
+- `test_trades.py` (12): CRUD, whitespace normalisation, case-insensitive idempotent re-create + audit-row dedupe, archive/unarchive lifecycle, list filters, permission gating, archive-doesn't-clear-supplier-trade_id invariant.
+- `test_supplier_contact_book.py` (11): serialised shape (vat_registered + trade keys present; cis_subtype + default_vat_rate absent), vat_registered independence from vat_number, full `_resolve_trade` priority matrix incl. `_UNSET` sentinel.
+- `test_migration_0040_contact_book.py` (12): DB-only VERIFY — head, 4-value enum + no temp types, columns added/dropped, indexes, FK `ON DELETE SET NULL`, CHECK constraint gone, permission_resource enum extension.
+
+**Reworked test files:**
+- `test_subcontractors.py` (13) — class renames `TestSubcontractor*` → `TestContractor*`, alembic head bumped to 0040, enum assertion to 4-value tuple, cis_subtype paths removed, Consultant/Other coverage added, `?supplier_type=Subcontractor → 422` test added.
+- `test_suppliers.py` — dropped `default_vat_rate` payload; added serialised-shape assertions.
+
+**Snapshot/baseline test bumps (head + perm count + role grants):**
+- alembic head: 7 test files bumped to `0040_contact_book_rework`.
+- permission count: 7 historical snapshot tests bumped from `129 → 131` (test_permissions_2_6/7/8a/8b, test_patch_3, test_retro_wires, test_auth_rbac).
+- role grants in test_auth_rbac: super_admin 129→131, director 125→127, read_only 17→18 (all via wildcard / direct grant).
+- Behavioural message bumps in test_cis_service + test_subcontracts_service for the relabelled error strings.
+- Test helpers (`_subcontracts_common.py`, `test_cis_api.py`, `test_cis_service.py`): default supplier_type literal `Subcontractor → Contractor`.
+
+**Hygiene cleanup:**
+- `test_po_approvals_api.py`, `test_purchase_orders_api.py`, `test_po_receipts_api.py` — removed silently-ignored `default_vat_rate` from supplier-create payloads.
+
+**§R6 seed:**
+- `scripts/seed_contact_book.py` (new, idempotent). 8 starter trades + 4 sample contacts (one of each `supplier_type`). Verified idempotent: re-run produces `contacts_created=0 contacts_repaired=4`.
+
+**Docs landed:**
+- `/app/CHANGELOG.md` — Chat 41 entry prepended (D1–D7 deviation block + §R3/§R4/§R5/§R6 detail).
+- `/app/docs/chat-summaries/chat-41-closing.md` — closing summary.
+- `/app/memory/Gate3_VERIFY_2.7-BE-rev-A.md` — full Gate 3 VERIFY.
+
+**Untouched (per opener):**
+- `docs/SY_Hub_Phase2_Backlog.md` (operator-owned).
+
+**Alembic head**: `0040_contact_book_rework`. Permission count: **131**. Roles: 10.
+**Status**: rev-A push-ready.
+
 ### Chat 41 — Build Pack 2.7-BE-rev-A · Gate 2 (2026-02)
 
 **§R3 (services) + §R4 (routers) + seed_rbac additions.** Continues from Gate 1's `0040_contact_book_rework` migration + model layer. STOP at Gate 2 with grep VERIFY + new permission count.

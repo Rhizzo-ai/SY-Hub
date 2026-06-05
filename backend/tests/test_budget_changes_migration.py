@@ -25,7 +25,8 @@ class TestSchemaMigration:
         """Head sentinel — name retained for git-diff hygiene; the
         actual expected value moves with each new migration. Chat 34
         (Prompt 2.8a) bumps it to 0037_subcontracts; Chat 35 (Prompt
-        2.8b) bumps it to 0039_committed_single_writer."""
+        2.8b) bumps it to 0039_committed_single_writer; Chat 41
+        (Prompt 2.7-BE-rev-A) bumps it to 0040_contact_book_rework."""
         from app.db import SessionLocal
         db = SessionLocal()
         try:
@@ -34,8 +35,8 @@ class TestSchemaMigration:
             )).scalar()
         finally:
             db.close()
-        assert head == "0039_committed_single_writer", (
-            f"Expected alembic head 0039_committed_single_writer; got {head}"
+        assert head == "0040_contact_book_rework", (
+            f"Expected alembic head 0040_contact_book_rework; got {head}"
         )
 
     def test_budget_changes_tables_exist(self, db_engine):

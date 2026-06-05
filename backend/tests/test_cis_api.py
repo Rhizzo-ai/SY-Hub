@@ -93,13 +93,15 @@ def readonly(engine):
 
 
 def _mk_sub(admin_session, name_suffix: str = "") -> str:
-    """Helper — POST a Subcontractor supplier and return its id."""
+    """Helper — POST a CIS subcontractor (supplier_type='Contractor' per
+    Chat 41 §R3.2) and return its id.
+    """
     sx = _suffix()
     r = admin_session.post(
         f"{BASE_URL}/api/v1/suppliers",
         json={
             "name": f"CISAPI-{name_suffix}-{sx}",
-            "supplier_type": "Subcontractor",
+            "supplier_type": "Contractor",
             "utr": "1234567890",
         },
     )

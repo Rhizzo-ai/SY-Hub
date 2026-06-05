@@ -121,7 +121,7 @@ def _create_project(admin, entity_id: str) -> str:
 def _create_supplier(admin, name_suffix: str) -> str:
     r = admin.post(
         f"{BASE_URL}/api/v1/suppliers",
-        json={"name": f"R2-Supplier {name_suffix}", "default_vat_rate": 20.0},
+        json={"name": f"R2-Supplier {name_suffix}"},
     )
     assert r.status_code == 201, r.text
     return r.json()["id"]

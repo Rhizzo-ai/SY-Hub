@@ -238,9 +238,12 @@ def test_alembic_heads_helper_returns_single_head():
     # Bumped again by Chat 39 (Build Pack 2.6-FIX): 0038_ → 0039_ when
     # the PG trigger stopped writing committed_not_invoiced (Python is
     # now the sole writer — single-writer integrity fix §R2 A1).
+    # Bumped again by Chat 41 (Prompt 2.7-BE-rev-A): 0039_ → 0040_ when
+    # the suppliers contact-book reshape landed (trades managed
+    # vocabulary + supplier_type enum recreated to 4 values).
     # See chat-15-closing §3 — this sentinel is "part of any migration's
     # bookkeeping" and must be bumped whenever the head moves.
-    assert head.startswith("0039_"), f"unexpected head id: {head}"
+    assert head.startswith("0040_"), f"unexpected head id: {head}"
 
 
 # ----------------------------------------------------------------------

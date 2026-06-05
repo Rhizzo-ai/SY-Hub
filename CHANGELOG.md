@@ -11,6 +11,151 @@ Each entry: date, prompt reference (if applicable), change, rationale.
 
 ## Entries
 
+## Chat 41 — Build Pack 2.7-BE-rev-A Suppliers Contact-Book Rework (Backend) (2026-02)
+
+Backend-only reshape against the 2.7 baseline frozen by Chat 40. Three
+gates landed in this run: §R1 migration + §R2 models (Gate 1), §R3
+services + §R4 routers + seed_rbac (Gate 2), §R5 tests + §R6 seed +
+docs (Gate 3 — this entry). Permissions count **129 → 131**.
+
+### §R1 — Schema reshape (migration `0040_contact_book_rework`)
+
+- **D1 `cis_subtype` dropped.** The 2.7 column + `CIS_SUBTYPES` tuple
+  were never operator-validated as the right primitive — the rev-A
+  domain model treats CIS payment classification as a per-verification
+  cache (`current_cis_status`), not a per-supplier static attribute.
+  Hard-dropped; migration downgrade re-adds it as VARCHAR(30) NULL
+  (empty — historical values not restored, dev-only safety net).
+- **D2 `default_vat_rate` dropped.** Likewise never operator-validated.
+  VAT rate belongs on the line item, not the supplier. The single-column
+  CHECK constraint `ck_suppliers_vat_rate_range` from 0029 was
+  auto-dropped by Postgres when the column went; downgrade reconstructs
+  it verbatim.
+- **D3 `vat_registered` added** as a standalone `BOOLEAN NOT NULL
+  DEFAULT false`. Independent of `vat_number` (no inference either
+  way) — the platform must record VAT-registration state as a first-
+  class field.
+- **D4 `trades` table** added (tenant-scoped, audit cols, name ≤100
+  chars, `is_archived` flag, unique CI index `ux_trades_tenant_name_ci`
+  on `(tenant_id, LOWER(name))`). Managed vocabulary grown via the
+  `get_or_create_trade` service primitive (idempotent + SAVEPOINT-safe
+  against unique-index races).
+- **D5 `suppliers.trade_id`** UUID FK → `trades.id` ON DELETE SET NULL,
+  nullable, indexed. The SET NULL behaviour is documented but inert in
+  the app — we don't expose hard-delete; archived trades stop appearing
+  in pick lists.
+- **D6 `supplier_type` enum reshaped** from `(Supplier, Subcontractor)`
+  to `(Contractor, Supplier, Consultant, Other)`. Recreated via the
+  standard 6-step PG dance (rename old → create new → drop default →
+  USING CASE cast → re-set default → drop old). Data map:
+  `Subcontractor → Contractor`, `Supplier → Supplier`. New default
+  `'Supplier'`. Downgrade is documented lossy-cast: `Consultant/Other →
+  Supplier`.
+- **D7 `permission_resource` enum +=** `'trades'` via the autocommit
+  `_add_enum_value_if_missing` helper (mirrors 0035). Enum value remains
+  on downgrade (PG limitation: cannot remove enum values; inert without
+  catalogue rows).
+
+### §R3 — Services reshape
+
+- **`services/cis.py:179`** — gate relabelled from `supplier_type !=
+  "Subcontractor"` to `!= "Contractor"`; error message updated to "CIS
+  verification only valid for contractors (CIS subcontractors)".
+  `routers/cis.py` 409-detector string updated to match.
+- **`services/subcontracts.py:290`** — LD2 counterparty gate relabelled
+  to `"Contractor"`; cosmetic "Subcontractor not found" → "Contractor
+  not found".
+- **`services/suppliers.py`** — dropped `_validate_cis_subtype` and
+  `_coerce_vat_rate`. Added `_UNSET` sentinel + `_resolve_trade` (the
+  rev-A "grow-as-you-type" primitive). Priority: `trade_id` UUID →
+  `trade` name (get_or_create) → explicit `null`/empty clears → key
+  absent leaves untouched. `_AUDIT_COLS` updated; `current_cis_status`
+  default now keys off `"Contractor"`. `serialise` reshape: drops
+  `cis_subtype` + `default_vat_rate`; adds `vat_registered`, `trade_id`,
+  null-safe `trade` (the joined relationship name).
+
+### §R4 — Routers reshape
+
+- **`routers/trades.py` (new)** — `GET /trades`, `POST /trades`
+  (idempotent grow-as-you-type), `POST /trades/{id}/archive`
+  and `/unarchive`. Mounted in `server.py` directly after
+  `suppliers_router`. The archive/unarchive endpoints reuse the
+  `trades.create` permission as their mutate gate (no separate archive
+  permission in rev-A).
+- **`routers/suppliers.py`** — bodies reshaped: `cis_subtype` and
+  `default_vat_rate` dropped from create/update schemas; `vat_registered`,
+  `trade_id`, `trade` added. `supplier_type` filter description updated
+  to the 4-value label set. Pydantic `extra="ignore"` (default) means
+  pre-rev-A clients sending `cis_subtype` / `default_vat_rate` still get
+  201s — the keys are silently dropped.
+
+### §R5 — Tests
+
+- **HARD-BREAK fixes** in `test_budget_integrity_committed.py` (~L80)
+  and `test_audit_remediation_p0.py` (~L426): both raw-SQL `INSERT INTO
+  suppliers (...) VALUES (...)` blocks dropped `default_vat_rate` from
+  both the column list AND the VALUES tuple. Without these, every run
+  after Gate 1 would have failed at the column-name unknown error.
+- **`test_subcontractors.py` reworked** method-by-method: alembic head
+  assertion bumped to `0040_contact_book_rework`; supplier_type enum
+  assertion changed to the 4-value tuple; `cis_subtype` test paths
+  removed (one test was inverted — the rev-A schema can no longer
+  reject `cis_subtype` at all since the field doesn't exist); added a
+  test for the two new contact types (`Consultant`, `Other`) and
+  confirmed the `Subcontractor` filter value now 422s. Class renames
+  `TestSubcontractor*` → `TestContractor*`.
+- **`test_suppliers.py`** — dropped `default_vat_rate` from the create
+  payload; added assertions on the new serialised shape (`vat_registered`,
+  `trade`, `trade_id` keys present; `cis_subtype`, `default_vat_rate`
+  keys absent).
+- **`test_trades.py` (new)** — CRUD, whitespace normalisation, case-
+  insensitive idempotent re-create, archive/unarchive lifecycle, list
+  filtering (q + include_archived), permission gating (read_only +
+  site_manager view-only; PM can create), and the §R3.1 NOTE invariant
+  (archiving a trade leaves `suppliers.trade_id` intact).
+- **`test_supplier_contact_book.py` (new)** — serialised shape,
+  `vat_registered` independence from `vat_number`, and the full
+  `_resolve_trade` priority matrix (`trade_id` wins over `trade` name,
+  explicit `null` clears, absent key is the `_UNSET` no-op, swap to a
+  new `trade_id`, bad `trade_id` → 422, name-grow creates the trade).
+- **`test_migration_0040_contact_book.py` (new)** — DB-only VERIFY
+  re-deriving the §R1 acceptance queries from Gate 1 (alembic head,
+  4-value enum, no lingering temp types, default = Supplier, dropped
+  columns absent, new columns present with correct nullability/default,
+  CHECK constraint gone, trades table + indexes, permission_resource
+  enum, `trade_id` FK is `ON DELETE SET NULL`).
+- **Hygiene cleanup** — `test_po_approvals_api.py`,
+  `test_purchase_orders_api.py`, `test_po_receipts_api.py`: removed
+  the now-ignored `default_vat_rate` from the supplier-create payload
+  fixtures.
+
+### §R6 — Seed script
+
+- **`scripts/seed_contact_book.py` (new)** — idempotent. Seeds a starter
+  trade vocabulary (8 trades: Groundworks, Bricklaying, Carpentry,
+  Electrical, Plumbing, Plastering, Roofing, Painting & Decorating) and
+  4 sample contacts (one of each `supplier_type`). Trade upsert via
+  `services.trades.get_or_create_trade` (case-insensitive uniqueness
+  per tenant). Suppliers upsert by `(tenant_id, LOWER(name))` —
+  re-runs repair `trade_id` and `supplier_type` but leave other fields
+  untouched.
+
+### Permission count
+
+`bootstrap.verify.perms` expected=131 actual=131. New rows:
+`trades.view` (super_admin / director / finance / PM / site_manager /
+read_only) and `trades.create` (super_admin / director / finance / PM).
+
+### Out-of-scope (deferred / separate prompts)
+
+- rev-B (SharePoint file storage) — separate prompt.
+- 2.7-FE-revision (frontend wiring against this backend) — separate
+  prompt. The 2.7-FE pages still reference `cis_subtype` and
+  `default_vat_rate` — they will 200 on read (the keys come back as
+  absent) but submit silently-ignored payloads. That's the next chat.
+- `docs/SY_Hub_Phase2_Backlog.md` — left untouched per the opener
+  (operator-owned).
+
 ## Chat 40 — Build Pack 2.7-FE Suppliers / Subcontractors / CIS / Documents (Frontend) (2026-02)
 
 Frontend-only delivery against the frozen 2.7 backend. Two halves shipped

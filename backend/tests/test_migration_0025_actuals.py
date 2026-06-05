@@ -130,11 +130,12 @@ class TestMigration0025Schema:
         # 0026 landed in Chat 20. Updated again by Chat 23 R1.3 when
         # 0027 landed, by Chat 23 R1.4 when 0028 landed, by
         # Chat 24 R1/R2/R3/R4 (Prompt 2.5) when 0029/0030/0031/0032/0033 landed,
-        # and by Chat 34 (Prompt 2.8a) when 0037 landed.
+        # by Chat 34 (Prompt 2.8a) when 0037 landed, and by Chat 41
+        # (Prompt 2.7-BE-rev-A) when 0040 landed.
         # Function name retained — renaming is out of scope (see
         # chat-22 §2 + Future_Tasks polish entry).
-        assert head == "0039_committed_single_writer", \
-            f"expected 0039_committed_single_writer, got {head!r}"
+        assert head == "0040_contact_book_rework", \
+            f"expected 0040_contact_book_rework, got {head!r}"
 
     def test_actuals_has_51_columns(self, engine):
         with engine.connect() as c:

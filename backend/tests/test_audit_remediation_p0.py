@@ -423,9 +423,9 @@ class TestP0_2_ReceiptAuditActor:
 
                 conn.execute(sa.text("""
                     INSERT INTO suppliers
-                      (id, tenant_id, name, default_vat_rate, is_archived,
+                      (id, tenant_id, name, is_archived,
                        created_by, updated_by)
-                    VALUES (:id, :tid, :name, 20.0, false, :uid, :uid)
+                    VALUES (:id, :tid, :name, false, :uid, :uid)
                 """), {
                     "id": str(cleanup_ids["supplier_id"]),
                     "tid": str(tenant_id_for_po),
