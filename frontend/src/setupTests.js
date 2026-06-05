@@ -37,3 +37,12 @@ if (typeof window !== 'undefined' && !window.ResizeObserver) {
     disconnect() {}
   };
 }
+
+// Element.prototype.scrollIntoView shim — cmdk (used by the shadcn
+// command/combobox primitive in <TradePicker/>) calls this on selection
+// changes, but jsdom doesn't implement it.
+if (typeof window !== 'undefined'
+    && typeof window.Element !== 'undefined'
+    && !window.Element.prototype.scrollIntoView) {
+  window.Element.prototype.scrollIntoView = function scrollIntoView() {};
+}

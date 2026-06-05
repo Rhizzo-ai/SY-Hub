@@ -22,6 +22,11 @@ export function canEditSupplier(me)   { return hasPerm(me, 'suppliers.edit'); }
 export function canArchiveSupplier(me){ return hasPerm(me, 'suppliers.archive'); }
 
 
+// ─── Trades (Chat 41 §R7.2 — Build Pack 2.7-FE-revision) ─────────────
+export function canViewTrades(me)   { return hasPerm(me, 'trades.view'); }
+export function canCreateTrades(me) { return hasPerm(me, 'trades.create'); }
+
+
 // ─── CIS (Chat 40 §R3 #3) ────────────────────────────────────────────
 export function canViewCIS(me)          { return hasPerm(me, 'cis.view'); }
 export function canViewSensitiveCIS(me) { return hasPerm(me, 'cis.view_sensitive'); }

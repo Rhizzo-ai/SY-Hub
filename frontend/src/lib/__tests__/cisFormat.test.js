@@ -2,7 +2,7 @@
  * cisFormat — label maps + date helpers (Chat 40 §R5 #8).
  */
 import {
-  labelCisStatus, labelCisSubtype, labelCurrentCisStatus, labelDocType,
+  labelCisStatus, labelCurrentCisStatus, labelDocType,
   formatDate, CIS_STATUS_LABEL, MATCH_STATUS_LABEL, DOC_TYPE_OPTIONS,
 } from '@/lib/cisFormat';
 
@@ -23,18 +23,6 @@ describe('cisFormat — label maps', () => {
 
   test('labelCisStatus passes unknown values through verbatim (no crash)', () => {
     expect(labelCisStatus('mystery')).toBe('mystery');
-  });
-
-  test.each([
-    ['Labour_Only', 'Labour only'],
-    ['Labour_And_Plant', 'Labour and plant'],
-    ['Supply_And_Fix', 'Supply and fix'],
-  ])('labelCisSubtype(%s) → %s', (input, expected) => {
-    expect(labelCisSubtype(input)).toBe(expected);
-  });
-
-  test('labelCisSubtype(null) → "—"', () => {
-    expect(labelCisSubtype(null)).toBe('—');
   });
 
   test('labelCurrentCisStatus collapses null → Unverified', () => {

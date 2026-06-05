@@ -1,13 +1,16 @@
 /**
- * SupplierList tests — Chat 40 §R5 #1.
+ * SupplierList tests — Chat 40 §R5 #1 + Chat 41 §R8 (Build Pack
+ *   2.7-FE-revision).
  *
  * Covers:
  *  - Rows render
- *  - Type filter sends `supplier_type`
- *  - Archived toggle sends `include_archived`
- *  - Search sends `q`
- *  - CIS badge only on subcontractor rows
- *  - Unverified cue + header summary for null/Unverified/Unmatched
+ *  - 4-way type filter (Contractor / Supplier / Consultant / Other)
+ *  - `?type=Contractor` seed; stale `?type=Subcontractor` → 'All'
+ *  - Default-VAT column is gone
+ *  - Trade column shown by default
+ *  - Column-picker toggles a column on / off (header presence)
+ *  - Empty-row colSpan matches CORE + visible-optional count
+ *  - CIS badge + unverified cue gate on Contractor (was Subcontractor)
  *  - Forbidden state without `suppliers.view`
  */
 let mockCurrentSearch = '';
@@ -65,12 +68,11 @@ beforeEach(() => {
   mockCurrentSearch = '';
 });
 
-// Reads the params from the most recent useSuppliers call.
 function lastParams() {
   return useSuppliers.mock.calls.at(-1)[0].params;
 }
 
-describe('SupplierList', () => {
+describe('SupplierList — base behaviour', () => {
   test('forbidden without suppliers.view', () => {
     setMe([]);
     setData([]);
@@ -81,27 +83,11 @@ describe('SupplierList', () => {
   test('renders rows + New btn when permitted', () => {
     setData([
       { id: 'S1', name: 'ACME', supplier_type: 'Supplier', cis_status: 'gross',
-        current_cis_status: null, is_archived: false, default_vat_rate: '20.0' },
+        current_cis_status: null, is_archived: false, trade: 'Groundworks' },
     ]);
     renderAt();
     expect(screen.getByTestId('supplier-row-S1')).toBeInTheDocument();
     expect(screen.getByTestId('supplier-list-new-btn')).toBeInTheDocument();
-  });
-
-  test('type filter sends supplier_type param', () => {
-    setData([]);
-    renderAt();
-    fireEvent.change(screen.getByTestId('supplier-list-type-filter'), {
-      target: { value: 'Subcontractor' },
-    });
-    expect(lastParams().supplier_type).toBe('Subcontractor');
-  });
-
-  test('type=All omits supplier_type', () => {
-    setData([]);
-    renderAt();
-    // Initial render with no ?type= → default 'All' → supplier_type undefined.
-    expect(useSuppliers.mock.calls[0][0].params.supplier_type).toBeUndefined();
   });
 
   test('archived toggle sends include_archived', () => {
@@ -120,51 +106,6 @@ describe('SupplierList', () => {
     expect(lastParams().q).toBe('acme');
   });
 
-  test('CIS badge shown for subcontractor rows only', () => {
-    setData([
-      { id: 'S1', name: 'Acme', supplier_type: 'Supplier',
-        current_cis_status: null, is_archived: false },
-      { id: 'S2', name: 'Subby', supplier_type: 'Subcontractor',
-        current_cis_status: 'Gross', is_archived: false },
-    ]);
-    renderAt();
-    expect(screen.queryByTestId('supplier-row-cis-S1')).toBeNull();
-    expect(screen.getByTestId('supplier-row-cis-S2')).toBeInTheDocument();
-  });
-
-  test('unverified cue + header summary for Subcontractor with null/Unverified/Unmatched', () => {
-    setData([
-      { id: 'S1', name: 'A', supplier_type: 'Subcontractor', current_cis_status: null, is_archived: false },
-      { id: 'S2', name: 'B', supplier_type: 'Subcontractor', current_cis_status: 'Unverified', is_archived: false },
-      { id: 'S3', name: 'C', supplier_type: 'Subcontractor', current_cis_status: 'Unmatched', is_archived: false },
-      { id: 'S4', name: 'D', supplier_type: 'Subcontractor', current_cis_status: 'Gross', is_archived: false },
-    ]);
-    renderAt('?type=Subcontractor');
-    expect(screen.getByTestId('supplier-row-unverified-S1')).toBeInTheDocument();
-    expect(screen.getByTestId('supplier-row-unverified-S2')).toBeInTheDocument();
-    expect(screen.getByTestId('supplier-row-unverified-S3')).toBeInTheDocument();
-    expect(screen.queryByTestId('supplier-row-unverified-S4')).toBeNull();
-    expect(screen.getByTestId('supplier-list-unverified-summary'))
-      .toHaveTextContent('3 subcontractors need CIS verification');
-  });
-
-  test('no unverified cue when Type filter is not Subcontractor', () => {
-    setData([
-      { id: 'S1', name: 'A', supplier_type: 'Subcontractor', current_cis_status: null, is_archived: false },
-    ]);
-    renderAt(); // defaults to All
-    expect(screen.queryByTestId('supplier-list-unverified-summary')).toBeNull();
-    expect(screen.queryByTestId('supplier-row-unverified-S1')).toBeNull();
-  });
-
-  test('seeds Type filter from ?type=Subcontractor query string', () => {
-    setData([]);
-    renderAt('?type=Subcontractor');
-    expect(useSuppliers.mock.calls[0][0].params.supplier_type).toBe('Subcontractor');
-    const sel = screen.getByTestId('supplier-list-type-filter');
-    expect(sel.value).toBe('Subcontractor');
-  });
-
   test('archived rows show "Archived" chip', () => {
     setData([
       { id: 'S1', name: 'A', supplier_type: 'Supplier', is_archived: true },
@@ -177,5 +118,158 @@ describe('SupplierList', () => {
     setData([]);
     renderAt();
     expect(screen.getByTestId('supplier-list-empty')).toBeInTheDocument();
+  });
+});
+
+describe('SupplierList — 4-way type filter (Chat 41 §R5.1/§R5.2)', () => {
+  test('Type select exposes the 4 contact-book values + All', () => {
+    setData([]);
+    renderAt();
+    const sel = screen.getByTestId('supplier-list-type-filter');
+    const values = Array.from(sel.querySelectorAll('option')).map((o) => o.value);
+    expect(values).toEqual(['All', 'Contractor', 'Supplier', 'Consultant', 'Other']);
+  });
+
+  test('Subcontractor is not an option', () => {
+    setData([]);
+    renderAt();
+    const sel = screen.getByTestId('supplier-list-type-filter');
+    const values = Array.from(sel.querySelectorAll('option')).map((o) => o.value);
+    expect(values).not.toContain('Subcontractor');
+  });
+
+  test('type=All omits supplier_type', () => {
+    setData([]);
+    renderAt();
+    expect(useSuppliers.mock.calls[0][0].params.supplier_type).toBeUndefined();
+  });
+
+  test('Contractor filter sends supplier_type=Contractor', () => {
+    setData([]);
+    renderAt();
+    fireEvent.change(screen.getByTestId('supplier-list-type-filter'), {
+      target: { value: 'Contractor' },
+    });
+    expect(lastParams().supplier_type).toBe('Contractor');
+  });
+
+  test('?type=Contractor seeds the filter', () => {
+    setData([]);
+    renderAt('?type=Contractor');
+    expect(useSuppliers.mock.calls[0][0].params.supplier_type).toBe('Contractor');
+    expect(screen.getByTestId('supplier-list-type-filter').value).toBe('Contractor');
+  });
+
+  test('stale ?type=Subcontractor bookmark falls back to All', () => {
+    setData([]);
+    renderAt('?type=Subcontractor');
+    expect(useSuppliers.mock.calls[0][0].params.supplier_type).toBeUndefined();
+    expect(screen.getByTestId('supplier-list-type-filter').value).toBe('All');
+  });
+
+  test('heading uses the selected TYPE_OPTIONS label', () => {
+    setData([]);
+    renderAt('?type=Contractor');
+    expect(screen.getByTestId('supplier-list')).toHaveTextContent('Contractors');
+  });
+});
+
+describe('SupplierList — CIS gating on Contractor (Chat 41 §R5.3)', () => {
+  test('CIS badge shown for Contractor rows only (visible cis column)', () => {
+    setData([
+      { id: 'S1', name: 'Acme', supplier_type: 'Supplier',
+        current_cis_status: null, is_archived: false },
+      { id: 'S2', name: 'Subby', supplier_type: 'Contractor',
+        current_cis_status: 'Gross', is_archived: false },
+    ]);
+    renderAt();
+    expect(screen.queryByTestId('supplier-row-cis-S1')).toBeNull();
+    expect(screen.getByTestId('supplier-row-cis-S2')).toBeInTheDocument();
+  });
+
+  test('unverified cue + summary fires on Contractor view for null / Unverified / Unmatched', () => {
+    setData([
+      { id: 'S1', name: 'A', supplier_type: 'Contractor', current_cis_status: null, is_archived: false },
+      { id: 'S2', name: 'B', supplier_type: 'Contractor', current_cis_status: 'Unverified', is_archived: false },
+      { id: 'S3', name: 'C', supplier_type: 'Contractor', current_cis_status: 'Unmatched', is_archived: false },
+      { id: 'S4', name: 'D', supplier_type: 'Contractor', current_cis_status: 'Gross', is_archived: false },
+    ]);
+    renderAt('?type=Contractor');
+    expect(screen.getByTestId('supplier-row-unverified-S1')).toBeInTheDocument();
+    expect(screen.getByTestId('supplier-row-unverified-S2')).toBeInTheDocument();
+    expect(screen.getByTestId('supplier-row-unverified-S3')).toBeInTheDocument();
+    expect(screen.queryByTestId('supplier-row-unverified-S4')).toBeNull();
+    expect(screen.getByTestId('supplier-list-unverified-summary'))
+      .toHaveTextContent('3 contractors need CIS verification');
+  });
+
+  test('no unverified cue on the All / mixed view', () => {
+    setData([
+      { id: 'S1', name: 'A', supplier_type: 'Contractor', current_cis_status: null, is_archived: false },
+    ]);
+    renderAt();
+    expect(screen.queryByTestId('supplier-list-unverified-summary')).toBeNull();
+    expect(screen.queryByTestId('supplier-row-unverified-S1')).toBeNull();
+  });
+});
+
+describe('SupplierList — columns + column-picker (Chat 41 §R5.4 / §R6)', () => {
+  test('default-VAT column is gone (rev-A dropped the field)', () => {
+    setData([{ id: 'S1', name: 'A', supplier_type: 'Supplier', is_archived: false }]);
+    renderAt();
+    // No header with the old label, no per-row cell, no col-testid.
+    expect(screen.queryByTestId('supplier-list-col-vat-rate')).toBeNull();
+    expect(screen.queryByText(/Default VAT/i)).toBeNull();
+  });
+
+  test('Trade column shows by default (default-on)', () => {
+    setData([
+      { id: 'S1', name: 'A', supplier_type: 'Supplier', trade: 'Groundworks', is_archived: false },
+    ]);
+    renderAt();
+    expect(screen.getByTestId('supplier-list-col-trade')).toBeInTheDocument();
+    expect(screen.getByTestId('supplier-row-trade-S1')).toHaveTextContent('Groundworks');
+  });
+
+  test('Trade column hides when toggled off', () => {
+    setData([{ id: 'S1', name: 'A', supplier_type: 'Supplier', is_archived: false }]);
+    renderAt();
+    fireEvent.click(screen.getByTestId('supplier-list-column-picker'));
+    fireEvent.click(screen.getByTestId('column-toggle-trade'));
+    expect(screen.queryByTestId('supplier-list-col-trade')).toBeNull();
+  });
+
+  test('Email column appears when toggled on (off by default)', () => {
+    setData([
+      { id: 'S1', name: 'A', supplier_type: 'Supplier',
+        contact_email: 'a@b.test', is_archived: false },
+    ]);
+    renderAt();
+    expect(screen.queryByTestId('supplier-list-col-email')).toBeNull();
+    fireEvent.click(screen.getByTestId('supplier-list-column-picker'));
+    fireEvent.click(screen.getByTestId('column-toggle-email'));
+    expect(screen.getByTestId('supplier-list-col-email')).toBeInTheDocument();
+    expect(screen.getByTestId('supplier-row-email-S1')).toHaveTextContent('a@b.test');
+  });
+
+  test('empty-state colSpan matches CORE + visible-optional column count', () => {
+    setData([]);
+    renderAt();
+    // Defaults: 3 core + 2 optional-on (trade, cis) = 5.
+    const cell = screen.getByTestId('supplier-list-empty');
+    expect(cell.getAttribute('colspan')).toBe('5');
+
+    // Toggle Email on → 6.
+    fireEvent.click(screen.getByTestId('supplier-list-column-picker'));
+    fireEvent.click(screen.getByTestId('column-toggle-email'));
+    expect(screen.getByTestId('supplier-list-empty').getAttribute('colspan')).toBe('6');
+  });
+
+  test('core columns Name / Type / Status always render', () => {
+    setData([{ id: 'S1', name: 'A', supplier_type: 'Supplier', is_archived: false }]);
+    renderAt();
+    expect(screen.getByTestId('supplier-list-col-name')).toBeInTheDocument();
+    expect(screen.getByTestId('supplier-list-col-type')).toBeInTheDocument();
+    expect(screen.getByTestId('supplier-list-col-status')).toBeInTheDocument();
   });
 });

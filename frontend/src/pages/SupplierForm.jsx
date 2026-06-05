@@ -1,18 +1,27 @@
 /**
- * SupplierForm — Chat 24 §R5 · Chat 40 §R2 D1/D2 + §R4.2 ADD half.
+ * SupplierForm — Chat 24 §R5 · Chat 40 §R2 + §R4.2 · Chat 41 §R3
+ *   (Build Pack 2.7-FE-revision).
  *
- * Handles both create (`/suppliers/new`) and edit
- * (`/suppliers/:id/edit`). Banking + VAT + UTR sit behind
- * `suppliers.view_sensitive`.
+ * Single contact book. Type is a 4-way label
+ * (Contractor / Supplier / Consultant / Other), default `Supplier`.
+ * The CIS / contractor sub-block (cis_registered + UTR) only renders
+ * for `Contractor`. CIS deduction status (cis_status) renders for ALL
+ * types — backend accepts it on any row and the field is harmless on
+ * non-contractors.
  *
- * §R4.2 — Type selector at top (Supplier / Subcontractor, default
- *   Supplier). Subcontractor-only block (cis_subtype, cis_registered,
- *   utr) renders only when type=Subcontractor. On submit, if type is
- *   not Subcontractor, those keys are omitted. On Subcontractor→Supplier
- *   edit transitions, explicitly send `cis_subtype: null` so the
- *   backend clears the stored value (backend rejects cis_subtype on
- *   non-subcontractor records; null is the cleanup signal).
+ * Drops vs. prior shipped form (rev-A backend dropped both fields):
+ *   - CIS sub-type (form field + label map usage)
+ *   - default VAT (form field + payload)
  *
+ * Adds (backend accepted these all along; the old form never exposed
+ * them):
+ *   - `vat_registered` boolean (independent of vat_number; no inference)
+ *   - `trade` via <TradePicker/> (name-driven; backend `_resolve_trade`
+ *     get-or-creates idempotently)
+ *   - `trading_name`, `contact_name`
+ *   - Address block: address_line1/2, city, postcode, country
+ *
+ * UTR (10 digits) and bank fields stay in the sensitive block.
  * `current_cis_status` is NEVER in the form — read-only, CIS-owned.
  */
 import React, { useEffect, useState } from 'react';
@@ -25,6 +34,7 @@ import {
 import {
   canCreateSupplier, canEditSupplier, canViewSensitiveSupplier,
 } from '@/lib/poCapability';
+import TradePicker from '@/components/suppliers/TradePicker';
 
 const CIS_STATUS_OPTIONS = ['', 'gross', 'net_20', 'net_30', 'not_registered'];
 const CIS_STATUS_LABEL = {
@@ -35,15 +45,7 @@ const CIS_STATUS_LABEL = {
   not_registered: 'Not registered',
 };
 
-const SUPPLIER_TYPES = ['Supplier', 'Subcontractor'];
-
-const CIS_SUBTYPE_OPTIONS = ['', 'Labour_Only', 'Labour_And_Plant', 'Supply_And_Fix'];
-const CIS_SUBTYPE_LABEL = {
-  '': '—',
-  Labour_Only: 'Labour only',
-  Labour_And_Plant: 'Labour and plant',
-  Supply_And_Fix: 'Supply and fix',
-};
+const SUPPLIER_TYPES = ['Contractor', 'Supplier', 'Consultant', 'Other'];
 
 // UTR: HMRC self-assessment Unique Taxpayer Reference is exactly 10
 // digits. Client-side: trim, allow empty, otherwise enforce.
@@ -52,10 +54,11 @@ const UTR_RE = /^\d{10}$/;
 function emptyForm() {
   return {
     name: '',
+    supplier_type: 'Supplier',
     cis_status: '',
-    default_vat_rate: 20.0,
     payment_terms_days: 30,
     vat_number: '',
+    vat_registered: false,
     company_number: '',
     bank_name: '',
     bank_account_no: '',
@@ -63,10 +66,16 @@ function emptyForm() {
     contact_email: '',
     contact_phone: '',
     notes: '',
-    supplier_type: 'Supplier',
-    cis_subtype: '',
     cis_registered: false,
     utr: '',
+    trade: '',
+    trading_name: '',
+    contact_name: '',
+    address_line1: '',
+    address_line2: '',
+    city: '',
+    postcode: '',
+    country: '',
   };
 }
 
@@ -83,9 +92,6 @@ export default function SupplierForm() {
   const patch = usePatchSupplier(id);
   const [form, setForm] = useState(emptyForm());
   const [error, setError] = useState(null);
-  // Track the original type so we can detect Subcontractor→Supplier
-  // transitions on edit and explicitly nullify cis_subtype.
-  const [originalType, setOriginalType] = useState('Supplier');
 
   useEffect(() => {
     if (existing) {
@@ -95,12 +101,20 @@ export default function SupplierForm() {
           overlay[k] = '';
         }
       });
-      // cis_registered is a bool; backend may serialize null on legacy rows.
+      // cis_registered + vat_registered are booleans; backend may
+      // serialize null on legacy rows. Coerce to false.
       if (overlay.cis_registered === null || overlay.cis_registered === undefined) {
         overlay.cis_registered = false;
       }
+      if (overlay.vat_registered === null || overlay.vat_registered === undefined) {
+        overlay.vat_registered = false;
+      }
+      // The picker is name-driven; seed from the serialised `trade`
+      // string (not trade_id).
+      if (overlay.trade === null || overlay.trade === undefined) {
+        overlay.trade = '';
+      }
       setForm({ ...emptyForm(), ...overlay });
-      setOriginalType(existing.supplier_type ?? 'Supplier');
     }
   }, [existing]);
 
@@ -113,11 +127,11 @@ export default function SupplierForm() {
   const onChange = (k) => (e) => setForm({ ...form, [k]: e.target.value });
   const onCheckChange = (k) => (e) => setForm({ ...form, [k]: e.target.checked });
 
-  const isSub = form.supplier_type === 'Subcontractor';
+  const isContractor = form.supplier_type === 'Contractor';
 
-  // UTR validation — only enforced when shown (subcontractor block).
+  // UTR validation — only enforced when shown (Contractor block).
   const utrError = (() => {
-    if (!isSub) return null;
+    if (!isContractor) return null;
     const utr = (form.utr ?? '').trim();
     if (utr === '') return null;
     if (!UTR_RE.test(utr)) return 'UTR must be exactly 10 digits.';
@@ -133,31 +147,41 @@ export default function SupplierForm() {
     }
     const payload = {
       name: form.name?.trim(),
-      cis_status: form.cis_status === '' ? null : form.cis_status,
-      default_vat_rate: Number(form.default_vat_rate),
+      supplier_type: form.supplier_type,
       payment_terms_days: Number(form.payment_terms_days) || 0,
       contact_email: form.contact_email || null,
       contact_phone: form.contact_phone || null,
       notes: form.notes || null,
-      supplier_type: form.supplier_type,
+      vat_registered: !!form.vat_registered,
+      // §R3.5 — send `trade` (name). Backend `_resolve_trade`
+      // get-or-creates idempotently. Sending the name keeps the
+      // form's submit self-contained even if the picker's create
+      // call and the form submit race.
+      trade: form.trade?.trim() || null,
+      trading_name: form.trading_name || null,
+      contact_name: form.contact_name || null,
+      address_line1: form.address_line1 || null,
+      address_line2: form.address_line2 || null,
+      city: form.city || null,
+      postcode: form.postcode || null,
+      country: form.country || null,
     };
 
-    if (isSub) {
-      payload.cis_subtype = form.cis_subtype === '' ? null : form.cis_subtype;
+    if (isContractor) {
       payload.cis_registered = !!form.cis_registered;
+      // Operator eyeball (post-Gate-1): cis_status is CIS-only and
+      // must not persist on non-Contractor types. Send it only when
+      // the row is a Contractor; on edit-Contractor→Supplier the
+      // backend rev-A nullifies cis_status server-side.
+      payload.cis_status = form.cis_status === '' ? null : form.cis_status;
       if (canSensitive) {
         payload.utr = form.utr?.trim() || null;
       }
-    } else {
-      // §R4.2 — On Subcontractor→Supplier transition, explicitly send
-      // cis_subtype: null so the backend clears the prior value.
-      if (isEdit && originalType === 'Subcontractor') {
-        payload.cis_subtype = null;
-      }
-      // Otherwise omit cis_subtype / cis_registered / utr entirely so
-      // the backend (which rejects cis_subtype on non-subcontractors)
-      // is happy.
     }
+    // Non-Contractor types omit cis_registered / utr — backend
+    // accepts them anywhere but they're meaningless off-Contractor
+    // and there's no cleanup signal to send (the sub-type column,
+    // prior null-flip target, no longer exists server-side).
 
     if (canSensitive) {
       payload.vat_number = form.vat_number || null;
@@ -179,10 +203,10 @@ export default function SupplierForm() {
   return (
     <form
       onSubmit={onSubmit}
-      className="p-6 max-w-xl space-y-3"
+      className="p-6 max-w-2xl space-y-3"
       data-testid="supplier-form"
     >
-      <h1 className="text-xl font-semibold">{isEdit ? 'Edit supplier' : 'New supplier'}</h1>
+      <h1 className="text-xl font-semibold">{isEdit ? 'Edit contact' : 'New contact'}</h1>
 
       <label className="block text-sm">
         <span className="text-xs text-sy-grey-700">Type *</span>
@@ -205,48 +229,63 @@ export default function SupplierForm() {
         />
       </label>
 
+      <div className="grid grid-cols-2 gap-2">
+        <label className="block text-sm">
+          <span className="text-xs text-sy-grey-700">Trading name</span>
+          <input
+            type="text"
+            className="w-full px-2 py-1 border rounded text-sm"
+            value={form.trading_name ?? ''} onChange={onChange('trading_name')}
+            data-testid="supplier-form-trading-name"
+          />
+        </label>
+        <label className="block text-sm">
+          <span className="text-xs text-sy-grey-700">Contact name</span>
+          <input
+            type="text"
+            className="w-full px-2 py-1 border rounded text-sm"
+            value={form.contact_name ?? ''} onChange={onChange('contact_name')}
+            data-testid="supplier-form-contact-name"
+          />
+        </label>
+      </div>
+
       <label className="block text-sm">
-        <span className="text-xs text-sy-grey-700">CIS status</span>
-        <select
-          className="w-full px-2 py-1 border rounded text-sm"
-          value={form.cis_status ?? ''} onChange={onChange('cis_status')}
-          data-testid="supplier-form-cis"
-        >
-          {CIS_STATUS_OPTIONS.map((c) => (
-            <option key={c || 'blank'} value={c}>{CIS_STATUS_LABEL[c]}</option>
-          ))}
-        </select>
+        <span className="text-xs text-sy-grey-700">Trade</span>
+        <TradePicker
+          value={form.trade}
+          onChange={(name) => setForm({ ...form, trade: name })}
+          testid="supplier-form-trade"
+        />
       </label>
 
-      {isSub && (
+      {isContractor && (
         <div
           className="space-y-2 p-2 border border-dashed rounded bg-slate-50"
-          data-testid="supplier-form-subcontractor-block"
+          data-testid="supplier-form-contractor-block"
         >
-          <div className="text-xs text-sy-grey-700">Subcontractor details</div>
-          <div className="grid grid-cols-2 gap-2">
-            <label className="block text-sm">
-              <span className="text-xs text-sy-grey-700">CIS sub-type</span>
-              <select
-                className="w-full px-2 py-1 border rounded text-sm"
-                value={form.cis_subtype ?? ''} onChange={onChange('cis_subtype')}
-                data-testid="supplier-form-cis-subtype"
-              >
-                {CIS_SUBTYPE_OPTIONS.map((c) => (
-                  <option key={c || 'blank'} value={c}>{CIS_SUBTYPE_LABEL[c]}</option>
-                ))}
-              </select>
-            </label>
-            <label className="text-sm flex items-center gap-2 pt-5">
-              <input
-                type="checkbox"
-                checked={!!form.cis_registered}
-                onChange={onCheckChange('cis_registered')}
-                data-testid="supplier-form-cis-registered"
-              />
-              <span>CIS registered</span>
-            </label>
-          </div>
+          <div className="text-xs text-sy-grey-700">CIS / contractor details</div>
+          <label className="block text-sm">
+            <span className="text-xs text-sy-grey-700">CIS status</span>
+            <select
+              className="w-full px-2 py-1 border rounded text-sm"
+              value={form.cis_status ?? ''} onChange={onChange('cis_status')}
+              data-testid="supplier-form-cis"
+            >
+              {CIS_STATUS_OPTIONS.map((c) => (
+                <option key={c || 'blank'} value={c}>{CIS_STATUS_LABEL[c]}</option>
+              ))}
+            </select>
+          </label>
+          <label className="text-sm flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={!!form.cis_registered}
+              onChange={onCheckChange('cis_registered')}
+              data-testid="supplier-form-cis-registered"
+            />
+            <span>CIS registered</span>
+          </label>
           {canSensitive && (
             <label className="block text-sm">
               <span className="text-xs text-sy-grey-700">UTR (10 digits)</span>
@@ -268,14 +307,14 @@ export default function SupplierForm() {
       )}
 
       <div className="grid grid-cols-2 gap-2">
-        <label className="block text-sm">
-          <span className="text-xs text-sy-grey-700">Default VAT %</span>
+        <label className="text-sm flex items-center gap-2 pt-5">
           <input
-            type="number" step="0.1" min="0" max="100"
-            className="w-full px-2 py-1 border rounded text-sm tabular-nums"
-            value={form.default_vat_rate} onChange={onChange('default_vat_rate')}
-            data-testid="supplier-form-vat-rate"
+            type="checkbox"
+            checked={!!form.vat_registered}
+            onChange={onCheckChange('vat_registered')}
+            data-testid="supplier-form-vat-registered"
           />
+          <span>VAT registered</span>
         </label>
         <label className="block text-sm">
           <span className="text-xs text-sy-grey-700">Payment terms (days)</span>
@@ -308,6 +347,60 @@ export default function SupplierForm() {
           />
         </label>
       </div>
+
+      <fieldset
+        className="space-y-2 p-2 border border-dashed rounded"
+        data-testid="supplier-form-address-block"
+      >
+        <legend className="text-xs text-sy-grey-700 px-1">Address</legend>
+        <label className="block text-sm">
+          <span className="text-xs text-sy-grey-700">Address line 1</span>
+          <input
+            type="text"
+            className="w-full px-2 py-1 border rounded text-sm"
+            value={form.address_line1 ?? ''} onChange={onChange('address_line1')}
+            data-testid="supplier-form-address-line1"
+          />
+        </label>
+        <label className="block text-sm">
+          <span className="text-xs text-sy-grey-700">Address line 2</span>
+          <input
+            type="text"
+            className="w-full px-2 py-1 border rounded text-sm"
+            value={form.address_line2 ?? ''} onChange={onChange('address_line2')}
+            data-testid="supplier-form-address-line2"
+          />
+        </label>
+        <div className="grid grid-cols-3 gap-2">
+          <label className="block text-sm">
+            <span className="text-xs text-sy-grey-700">City</span>
+            <input
+              type="text"
+              className="w-full px-2 py-1 border rounded text-sm"
+              value={form.city ?? ''} onChange={onChange('city')}
+              data-testid="supplier-form-city"
+            />
+          </label>
+          <label className="block text-sm">
+            <span className="text-xs text-sy-grey-700">Postcode</span>
+            <input
+              type="text"
+              className="w-full px-2 py-1 border rounded text-sm"
+              value={form.postcode ?? ''} onChange={onChange('postcode')}
+              data-testid="supplier-form-postcode"
+            />
+          </label>
+          <label className="block text-sm">
+            <span className="text-xs text-sy-grey-700">Country</span>
+            <input
+              type="text"
+              className="w-full px-2 py-1 border rounded text-sm"
+              value={form.country ?? ''} onChange={onChange('country')}
+              data-testid="supplier-form-country"
+            />
+          </label>
+        </div>
+      </fieldset>
 
       {canSensitive && (
         <div

@@ -1,17 +1,25 @@
 /**
- * SupplierList — Chat 24 §R5 · Chat 40 §R2 D3/D5 + §R4.1 ADD half.
+ * SupplierList — Chat 24 §R5 · Chat 40 §R2 · Chat 41 §R5
+ *   (Build Pack 2.7-FE-revision).
  *
  * Filters row:
- *   - Type (All / Supplier / Subcontractor) → `supplier_type` param
- *     (omit on All). Seeded from `?type=` query string so the nav
- *     "Subcontractors" link lands pre-filtered.
- *   - Show-archived toggle → `include_archived`
- *   - Free-text search    → `q`
+ *   - Type: 4-way (All / Contractor / Supplier / Consultant / Other)
+ *     → `supplier_type` param (omit on All). Seeded from `?type=`. A
+ *     stale `?type=Subcontractor` falls back to 'All' (the existing
+ *     guard rejects unknown values).
+ *   - Show-archived toggle  → `include_archived`
+ *   - Free-text search      → `q`
+ *   - <ColumnPicker/>       → session-only optional-column visibility
  *
- * CIS column shows CISStatusBadge on subcontractor rows; suppliers
- * read "—". §R6 unverified cue: amber dot + tooltip on
- * subcontractor rows whose `current_cis_status` is null/Unverified/
- * Unmatched, plus a header summary line counting them.
+ * Columns:
+ *   - CORE (locked, always shown): Name, Type, Status
+ *   - OPTIONAL (toggleable): Trade (default-on), CIS (default-on),
+ *     VAT registered, Payment terms, Email, Phone
+ *
+ * CIS badge + the §R6 unverified cue (amber dot + summary banner)
+ * gate on `Contractor` rather than the prior `Subcontractor` literal.
+ *
+ * Per-user column persistence is backlog item B-COLS (operator-owned).
  */
 import React, { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
@@ -21,11 +29,24 @@ import { useSuppliers } from '@/hooks/purchaseOrders';
 import { useAuth } from '@/context/AuthContext';
 import { canCreateSupplier, canViewSuppliers } from '@/lib/poCapability';
 import CISStatusBadge from '@/components/suppliers/CISStatusBadge';
+import ColumnPicker from '@/components/suppliers/ColumnPicker';
 
 const TYPE_OPTIONS = [
   { value: 'All', label: 'All' },
+  { value: 'Contractor', label: 'Contractors' },
   { value: 'Supplier', label: 'Suppliers' },
-  { value: 'Subcontractor', label: 'Subcontractors' },
+  { value: 'Consultant', label: 'Consultants' },
+  { value: 'Other', label: 'Other' },
+];
+
+const CORE_COLS = ['name', 'type', 'status'];
+const OPTIONAL_COLS = [
+  { key: 'trade',          label: 'Trade',          default: true  },
+  { key: 'cis',            label: 'CIS',            default: true  },
+  { key: 'vat_registered', label: 'VAT reg.',       default: false },
+  { key: 'payment_terms',  label: 'Payment terms',  default: false },
+  { key: 'email',          label: 'Email',          default: false },
+  { key: 'phone',          label: 'Phone',          default: false },
 ];
 
 const UNVERIFIED_STATES = new Set([null, undefined, 'Unverified', 'Unmatched']);
@@ -34,8 +55,8 @@ export default function SupplierList() {
   const { me } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
 
-  // §R4.1 — Seed Type filter from `?type=Subcontractor` so the nav
-  // link lands pre-filtered. Default 'All'.
+  // Seed Type filter from `?type=`. Unknown / dropped values (e.g. a
+  // stale "?type=Subcontractor" bookmark) fall back to 'All'.
   const initialType = (() => {
     const t = searchParams.get('type');
     return TYPE_OPTIONS.some((o) => o.value === t) ? t : 'All';
@@ -43,6 +64,17 @@ export default function SupplierList() {
   const [typeFilter, setTypeFilter] = useState(initialType);
   const [includeArchived, setIncludeArchived] = useState(false);
   const [search, setSearch] = useState('');
+
+  // §R5.4 — Session-only optional-column visibility. Per-user
+  // persistence is backlog B-COLS.
+  const [visible, setVisible] = useState(
+    () => new Set(OPTIONAL_COLS.filter((c) => c.default).map((c) => c.key)),
+  );
+  const toggleCol = (key) => setVisible((prev) => {
+    const next = new Set(prev);
+    if (next.has(key)) next.delete(key); else next.add(key);
+    return next;
+  });
 
   // Keep the URL in sync so the filter is shareable/bookmarkable.
   useEffect(() => {
@@ -52,7 +84,6 @@ export default function SupplierList() {
     } else {
       next.set('type', typeFilter);
     }
-    // Only update when actually different to avoid noisy history.
     if (next.toString() !== searchParams.toString()) {
       setSearchParams(next, { replace: true });
     }
@@ -69,11 +100,20 @@ export default function SupplierList() {
 
   const rows = useMemo(() => data?.items ?? [], [data]);
 
-  // §R6 unverified cue — only meaningful when Type=Subcontractor.
+  // Unverified cue — only meaningful on the Contractor view.
   const unverifiedCount = useMemo(() => {
-    if (typeFilter !== 'Subcontractor') return 0;
+    if (typeFilter !== 'Contractor') return 0;
     return rows.filter((s) => UNVERIFIED_STATES.has(s.current_cis_status)).length;
   }, [rows, typeFilter]);
+
+  // Heading label is driven by the selected type — "Contractors",
+  // "Consultants", "Other" when filtered, else "Suppliers" (the
+  // app-wide name for the contact book).
+  const headingLabel = (() => {
+    if (typeFilter === 'All') return 'Suppliers';
+    const opt = TYPE_OPTIONS.find((o) => o.value === typeFilter);
+    return opt?.label ?? 'Suppliers';
+  })();
 
   if (!canViewSuppliers(me)) {
     return (
@@ -86,11 +126,7 @@ export default function SupplierList() {
   return (
     <div className="p-6 space-y-4" data-testid="supplier-list">
       <header className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">
-          {typeFilter === 'Subcontractor' ? 'Subcontractors'
-            : typeFilter === 'Supplier' ? 'Suppliers'
-            : 'Suppliers'}
-        </h1>
+        <h1 className="text-xl font-semibold">{headingLabel}</h1>
         {canCreateSupplier(me) && (
           <Link
             to="/suppliers/new"
@@ -136,6 +172,13 @@ export default function SupplierList() {
             data-testid="supplier-list-search"
           />
         </label>
+        <div className="ml-auto">
+          <ColumnPicker
+            options={OPTIONAL_COLS}
+            visible={visible}
+            onToggle={toggleCol}
+          />
+        </div>
       </div>
 
       {unverifiedCount > 0 && (
@@ -145,7 +188,7 @@ export default function SupplierList() {
         >
           <AlertCircle size={14} />
           <span>
-            {unverifiedCount} subcontractor{unverifiedCount === 1 ? '' : 's'} need CIS verification
+            {unverifiedCount} contractor{unverifiedCount === 1 ? '' : 's'} need CIS verification
           </span>
         </div>
       )}
@@ -157,26 +200,46 @@ export default function SupplierList() {
         <table className="w-full text-sm border-collapse" data-testid="supplier-list-table">
           <thead>
             <tr className="text-left text-xs text-sy-grey-700 border-b">
-              <th className="py-2 pr-2">Name</th>
-              <th className="py-2 pr-2">Type</th>
-              <th className="py-2 pr-2">CIS</th>
-              <th className="py-2 pr-2">Status</th>
-              <th className="py-2 pr-2 w-32">Default VAT</th>
+              <th className="py-2 pr-2" data-testid="supplier-list-col-name">Name</th>
+              <th className="py-2 pr-2" data-testid="supplier-list-col-type">Type</th>
+              <th className="py-2 pr-2" data-testid="supplier-list-col-status">Status</th>
+              {visible.has('trade') && (
+                <th className="py-2 pr-2" data-testid="supplier-list-col-trade">Trade</th>
+              )}
+              {visible.has('cis') && (
+                <th className="py-2 pr-2" data-testid="supplier-list-col-cis">CIS</th>
+              )}
+              {visible.has('vat_registered') && (
+                <th className="py-2 pr-2" data-testid="supplier-list-col-vat_registered">VAT reg.</th>
+              )}
+              {visible.has('payment_terms') && (
+                <th className="py-2 pr-2 w-32" data-testid="supplier-list-col-payment_terms">Payment terms</th>
+              )}
+              {visible.has('email') && (
+                <th className="py-2 pr-2" data-testid="supplier-list-col-email">Email</th>
+              )}
+              {visible.has('phone') && (
+                <th className="py-2 pr-2" data-testid="supplier-list-col-phone">Phone</th>
+              )}
             </tr>
           </thead>
           <tbody>
             {rows.length === 0 && (
-              <tr><td colSpan={5} className="py-3 text-sy-grey-500" data-testid="supplier-list-empty">
+              <tr><td
+                colSpan={CORE_COLS.length + visible.size}
+                className="py-3 text-sy-grey-500"
+                data-testid="supplier-list-empty"
+              >
                 No suppliers match.
               </td></tr>
             )}
             {rows.map((s) => {
-              const isSub = s.supplier_type === 'Subcontractor';
-              // §R4.1 / §R6b — cue only when the user is looking at the
-              // subcontractor view (Type filter = Subcontractor). On the
-              // mixed list the cue would be noise.
-              const needsCis = typeFilter === 'Subcontractor'
-                && isSub
+              const isContractor = s.supplier_type === 'Contractor';
+              // Cue only when the user is looking at the Contractor
+              // view (Type filter = Contractor). On the mixed list the
+              // cue would be noise.
+              const needsCis = typeFilter === 'Contractor'
+                && isContractor
                 && UNVERIFIED_STATES.has(s.current_cis_status);
               return (
                 <tr key={s.id} className="border-b last:border-0" data-testid={`supplier-row-${s.id}`}>
@@ -196,18 +259,42 @@ export default function SupplierList() {
                   </td>
                   <td className="py-2 pr-2">{s.supplier_type ?? 'Supplier'}</td>
                   <td className="py-2 pr-2">
-                    {isSub
-                      ? <CISStatusBadge status={s.current_cis_status} testid={`supplier-row-cis-${s.id}`} />
-                      : <span>—</span>}
-                  </td>
-                  <td className="py-2 pr-2">
                     {s.is_archived
                       ? <span className="text-sy-grey-500" data-testid={`supplier-row-archived-${s.id}`}>Archived</span>
                       : <span>Active</span>}
                   </td>
-                  <td className="py-2 pr-2 tabular-nums">
-                    {s.default_vat_rate != null ? `${s.default_vat_rate}%` : '—'}
-                  </td>
+                  {visible.has('trade') && (
+                    <td className="py-2 pr-2" data-testid={`supplier-row-trade-${s.id}`}>
+                      {s.trade ?? '—'}
+                    </td>
+                  )}
+                  {visible.has('cis') && (
+                    <td className="py-2 pr-2">
+                      {isContractor
+                        ? <CISStatusBadge status={s.current_cis_status} testid={`supplier-row-cis-${s.id}`} />
+                        : <span>—</span>}
+                    </td>
+                  )}
+                  {visible.has('vat_registered') && (
+                    <td className="py-2 pr-2" data-testid={`supplier-row-vat-registered-${s.id}`}>
+                      {s.vat_registered ? 'Yes' : 'No'}
+                    </td>
+                  )}
+                  {visible.has('payment_terms') && (
+                    <td className="py-2 pr-2 tabular-nums" data-testid={`supplier-row-payment-terms-${s.id}`}>
+                      {s.payment_terms_days != null ? `${s.payment_terms_days} days` : '—'}
+                    </td>
+                  )}
+                  {visible.has('email') && (
+                    <td className="py-2 pr-2" data-testid={`supplier-row-email-${s.id}`}>
+                      {s.contact_email ?? '—'}
+                    </td>
+                  )}
+                  {visible.has('phone') && (
+                    <td className="py-2 pr-2" data-testid={`supplier-row-phone-${s.id}`}>
+                      {s.contact_phone ?? '—'}
+                    </td>
+                  )}
                 </tr>
               );
             })}

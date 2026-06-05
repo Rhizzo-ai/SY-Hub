@@ -2,7 +2,7 @@ import React from "react";
 import { NavLink, Link, useNavigate } from "react-router-dom";
 import {
     Building2, Users, Layers, Calculator, LineChart, Wallet,
-    CalendarDays, FileText, ShieldCheck, Landmark, Link2, LogOut, KeyRound, Laptop, User as UserIcon, ShieldAlert, ChevronDown, ScrollText, Settings, Percent, Receipt, Bot, Truck, HardHat,
+    CalendarDays, FileText, ShieldCheck, Landmark, Link2, LogOut, KeyRound, Laptop, User as UserIcon, ShieldAlert, ChevronDown, ScrollText, Settings, Percent, Receipt, Bot, Truck,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import NotificationBell from "@/components/NotificationBell";
@@ -24,12 +24,11 @@ const NAV = [
     { label: "Projects", to: "/projects", icon: Layers, enabled: true, testid: "nav-projects", requires: "projects.view" },
     { label: "Cost Codes", to: "/cost-codes", icon: Calculator, enabled: true, testid: "nav-cost-codes", requires: "cost_codes.view" },
     { label: "Payments", to: "/payments", icon: Receipt, enabled: true, testid: "nav-payments", requires: "actuals.view" },
-    // §R2 D7 — Suppliers + Subcontractors nav entries (URL-only access pre-2.7-FE).
-    // Subcontractors links to /suppliers?type=Subcontractor; SupplierList will
-    // honour the query param in the 2.7-FE ADD half (§R4.1 useSearchParams seed).
-    // Until then it lands on the unfiltered list — not a bug, just not yet wired.
+    // Chat 41 §R7.1 — single "Suppliers" entry; the separate
+    // "Subcontractors" link (?type=Subcontractor) was removed when the
+    // contact-book reshape collapsed the type into a 4-way label
+    // (Contractor/Supplier/Consultant/Other) chosen at edit time.
     { label: "Suppliers", to: "/suppliers", icon: Truck, enabled: true, testid: "nav-suppliers", requires: "suppliers.view" },
-    { label: "Subcontractors", to: "/suppliers?type=Subcontractor", icon: HardHat, enabled: true, testid: "nav-subcontractors", requires: "suppliers.view" },
     { label: "AI Capture", to: "/ai-capture", icon: Bot, enabled: true, testid: "nav-ai-capture", requires: "actuals.admin" },
     { label: "AI Capture Costs", to: "/ai-capture/cost", icon: LineChart, enabled: true, testid: "nav-ai-capture-cost", requires: "ai_capture.view_costs" },
     { label: "System Config", to: "/config", icon: Settings, enabled: true, testid: "nav-config", requires: "system_config.view" },

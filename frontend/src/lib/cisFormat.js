@@ -22,18 +22,6 @@ export function labelCisStatus(value) {
   return CIS_STATUS_LABEL[value] ?? value;
 }
 
-// Subcontractor sub-type enum → human label.
-export const CIS_SUBTYPE_LABEL = {
-  Labour_Only: 'Labour only',
-  Labour_And_Plant: 'Labour and plant',
-  Supply_And_Fix: 'Supply and fix',
-};
-
-export function labelCisSubtype(value) {
-  if (value === null || value === undefined || value === '') return '—';
-  return CIS_SUBTYPE_LABEL[value] ?? value;
-}
-
 // CIS verification match_status (3 real values; backend frozen at §R1).
 export const MATCH_STATUS_LABEL = {
   Gross: 'Gross',
