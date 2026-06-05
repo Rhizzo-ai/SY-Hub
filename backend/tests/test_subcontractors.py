@@ -112,8 +112,8 @@ class TestSchema:
             head = c.execute(text(
                 "SELECT version_num FROM alembic_version"
             )).scalar()
-        assert head == "0040_contact_book_rework", (
-            f"expected head 0040_contact_book_rework, got {head!r}"
+        assert head == "0041_drop_vat_registered", (
+            f"expected head 0041_drop_vat_registered, got {head!r}"
         )
 
     def test_supplier_type_enum_has_four_values(self, engine):
@@ -153,7 +153,8 @@ class TestSchema:
             )
 
     def test_new_columns_present(self, engine):
-        """Chat 41 §R1.2 — vat_registered + trade_id added.
+        """Chat 41 §R1.2 — trade_id added (vat_registered also added in
+        0040 but dropped again in 0041 — see test_migration_0041_drop_vat_registered).
 
         Existing rev-A columns (supplier_type, cis_registered, utr,
         current_cis_status) are still expected.
@@ -165,10 +166,14 @@ class TestSchema:
             )).all()}
         for required in (
             "supplier_type", "cis_registered", "utr", "current_cis_status",
-            # Chat 41 §R1.2 additions:
-            "vat_registered", "trade_id",
+            # Chat 41 §R1.2 addition that survives 0041:
+            "trade_id",
         ):
             assert required in cols, f"missing supplier column: {required!r}"
+        # Chat 41 §R-eyeball-Step2A — vat_registered dropped in 0041.
+        assert "vat_registered" not in cols, (
+            "vat_registered should be absent at head (dropped by 0041)"
+        )
 
 
 # ---------------------------------------------------------------------------

@@ -12,7 +12,8 @@
  *  - UTR validation (10 digits, Contractor only)
  *  - Non-Contractor → omits cis_registered / utr
  *  - Payload omits the dropped fields (default-VAT + sub-type)
- *  - vat_registered boolean submits (independent of vat_number)
+ *  - vat_registered no longer exists (dropped in 0041 per operator
+ *    Step 2A); previously had a checkbox here.
  *  - trade name + address/contact fields submit through
  */
 let mockCurrentParams = {};
@@ -337,25 +338,13 @@ describe('SupplierForm — Contractor sub-block (Chat 41 §R3.4)', () => {
 });
 
 describe('SupplierForm — new fields (Chat 41 §R3.5/§R3.6)', () => {
-  test('vat_registered submits as boolean (independent of vat_number)', async () => {
+  test('vat_registered checkbox is gone post-Step-2A and key is NOT in payload', async () => {
     renderCreate();
-    fireEvent.change(screen.getByTestId('supplier-form-name'), { target: { value: 'ACME' } });
-    fireEvent.click(screen.getByTestId('supplier-form-vat-registered'));
-    fireEvent.click(screen.getByTestId('supplier-form-save'));
-    await waitFor(() => expect(createMutateAsync).toHaveBeenCalled());
-    const body = createMutateAsync.mock.calls[0][0];
-    expect(body.vat_registered).toBe(true);
-    // vat_number is sensitive + unchanged → either null or its current
-    // value, but NEVER inferred from vat_registered.
-    expect(body.vat_number).toBeNull();
-  });
-
-  test('vat_registered defaults to false on a fresh create', async () => {
-    renderCreate();
+    expect(screen.queryByTestId('supplier-form-vat-registered')).toBeNull();
     fireEvent.change(screen.getByTestId('supplier-form-name'), { target: { value: 'ACME' } });
     fireEvent.click(screen.getByTestId('supplier-form-save'));
     await waitFor(() => expect(createMutateAsync).toHaveBeenCalled());
-    expect(createMutateAsync.mock.calls[0][0].vat_registered).toBe(false);
+    expect('vat_registered' in createMutateAsync.mock.calls[0][0]).toBe(false);
   });
 
   test('address + trading/contact name fields submit through', async () => {

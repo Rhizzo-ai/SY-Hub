@@ -4,12 +4,14 @@ Chat 24 §R1 (Prompt 2.5) — initial supplier directory.
 Chat 32 §R3 (Prompt 2.7) — subcontractor + CIS extension.
 Chat 41 §R3.2 (Prompt 2.7-BE-rev-A) — Contact-Book rework:
   - `cis_subtype` + `default_vat_rate` validators / writes removed.
-  - `vat_registered` accepted as a standalone boolean (no inference
-    from `vat_number`).
   - `trade_id` / `trade` resolved via `_resolve_trade` + `_UNSET` sentinel
     (grow-as-you-type via `services.trades.get_or_create_trade`).
   - CIS gates key off `Contractor` (was `Subcontractor`); see services/cis
     + services/subcontracts.
+Chat 41 §R-eyeball-Step2A (Prompt 2.7-FE-revision) — `vat_registered`
+  dropped entirely. "Has a VAT number" is the de-facto registered signal
+  and Xero owns VAT logic; no need for a standalone boolean. Removed
+  from model, audit cols, create/update paths and the serialised shape.
 
 Responsibility:
   - Validate uniqueness of supplier name (case-insensitive) within tenant.
@@ -47,7 +49,7 @@ _AUDIT_COLS: tuple[str, ...] = (
     "name", "trading_name",
     "contact_name", "contact_email", "contact_phone",
     "address_line1", "address_line2", "city", "postcode", "country",
-    "vat_number", "vat_registered", "company_number", "cis_status",
+    "vat_number", "company_number", "cis_status",
     "bank_name", "bank_account_no", "bank_sort_code",
     "payment_terms_days", "notes",
     "portal_enabled",
@@ -295,7 +297,6 @@ def create_supplier(
     utr = _validate_utr(payload.get("utr"))
     cis_registered_raw = payload.get("cis_registered", False)
     cis_registered = bool(cis_registered_raw) if cis_registered_raw is not None else False
-    vat_registered = bool(payload.get("vat_registered", False))
     # current_cis_status is service-maintained. NEW Contractor (CIS
     # subcontractor) rows default to 'Unverified'; other types stay NULL.
     current_cis_status = "Unverified" if stype == "Contractor" else None
@@ -319,7 +320,6 @@ def create_supplier(
         postcode=payload.get("postcode") or None,
         country=payload.get("country") or "United Kingdom",
         vat_number=payload.get("vat_number") or None,
-        vat_registered=vat_registered,
         company_number=payload.get("company_number") or None,
         cis_status=cis,
         bank_name=payload.get("bank_name") or None,
@@ -406,8 +406,6 @@ def update_supplier(
         row.supplier_type = _validate_supplier_type(payload["supplier_type"])
     if "cis_registered" in payload:
         row.cis_registered = bool(payload["cis_registered"])
-    if "vat_registered" in payload:
-        row.vat_registered = bool(payload["vat_registered"])
     if "utr" in payload:
         row.utr = _validate_utr(payload["utr"])
     # current_cis_status is NOT settable via update payload — it is
@@ -637,9 +635,9 @@ def serialise(
         "supplier_type": row.supplier_type,
         "cis_registered": bool(row.cis_registered),
         "current_cis_status": row.current_cis_status,
-        # Chat 41 §R3.2 — VAT registered (independent of vat_number) +
-        # trade managed-vocabulary reference (joined eagerly on read).
-        "vat_registered": bool(row.vat_registered),
+        # Chat 41 §R3.2 — trade managed-vocabulary reference (joined
+        # eagerly on read). `vat_registered` was added in 0040 and
+        # removed in 0041 — Xero is the source of truth for VAT.
         "trade_id": str(row.trade_id) if row.trade_id else None,
         # Null-safe: row.trade is None when trade_id is NULL.
         "trade": row.trade.name if row.trade is not None else None,

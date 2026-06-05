@@ -121,7 +121,7 @@ def _get_or_create_supplier(
         current_cis_status="Unverified" if supplier_type == "Contractor" else None,
         payment_terms_days=30,
         country="United Kingdom",
-        vat_registered=False,
+        # Chat 41 §R-eyeball-Step2A — vat_registered dropped.
         cis_registered=False,
         portal_enabled=False,
         is_archived=False,

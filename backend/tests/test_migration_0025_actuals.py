@@ -134,8 +134,8 @@ class TestMigration0025Schema:
         # (Prompt 2.7-BE-rev-A) when 0040 landed.
         # Function name retained — renaming is out of scope (see
         # chat-22 §2 + Future_Tasks polish entry).
-        assert head == "0040_contact_book_rework", \
-            f"expected 0040_contact_book_rework, got {head!r}"
+        assert head == "0041_drop_vat_registered", \
+            f"expected 0041_drop_vat_registered, got {head!r}"
 
     def test_actuals_has_51_columns(self, engine):
         with engine.connect() as c:

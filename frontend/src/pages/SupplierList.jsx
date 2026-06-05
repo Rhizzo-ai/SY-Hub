@@ -43,7 +43,6 @@ const CORE_COLS = ['name', 'type', 'status'];
 const OPTIONAL_COLS = [
   { key: 'trade',          label: 'Trade',          default: true  },
   { key: 'cis',            label: 'CIS',            default: true  },
-  { key: 'vat_registered', label: 'VAT reg.',       default: false },
   { key: 'payment_terms',  label: 'Payment terms',  default: false },
   { key: 'email',          label: 'Email',          default: false },
   { key: 'phone',          label: 'Phone',          default: false },
@@ -209,9 +208,6 @@ export default function SupplierList() {
               {visible.has('cis') && (
                 <th className="py-2 pr-2" data-testid="supplier-list-col-cis">CIS</th>
               )}
-              {visible.has('vat_registered') && (
-                <th className="py-2 pr-2" data-testid="supplier-list-col-vat_registered">VAT reg.</th>
-              )}
               {visible.has('payment_terms') && (
                 <th className="py-2 pr-2 w-32" data-testid="supplier-list-col-payment_terms">Payment terms</th>
               )}
@@ -273,11 +269,6 @@ export default function SupplierList() {
                       {isContractor
                         ? <CISStatusBadge status={s.current_cis_status} testid={`supplier-row-cis-${s.id}`} />
                         : <span>—</span>}
-                    </td>
-                  )}
-                  {visible.has('vat_registered') && (
-                    <td className="py-2 pr-2" data-testid={`supplier-row-vat-registered-${s.id}`}>
-                      {s.vat_registered ? 'Yes' : 'No'}
                     </td>
                   )}
                   {visible.has('payment_terms') && (

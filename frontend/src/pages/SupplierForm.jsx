@@ -15,11 +15,15 @@
  *
  * Adds (backend accepted these all along; the old form never exposed
  * them):
- *   - `vat_registered` boolean (independent of vat_number; no inference)
  *   - `trade` via <TradePicker/> (name-driven; backend `_resolve_trade`
  *     get-or-creates idempotently)
  *   - `trading_name`, `contact_name`
  *   - Address block: address_line1/2, city, postcode, country
+ *
+ * Chat 41 §R-eyeball-Step2A (Prompt 2.7-FE-revision) — `vat_registered`
+ *   dropped (was added in 0040, removed in 0041 per operator decision).
+ *   "Has a VAT number" is the de-facto registered signal; Xero owns
+ *   VAT logic.
  *
  * UTR (10 digits) and bank fields stay in the sensitive block.
  * `current_cis_status` is NEVER in the form — read-only, CIS-owned.
@@ -58,7 +62,6 @@ function emptyForm() {
     cis_status: '',
     payment_terms_days: 30,
     vat_number: '',
-    vat_registered: false,
     company_number: '',
     bank_name: '',
     bank_account_no: '',
@@ -101,13 +104,10 @@ export default function SupplierForm() {
           overlay[k] = '';
         }
       });
-      // cis_registered + vat_registered are booleans; backend may
-      // serialize null on legacy rows. Coerce to false.
+      // cis_registered is a boolean; backend may serialize null on
+      // legacy rows. Coerce to false.
       if (overlay.cis_registered === null || overlay.cis_registered === undefined) {
         overlay.cis_registered = false;
-      }
-      if (overlay.vat_registered === null || overlay.vat_registered === undefined) {
-        overlay.vat_registered = false;
       }
       // The picker is name-driven; seed from the serialised `trade`
       // string (not trade_id).
@@ -152,7 +152,8 @@ export default function SupplierForm() {
       contact_email: form.contact_email || null,
       contact_phone: form.contact_phone || null,
       notes: form.notes || null,
-      vat_registered: !!form.vat_registered,
+      // Chat 41 §R-eyeball-Step2A — vat_registered removed (Xero owns
+      // VAT logic; "has a VAT number" is the de-facto signal).
       // §R3.5 — send `trade` (name). Backend `_resolve_trade`
       // get-or-creates idempotently. Sending the name keeps the
       // form's submit self-contained even if the picker's create
@@ -306,26 +307,15 @@ export default function SupplierForm() {
         </div>
       )}
 
-      <div className="grid grid-cols-2 gap-2">
-        <label className="text-sm flex items-center gap-2 pt-5">
-          <input
-            type="checkbox"
-            checked={!!form.vat_registered}
-            onChange={onCheckChange('vat_registered')}
-            data-testid="supplier-form-vat-registered"
-          />
-          <span>VAT registered</span>
-        </label>
-        <label className="block text-sm">
-          <span className="text-xs text-sy-grey-700">Payment terms (days)</span>
-          <input
-            type="number" min="0"
-            className="w-full px-2 py-1 border rounded text-sm tabular-nums"
-            value={form.payment_terms_days} onChange={onChange('payment_terms_days')}
-            data-testid="supplier-form-payment-terms"
-          />
-        </label>
-      </div>
+      <label className="block text-sm">
+        <span className="text-xs text-sy-grey-700">Payment terms (days)</span>
+        <input
+          type="number" min="0"
+          className="w-full px-2 py-1 border rounded text-sm tabular-nums"
+          value={form.payment_terms_days} onChange={onChange('payment_terms_days')}
+          data-testid="supplier-form-payment-terms"
+        />
+      </label>
 
       <div className="grid grid-cols-2 gap-2">
         <label className="block text-sm">

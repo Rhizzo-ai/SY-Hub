@@ -7,7 +7,10 @@ Chat 41 §R2 (Prompt 2.7-BE-rev-A) — Contact-Book rework:
     (Contractor / Supplier / Consultant / Other). CIS / subcontract
     behavioural gates key off 'Contractor'.
   - `cis_subtype` and `default_vat_rate` dropped.
-  - `vat_registered` (bool, independent of `vat_number`) added.
+  - `vat_registered` was added in 0040 then dropped in 0041 per operator
+    decision (Chat 41 §R-eyeball-Step2A). "Has a VAT number" is the
+    de-facto registered signal; Xero owns VAT logic. Removed cleanly,
+    no dead column.
   - `trade_id` FK to tenant-scoped `trades` table added; populated via
     grow-as-you-type. Joined relationship loaded eagerly to avoid N+1
     when serialising a page.
@@ -82,11 +85,6 @@ class Supplier(Base):
 
     # Tax / registration
     vat_number: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
-    # Chat 41 §R2 — VAT-registered status independent of vat_number
-    # (platform must know this standalone; no inference either way).
-    vat_registered: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, server_default=text("false"),
-    )
     company_number: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     cis_status: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
 

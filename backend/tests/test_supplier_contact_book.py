@@ -3,10 +3,10 @@
 Focused on the rev-A integration surface for suppliers:
   - `_resolve_trade` priority + `_UNSET` sentinel (trade_id wins over
     trade-name; explicit null clears; absent key leaves untouched).
-  - `vat_registered` boolean is independent of `vat_number`.
-  - Serialised shape: no `cis_subtype` / `default_vat_rate` keys; always
-    has `vat_registered`, `trade`, `trade_id` (joined trade name is
-    null-safe).
+  - Serialised shape: no `cis_subtype` / `default_vat_rate` /
+    `vat_registered` keys (the last dropped in 0041 per Chat 41 §R-
+    eyeball-Step2A); always has `trade`, `trade_id` (joined trade name
+    is null-safe).
 
 Test users:
   - test-admin@example.test  — super_admin (all perms)
@@ -115,8 +115,8 @@ class TestSerialisedShape:
     def test_supplier_response_has_rev_a_keys_not_dropped(
         self, admin, engine, _wipe_between,
     ):
-        """The rev-A shape: vat_registered + trade + trade_id present;
-        cis_subtype + default_vat_rate absent.
+        """The rev-A shape: trade + trade_id present; cis_subtype +
+        default_vat_rate + vat_registered (dropped in 0041) absent.
         """
         sx = _suffix()
         r = admin.post(
@@ -126,62 +126,14 @@ class TestSerialisedShape:
         assert r.status_code == 201, r.text
         out = r.json()
         # Present
-        for k in ("vat_registered", "trade", "trade_id"):
+        for k in ("trade", "trade_id"):
             assert k in out, f"expected {k!r} in response, got {sorted(out)}"
-        # Absent
-        for k in ("cis_subtype", "default_vat_rate"):
+        # Absent — Chat 41 §R-eyeball-Step2A drops vat_registered.
+        for k in ("cis_subtype", "default_vat_rate", "vat_registered"):
             assert k not in out, f"{k!r} must be dropped from response"
         # Sensible defaults.
-        assert out["vat_registered"] is False
         assert out["trade"] is None
         assert out["trade_id"] is None
-
-
-# ---------------------------------------------------------------------------
-# vat_registered is independent of vat_number
-# ---------------------------------------------------------------------------
-
-class TestVatRegisteredIndependent:
-    def test_vat_registered_true_without_vat_number(
-        self, admin, engine, _wipe_between,
-    ):
-        sx = _suffix()
-        r = admin.post(
-            f"{BASE_URL}/api/v1/suppliers",
-            json={"name": f"VR-{sx}", "vat_registered": True},
-        )
-        assert r.status_code == 201, r.text
-        assert r.json()["vat_registered"] is True
-        assert r.json()["vat_number"] is None
-
-    def test_vat_number_present_does_not_set_vat_registered(
-        self, admin, engine, _wipe_between,
-    ):
-        """The platform must NOT infer vat_registered from vat_number."""
-        sx = _suffix()
-        r = admin.post(
-            f"{BASE_URL}/api/v1/suppliers",
-            json={"name": f"VN-{sx}", "vat_number": "GB777"},
-        )
-        assert r.status_code == 201, r.text
-        out = r.json()
-        assert out["vat_number"] == "GB777"
-        assert out["vat_registered"] is False  # default — no inference
-
-    def test_patch_toggles_vat_registered(
-        self, admin, engine, _wipe_between,
-    ):
-        sx = _suffix()
-        sid = admin.post(
-            f"{BASE_URL}/api/v1/suppliers",
-            json={"name": f"VRP-{sx}", "vat_registered": True},
-        ).json()["id"]
-        r = admin.patch(
-            f"{BASE_URL}/api/v1/suppliers/{sid}",
-            json={"vat_registered": False},
-        )
-        assert r.status_code == 200
-        assert r.json()["vat_registered"] is False
 
 
 # ---------------------------------------------------------------------------

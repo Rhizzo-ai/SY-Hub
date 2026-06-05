@@ -26,7 +26,9 @@ class TestSchemaMigration:
         actual expected value moves with each new migration. Chat 34
         (Prompt 2.8a) bumps it to 0037_subcontracts; Chat 35 (Prompt
         2.8b) bumps it to 0039_committed_single_writer; Chat 41
-        (Prompt 2.7-BE-rev-A) bumps it to 0040_contact_book_rework."""
+        (Prompt 2.7-BE-rev-A) bumps it to 0040_contact_book_rework.
+        Chat 41 §R-eyeball-Step2A (Prompt 2.7-FE-revision) bumps it to
+        0041_drop_vat_registered."""
         from app.db import SessionLocal
         db = SessionLocal()
         try:
@@ -35,8 +37,8 @@ class TestSchemaMigration:
             )).scalar()
         finally:
             db.close()
-        assert head == "0040_contact_book_rework", (
-            f"Expected alembic head 0040_contact_book_rework; got {head}"
+        assert head == "0041_drop_vat_registered", (
+            f"Expected alembic head 0041_drop_vat_registered; got {head}"
         )
 
     def test_budget_changes_tables_exist(self, db_engine):

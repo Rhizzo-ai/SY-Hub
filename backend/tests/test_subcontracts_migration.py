@@ -35,8 +35,8 @@ class TestSchemaMigration:
             )).scalar()
         finally:
             db.close()
-        assert head == "0040_contact_book_rework", (
-            f"Expected alembic head 0040_contact_book_rework; got {head}"
+        assert head == "0041_drop_vat_registered", (
+            f"Expected alembic head 0041_drop_vat_registered; got {head}"
         )
 
     def test_subcontract_tables_exist(self, db_engine):

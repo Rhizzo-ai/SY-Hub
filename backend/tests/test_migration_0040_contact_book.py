@@ -5,11 +5,13 @@ DB-only assertions (no API). Runs against the live Postgres at
 §R1.2 / §R1.3 / §R1.5 VERIFY queries shipped in Gate 1.
 
 Scope:
-  - alembic head is 0040_contact_book_rework.
+  - alembic head is the latest. Today: 0041_drop_vat_registered.
   - supplier_type enum has exactly the 4 target values (no temp types
     lingering).
   - suppliers: cis_subtype + default_vat_rate columns DROPPED; trade_id
-    + vat_registered ADDED with the expected nullability/defaults.
+    ADDED with the expected nullability/defaults. (vat_registered was
+    ADDED here in 0040 then DROPPED in 0041 — see
+    test_migration_0041_drop_vat_registered.)
   - default_vat_rate CHECK constraint (`ck_suppliers_vat_rate_range`)
     auto-dropped with the column.
   - trades table exists with the unique CI index on (tenant_id, lower(name)).
@@ -39,10 +41,13 @@ def engine():
 # §R1.0
 # ---------------------------------------------------------------------------
 
-def test_alembic_head_is_0040(engine):
+def test_alembic_head_is_latest_post_0040(engine):
+    # The latest head was bumped to 0041 by Chat 41 §R-eyeball-Step2A
+    # (dropping vat_registered). Function name retains "is_0040" per the
+    # project's literal-drift convention.
     with engine.connect() as c:
         head = c.execute(text("SELECT version_num FROM alembic_version")).scalar()
-    assert head == "0040_contact_book_rework", head
+    assert head == "0041_drop_vat_registered", head
 
 
 # ---------------------------------------------------------------------------
@@ -101,25 +106,23 @@ class TestSuppliersColumns:
         assert cols == set(), f"expected dropped columns absent, found {cols}"
 
     def test_new_columns_present_with_expected_metadata(self, engine):
+        # Chat 41 §R-eyeball-Step2A: vat_registered was ADDED here in
+        # 0040 but DROPPED again in 0041. At head, only trade_id
+        # survives — verify its metadata. The drop is verified
+        # separately in test_migration_0041_drop_vat_registered.
         with engine.connect() as c:
             rows = list(c.execute(text("""
                 SELECT column_name, data_type, is_nullable, column_default
                   FROM information_schema.columns
                  WHERE table_schema='public' AND table_name='suppliers'
-                   AND column_name IN ('trade_id', 'vat_registered')
+                   AND column_name = 'trade_id'
             """)).mappings())
         by_name = {r["column_name"]: r for r in rows}
-        assert set(by_name) == {"trade_id", "vat_registered"}, by_name
+        assert set(by_name) == {"trade_id"}, by_name
 
         trade = by_name["trade_id"]
         assert trade["data_type"] == "uuid"
         assert trade["is_nullable"] == "YES"
-
-        vatreg = by_name["vat_registered"]
-        assert vatreg["data_type"] == "boolean"
-        assert vatreg["is_nullable"] == "NO"
-        assert vatreg["column_default"] is not None
-        assert "false" in vatreg["column_default"].lower()
 
     def test_default_vat_rate_check_constraint_dropped(self, engine):
         """`ck_suppliers_vat_rate_range` (from 0029) must be gone — PG

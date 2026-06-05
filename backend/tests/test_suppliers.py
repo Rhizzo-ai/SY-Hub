@@ -137,7 +137,6 @@ class TestCreate:
             "name": f"Acme Bricks {sx}",
             "contact_email": "acme@example.test",
             "vat_number": "GB123456789",
-            "vat_registered": True,
             "bank_account_no": "12345678",
             "bank_sort_code": "12-34-56",
             "payment_terms_days": 30,
@@ -150,13 +149,14 @@ class TestCreate:
         assert out["bank_account_no"] == "12345678"
         assert out["is_archived"] is False
         assert out["portal_enabled"] is False
-        # Chat 41 §R5 — serialised shape: vat_registered + trade fields
-        # present; dropped fields absent.
-        assert out["vat_registered"] is True
+        # Chat 41 §R5 — serialised shape: trade fields present; dropped
+        # fields absent. Chat 41 §R-eyeball-Step2A — vat_registered also
+        # dropped in 0041.
         assert "trade_id" in out and out["trade_id"] is None
         assert "trade" in out and out["trade"] is None
         assert "cis_subtype" not in out
         assert "default_vat_rate" not in out
+        assert "vat_registered" not in out
         sid = out["id"]
 
         rows = _audit_rows_for_supplier(engine, sid, action="Create", since=start)

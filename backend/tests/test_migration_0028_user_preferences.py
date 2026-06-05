@@ -35,10 +35,12 @@ class TestMigration0028Schema:
         # Live head bumped again by Chat 24 R1/R2/R3/R4 (Prompt 2.5),
         # Chat 33 (Prompt 2.6: 0036), Chat 34 (Prompt 2.8a: 0037),
         # Chat 35 (Prompt 2.8b: 0039_committed_single_writer), and
-        # Chat 41 (Prompt 2.7-BE-rev-A: 0040_contact_book_rework).
+        # Chat 41 (Prompt 2.7-BE-rev-A: 0040_contact_book_rework), and
+        # Chat 41 §R-eyeball-Step2A (Prompt 2.7-FE-revision:
+        # 0041_drop_vat_registered).
         # Function name retained per Future_Tasks polish entry.
-        assert head == "0040_contact_book_rework", (
-            f"expected 0040_contact_book_rework, got {head!r}"
+        assert head == "0041_drop_vat_registered", (
+            f"expected 0041_drop_vat_registered, got {head!r}"
         )
 
     def test_table_and_partial_unique_indexes_present(self, engine):

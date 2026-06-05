@@ -56,7 +56,6 @@ class SupplierCreateBody(BaseModel):
     postcode: Optional[str] = Field(None, max_length=20)
     country: Optional[str] = Field(None, max_length=50)
     vat_number: Optional[str] = Field(None, max_length=50)
-    vat_registered: Optional[bool] = Field(None)
     company_number: Optional[str] = Field(None, max_length=50)
     cis_status: Optional[str] = Field(None)
     bank_name: Optional[str] = Field(None, max_length=200)
@@ -67,6 +66,7 @@ class SupplierCreateBody(BaseModel):
     # Chat 32 §R4.1 (Prompt 2.7) — CIS / type label fields.
     # Chat 41 §R4.2 (Prompt 2.7-BE-rev-A) — supplier_type is now the
     # 4-value contact-type label; cis_subtype + default_vat_rate dropped.
+    # Chat 41 §R-eyeball-Step2A — vat_registered dropped.
     supplier_type: Optional[str] = Field(None, max_length=20)
     cis_registered: Optional[bool] = Field(None)
     utr: Optional[str] = Field(None, max_length=30)
@@ -88,7 +88,6 @@ class SupplierUpdateBody(BaseModel):
     postcode: Optional[str] = Field(None, max_length=20)
     country: Optional[str] = Field(None, max_length=50)
     vat_number: Optional[str] = Field(None, max_length=50)
-    vat_registered: Optional[bool] = Field(None)
     company_number: Optional[str] = Field(None, max_length=50)
     cis_status: Optional[str] = Field(None)
     bank_name: Optional[str] = Field(None, max_length=200)

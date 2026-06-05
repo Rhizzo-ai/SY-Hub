@@ -3,8 +3,7 @@
  *   (Build Pack 2.7-FE-revision).
  *
  * Tabs (rendered per visibility):
- *   - Overview (always): fixed fields, trade, vat-registered, address
- *     block (hidden if every address field is null), sensitive block,
+ *   - Overview (always): fixed fields, trade, address block (hidden if every address field is null), sensitive block,
  *     contractor sub-block (CIS registered, current_cis_status badge,
  *     UTR) iff Contractor.
  *   - CIS (iff supplier_type==='Contractor' && cis.view).
@@ -180,8 +179,6 @@ export default function SupplierDetail() {
           <section className="grid grid-cols-2 gap-2 text-sm">
             <DetailRow label="Trade" testid="supplier-detail-trade"
               value={s.trade ?? '—'} />
-            <DetailRow label="VAT registered" testid="supplier-detail-vat-registered"
-              value={s.vat_registered ? 'Yes' : 'No'} />
             <DetailRow label="Trading name" testid="supplier-detail-trading-name"
               value={s.trading_name} />
             <DetailRow label="Contact name" testid="supplier-detail-contact-name"

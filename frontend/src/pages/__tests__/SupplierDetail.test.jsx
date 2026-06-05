@@ -95,7 +95,7 @@ const BASE_SUPPLIER = {
   cis_status: 'gross', current_cis_status: null,
   payment_terms_days: 30,
   contact_email: 'a@b.test', contact_phone: '012345',
-  vat_number: 'GB123', vat_registered: true, company_number: '01234567',
+  vat_number: 'GB123', company_number: '01234567',
   bank_name: 'Barclays', bank_account_no: '12345678', bank_sort_code: '11-22-33',
   trade: 'Groundworks', trading_name: 'ACME Trading', contact_name: 'Jane',
   address_line1: '1 High St', address_line2: null,
@@ -182,9 +182,9 @@ describe('SupplierDetail — contact-book fields (Chat 41 §R4.3)', () => {
     expect(screen.getByTestId('supplier-detail-trade')).toHaveTextContent('—');
   });
 
-  test('VAT registered row renders Yes / No', () => {
+  test('VAT-registered DetailRow is gone post-Step-2A', () => {
     renderDetail(BASE_SUPPLIER, ['suppliers.view']);
-    expect(screen.getByTestId('supplier-detail-vat-registered')).toHaveTextContent('Yes');
+    expect(screen.queryByTestId('supplier-detail-vat-registered')).toBeNull();
   });
 
   test('Trading + Contact name rows render', () => {
