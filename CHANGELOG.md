@@ -11,6 +11,110 @@ Each entry: date, prompt reference (if applicable), change, rationale.
 
 ## Entries
 
+## Chat 41 — Build Pack 2.7-BE-rev-B SharePoint/OneDrive Document Storage via Microsoft Graph (Backend) — **Gate 1 only** (2026-02)
+
+External-auth integration. Gate 1 lands the test-stub surface and the
+schema migration; no live Graph call is made during the build. Live
+verification is the operator-run smoke test at Gate 3 (§R6).
+
+End-of-Gate-1 head: **`0042_file_ref_text`** (rev-A was `0041`; +1
+schema migration). Permissions unchanged at **132** (no new perms;
+upload reuses `supplier_documents.edit`, download reuses
+`supplier_documents.view_sensitive` — wired at Gate 2).
+
+### §R1 — Config (mirrors AI_CAPTURE_MODEL='test-stub')
+`SHAREPOINT_MODE` (default `test-stub`), `SHAREPOINT_TENANT_ID`,
+`SHAREPOINT_CLIENT_ID`, `SHAREPOINT_CLIENT_SECRET`,
+`SHAREPOINT_SITE_URL`, `SHAREPOINT_DRIVE_NAME` (default `Documents`),
+`SHAREPOINT_ROOT_FOLDER` (default `SY-Hub`), `SHAREPOINT_MAX_BYTES`
+(default 25 MiB). Property `is_sharepoint_stub` short-circuits to
+true unless `SHAREPOINT_MODE == 'live'`.
+
+### §R2 — Graph client + stub (`app/services/sharepoint_client.py`)
+- `DocumentStore` Protocol (`ensure_folder` / `upload` / `download` /
+  `delete`) — document-type-agnostic engine; drawings, invoices, QA
+  photos will sit on it later.
+- `StoredObjectRef` dataclass + JSON round-trip
+  (`{item_id, drive_id, web_url, name, size, content_type}`).
+- `StubDocumentStore` — in-process, thread-safe (`RLock`), byte-exact
+  round-trip, idempotent `ensure_folder` + `delete`. Process-wide
+  singleton via `get_document_store()` so tests share state across
+  requests; `reset_stub_store()` clears between tests.
+- `GraphDocumentStore` — `httpx` 0.28.1 client-credentials OAuth2 with
+  token cache + 60s pre-expiry refresh; simple PUT ≤4 MiB / upload-
+  session w/ 10 MiB chunks above; streamed download (Graph URL never
+  leaves the module); 429/503 honour `Retry-After` with single retry;
+  no secret/token/Graph body ever logged. Constructed in live mode
+  with dummy creds for the Gate 1 factory test — **no network call
+  made during the build**.
+- `_safe_filename` — `basename` only, strips `\x00-\x1f`,
+  Windows-illegal chars (`<>:"/\|?*`), trims leading/trailing dots
+  and spaces, caps at 200 chars, empty → `"file"`.
+- `SharePointConfigError` (live-mode misconfig) and `SharePointError`
+  (operational failure → router maps to 502 "document storage
+  unavailable") — both fail-loud, never leak Graph internals.
+- **`grant_site_access`** — operator-only `Sites.Selected` grant
+  helper for the Gate 3 smoke-test; not part of normal request flow.
+
+### §R5.0 — Migration `0042_file_ref_text`
+`supplier_documents.file_ref` widened `String(500)` → `Text`
+(Graph webUrls + the JSON envelope exceed 500 chars).
+`down_revision = "0041_drop_vat_registered"`. `downgrade()` reverts
+to `varchar(500)`; documented as dev-safety round-trip only (would
+truncate production Graph refs). Round-trip verified up → down → up.
+
+### §R5.1 — Stub-store unit tests (`tests/test_sharepoint_client.py`)
+25 tests, all in `SHAREPOINT_MODE='test-stub'`, zero Azure
+dependency. Covers: byte-exact upload/download round-trip, large-
+binary round-trip, `ensure_folder` idempotency, `delete`
+idempotency (gone / unknown / malformed ref), `download` of missing
+item → `SharePointError`, second upload creates distinct item id,
+`StoredObjectRef.to_json`/`from_json` round-trip + malformed
+rejection, factory returns Stub in stub mode and Graph in live mode
+(constructed under a no-network guard), blank-creds and partial-
+creds live mode raise `SharePointConfigError`, `_safe_filename`
+strips traversal / control chars / preserves extension / handles
+empty / caps length, `is_sharepoint_stub` default + live flip +
+default drive/root, end-to-end stub flow under a no-network
+assertion, error messages never include the secret value or
+`token`/`bearer`/`secret`.
+
+### Deviations / scope-creep notes
+- Process-wide stub singleton (Build Pack does not specify; matches
+  how a real Graph store would be shared). `reset_stub_store()`
+  added for test hygiene.
+- `RLock` rather than `Lock` in the stub (upload calls
+  `ensure_folder` while holding the lock — `Lock` would deadlock).
+- `_safe_filename` on POSIX cannot resolve Windows `\` as a
+  separator, so Windows-style traversal is neutralised by char
+  substitution rather than basename stripping. Documented in
+  `test_safe_filename_strips_path_traversal`.
+- No new dependencies — uses the existing `httpx==0.28.1`. `msal`
+  NOT added; client-credentials flow is one POST to
+  `login.microsoftonline.com`.
+- §R3 / §R4 (service + router wiring), §R6 (smoke-test script),
+  CHANGELOG / chat-41-closing.md polish for Gate 3 — all
+  deferred to Gates 2 and 3.
+
+### Gate 1 VERIFY artefacts
+- pytest run 1: **25 passed in 0.09s**
+- pytest run 2: **25 passed in 0.09s**
+- `alembic current` after upgrade head: **`0042_file_ref_text (head)`**
+- Round-trip up → down → up: column flips
+  `text` → `varchar(500)` → `text` cleanly.
+- Live-mode-blank-creds factory call raises
+  `SharePointConfigError` and lists all 4 missing env vars in the
+  message; secret value with marker `THIS_SECRET_MUST_NOT_LEAK_xy321`
+  not present in the exception text.
+- `test_full_stub_flow_makes_zero_network_calls` passes under an
+  `httpx` global monkeypatch that raises on any network entry-point
+  (`request/get/post/put/delete/patch/head` + `Client.send` +
+  `Client.request`).
+- `msal` / `Office365-REST-Python-Client` not present in
+  `requirements.txt`.
+
+Gate 1 **STOPPED here** awaiting operator review per §R7.
+
 ## Chat 41 — Build Pack 2.7-FE-revision Suppliers Contact-Book Rework (Frontend) + 3 operator-eyeball follow-ons (2026-02)
 
 Frontend reshape against the rev-A backend (committed at

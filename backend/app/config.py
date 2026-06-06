@@ -86,6 +86,36 @@ class Settings:
         default_factory=lambda: _env_bool("POSTMARK_INBOUND_ENABLED", False)
     )
 
+    # SharePoint / Microsoft Graph document storage — Chat 41 rev-B.
+    # SHAREPOINT_MODE='test-stub' (default) short-circuits to an in-process
+    # fake store (StubDocumentStore) — no Graph call, no Azure dependency,
+    # deterministic for tests. 'live' uses the real GraphDocumentStore.
+    # Mirrors the AI_CAPTURE_MODEL='test-stub' pattern verbatim.
+    sharepoint_mode: str = field(
+        default_factory=lambda: os.environ.get("SHAREPOINT_MODE", "test-stub")
+    )
+    sharepoint_tenant_id: str = field(
+        default_factory=lambda: os.environ.get("SHAREPOINT_TENANT_ID", "")
+    )
+    sharepoint_client_id: str = field(
+        default_factory=lambda: os.environ.get("SHAREPOINT_CLIENT_ID", "")
+    )
+    sharepoint_client_secret: str = field(
+        default_factory=lambda: os.environ.get("SHAREPOINT_CLIENT_SECRET", "")
+    )
+    sharepoint_site_url: str = field(
+        default_factory=lambda: os.environ.get("SHAREPOINT_SITE_URL", "")
+    )
+    sharepoint_drive_name: str = field(
+        default_factory=lambda: os.environ.get("SHAREPOINT_DRIVE_NAME", "Documents")
+    )
+    sharepoint_root_folder: str = field(
+        default_factory=lambda: os.environ.get("SHAREPOINT_ROOT_FOLDER", "SY-Hub")
+    )
+    sharepoint_max_bytes: int = field(
+        default_factory=lambda: _env_int("SHAREPOINT_MAX_BYTES", 25 * 1024 * 1024)
+    )
+
     @property
     def is_test(self) -> bool:
         return self.app_env.lower() == "test"
@@ -93,6 +123,10 @@ class Settings:
     @property
     def is_ai_stub(self) -> bool:
         return self.ai_capture_model == "test-stub"
+
+    @property
+    def is_sharepoint_stub(self) -> bool:
+        return self.sharepoint_mode.lower() != "live"
 
 
 @lru_cache(maxsize=1)

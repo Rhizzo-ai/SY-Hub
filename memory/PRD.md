@@ -18,6 +18,43 @@ Frontend / actuals / commitments / Xero are out of scope until later prompts.
 
 ## What's been implemented
 
+### Chat 41 — Build Pack 2.7-BE-rev-B · SharePoint/OneDrive via Microsoft Graph · **Gate 1** (2026-02)
+
+External-auth integration. Gate 1 lands the test-stub surface, the
+Graph client scaffold (no live call made during build), and the
+schema migration. Live verification is the operator-run smoke-test
+at Gate 3 (§R6).
+
+**Gate 1 head:** `0042_file_ref_text` (rev-A was `0041`; +1 migration).
+**Perms:** unchanged at **132** (no new perms in this gate;
+upload/download will reuse `supplier_documents.edit` and
+`supplier_documents.view_sensitive` at Gate 2).
+
+Files landed:
+- `backend/app/config.py` — 8 SharePoint settings + `is_sharepoint_stub`
+  property (mirrors AI_CAPTURE_MODEL='test-stub').
+- `backend/app/services/sharepoint_client.py` — `DocumentStore`
+  Protocol, `StoredObjectRef`, `StubDocumentStore` (in-process),
+  `GraphDocumentStore` (live; not exercised in build),
+  `get_document_store()` factory, `SharePointError` /
+  `SharePointConfigError`, `_safe_filename`.
+- `backend/alembic/versions/0042_file_ref_text.py` — widen
+  `supplier_documents.file_ref` `String(500)` → `Text`. Round-trip
+  verified.
+- `backend/tests/test_sharepoint_client.py` — 25 tests, double-run
+  green in stub mode, zero Azure dependency.
+
+Deferred to Gate 2: `services/supplier_documents.py` wiring of
+upload/download, router endpoints `POST/GET /{id}/file`, removal of
+client-settable `file_ref`, `has_file`/file-metadata in serialise.
+
+Deferred to Gate 3: `backend/scripts/sharepoint_smoke_test.py`,
+chat-41-closing.md rev-B section.
+
+VERIFY artefacts: `memory/Gate1_VERIFY_2.7-BE-rev-B.md`.
+
+---
+
 ### Chat 41 — Build Pack 2.7-FE-revision · Gate 1 + 3 operator-eyeball follow-ons (2026-02)
 
 **Frontend Suppliers Contact-Book rework + 3 follow-on changes the
