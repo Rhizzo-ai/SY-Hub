@@ -10,7 +10,7 @@ import * as path from 'path';
 const PREVIEW_URL =
   process.env.REACT_APP_PREVIEW_URL
   || process.env.REACT_APP_BACKEND_URL
-  || 'https://auth-verify-preview.preview.emergentagent.com';
+  || 'https://syhub-rules.preview.emergentagent.com';
 
 const PASSWORD = process.env.TEST_USER_PASSWORD || 'TestUser-Dev-2026!';
 
