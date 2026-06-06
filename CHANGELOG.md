@@ -11,7 +11,7 @@ Each entry: date, prompt reference (if applicable), change, rationale.
 
 ## Entries
 
-## Chat 42 — Build Pack 2.7-FE-docupload — Supplier-document file upload/download control (Frontend) (2026-02)
+## Chat 43 — Build Pack 2.7-FE-docupload — Supplier-document file upload/download control (Frontend) (2026-02)
 
 Frontend-only delivery wiring the rev-B `POST/GET /v1/supplier-documents/{id}/file`
 endpoints (Chat 41 / Build Pack 2.7-BE-rev-B) onto `DocumentsTab.jsx`.

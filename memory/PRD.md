@@ -18,7 +18,7 @@ Frontend / actuals / commitments / Xero are out of scope until later prompts.
 
 ## What's been implemented
 
-### Chat 42 — Build Pack 2.7-FE-docupload · Supplier-document file upload/download (Frontend only) (2026-02)
+### Chat 43 — Build Pack 2.7-FE-docupload · Supplier-document file upload/download (Frontend only) (2026-02)
 
 **Wires the rev-B `POST/GET /v1/supplier-documents/{id}/file`
 endpoints (Chat 41 Build Pack 2.7-BE-rev-B) onto `DocumentsTab.jsx`.**
@@ -105,7 +105,7 @@ All 13 §R5 acceptance cases covered + §R2.4 archived-row guard +
 - `frontend/src/lib/api/__tests__/supplierDocuments.test.js` (added, Gate 1)
 - `frontend/src/hooks/__tests__/supplierDocuments.test.jsx` (added, Gate 1)
 - `CHANGELOG.md` (entry prepended for this pack)
-- `docs/chat-summaries/chat-42-closing.md` (new — first close for chat 42)
+- `docs/chat-summaries/chat-43-closing.md` (new — first close for chat 43)
 - `memory/PRD.md` (this entry)
 
 Backlog **B76 — Supplier-document upload UI** delivered. Operator
