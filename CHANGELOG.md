@@ -11,6 +11,75 @@ Each entry: date, prompt reference (if applicable), change, rationale.
 
 ## Entries
 
+## Chat 41 — Build Pack 2.7-BE-rev-B SharePoint/OneDrive Document Storage via Microsoft Graph (Backend) — **Gate 3 / pack close** (2026-02)
+
+Closes out rev-B: §R6 smoke-test script + closing docs. No new
+runtime behaviour; the only code artefact landed at Gate 3 is the
+operator-run script.
+
+End-of-pack head: **`0042_file_ref_text`** (unchanged from Gate 1).
+Permissions unchanged at **132**. No new tests at Gate 3 (the script
+is operator-run only — not part of the automated suite per §R6).
+
+### §R6 — `backend/scripts/sharepoint_smoke_test.py`
+Stand-alone, operator-run live verifier. Argparse exposes
+`--grant` (run `Sites.Selected` site grant first) and `-v`
+(DEBUG logging, secrets still redacted). Behaviour:
+
+1. Prints the resolved non-secret configuration. The
+   `client_secret` value is NEVER read into any print path; the
+   script only reports whether it is set or unset. `tenant_id` /
+   `client_id` are truncated to the first 4 chars before being
+   printed.
+2. **Refuses to run in stub mode** with a clear actionable message
+   and exit code **2**. Stub-mode coverage is the automated unit
+   suite — this script's whole job is live verification.
+3. **Refuses to run** if any of the four required env vars is blank
+   in live mode (`SHAREPOINT_TENANT_ID` / `CLIENT_ID` / `CLIENT_SECRET`
+   / `SITE_URL`), listing the missing names. Exit code **2**.
+4. Constructs the `GraphDocumentStore`. If `--grant` is passed,
+   performs the `Sites.Selected` POST to
+   `/sites/{site-id}/permissions` (the operator-only one-time step).
+5. Runs the live round-trip: `ensure_folder("_smoketest")` → upload
+   a small UTF-8 marker file → download → byte-exact compare →
+   delete. Prints `✅ round-trip OK` on success.
+6. Failure handler maps common live-mode errors to actionable
+   operator hints (admin consent missing, site not granted, payload
+   too large, throttling) without ever printing the underlying
+   Graph response body, token, or secret.
+
+### §R6 VERIFY artefacts
+- Stub-mode refusal (default): script exits **2** with
+  `REFUSED: this script is operator-run live verification.`
+- Live-mode blank-creds refusal: script exits **2** with
+  `REFUSED: missing required SharePoint env vars: SHAREPOINT_TENANT_ID,
+  SHAREPOINT_CLIENT_ID, SHAREPOINT_CLIENT_SECRET, SHAREPOINT_SITE_URL`.
+- Secret-leak guarantee: passing
+  `SHAREPOINT_CLIENT_SECRET=THIS_SECRET_VALUE_MUST_NEVER_PRINT_xy321`
+  with one other var blank → script refuses, secret value does **not**
+  appear in any output path (`grep` confirmed zero occurrences).
+
+### Closing docs landed at Gate 3
+- `CHANGELOG.md` — this entry (Gate 3 close).
+- `docs/chat-summaries/chat-41-closing.md` — **APPENDED**
+  ("Build Pack 2.7-BE-rev-B (Backend) — APPENDED" section). Earlier
+  rev-A close NOT overwritten.
+- `memory/PRD.md` — Gate 3 status appended.
+- `memory/Gate3_VERIFY_2.7-BE-rev-B.md` — full Gate 3 artefact bundle.
+- `docs/SY_Hub_Phase2_Backlog.md` — **NOT touched** (operator-owned).
+
+### Final pack state — rev-B done
+- Backend pytest, full rev-B touch surface (double-run, stub mode):
+  - `tests/test_sharepoint_client.py`: **25 passed**, both runs.
+  - `tests/test_supplier_documents.py` +
+    `tests/test_supplier_document_files.py`: **32 passed**, both runs.
+- `alembic current` → `0042_file_ref_text (head)`.
+- `SELECT count(*) FROM permissions` → **132** (unchanged).
+- No new dependencies; no live Graph call made during the build.
+
+Pack closes here. Operator runs `python backend/scripts/sharepoint_smoke_test.py`
+(once with `--grant`, then without) after Azure admin consent lands.
+
 ## Chat 41 — Build Pack 2.7-BE-rev-B SharePoint/OneDrive Document Storage via Microsoft Graph (Backend) — **Gate 2** (2026-02)
 
 Wires the rev-B Graph stub into the supplier_documents service +

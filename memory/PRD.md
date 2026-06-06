@@ -18,6 +18,38 @@ Frontend / actuals / commitments / Xero are out of scope until later prompts.
 
 ## What's been implemented
 
+### Chat 41 — Build Pack 2.7-BE-rev-B · SharePoint/OneDrive via Microsoft Graph · **Gate 3 / pack close** (2026-02)
+
+Closes rev-B: operator-run smoke-test script + closing docs landed.
+The pack is complete; the only remaining step is the operator's
+one-time live verification (run `python backend/scripts/sharepoint_smoke_test.py`
+after Azure admin consent + `Sites.Selected` grant).
+
+**End-of-pack head:** `0042_file_ref_text` (unchanged).
+**Perms:** **132** (unchanged across the entire pack).
+
+Files landed at Gate 3:
+- `backend/scripts/sharepoint_smoke_test.py` — operator-run live
+  verifier. `--grant` runs the `Sites.Selected` site grant. **Refuses
+  to run in stub mode (exit 2). Refuses live mode with any blank
+  required env var (exit 2). Never prints the secret value or any
+  Graph response body.**
+- `CHANGELOG.md` — Gate 3 closing block.
+- `docs/chat-summaries/chat-41-closing.md` — appended a
+  "Build Pack 2.7-BE-rev-B (Backend) — APPENDED" section (earlier
+  rev-A close preserved verbatim).
+- `memory/Gate3_VERIFY_2.7-BE-rev-B.md` — full Gate 3 artefact bundle.
+
+**NOT touched:** `docs/SY_Hub_Phase2_Backlog.md` (operator-owned).
+Two backlog items logged via the closing doc:
+- **B76** — Frontend document upload control (separate FE prompt).
+- **B77** — Multi-site document routing (Track 5), reusing the
+  rev-B `DocumentStore` engine.
+
+VERIFY artefact: `memory/Gate3_VERIFY_2.7-BE-rev-B.md`.
+
+---
+
 ### Chat 41 — Build Pack 2.7-BE-rev-B · SharePoint/OneDrive via Microsoft Graph · **Gate 2** (2026-02)
 
 Wires the Gate 1 stub into the supplier_documents service + router.

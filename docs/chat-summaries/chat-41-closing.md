@@ -226,3 +226,97 @@ Ready for push.
 - One observed test-isolation gap (`test_entities_api` mutates `test_projects` fixtures) — flagged as a candidate backlog item; not in scope for this pack.
 
 Ready for push.
+
+---
+
+## Build Pack 2.7-BE-rev-B (Backend) — APPENDED (2026-02)
+
+External-auth integration: SharePoint / OneDrive document storage via
+Microsoft Graph. Built in three §R7 gates — no auto-advance, operator
+review between each — landed on top of `0041_drop_vat_registered`.
+
+**End-of-pack head:** `0042_file_ref_text` (BE-rev-A was 0041; +1
+schema migration from this run).
+**Permissions:** unchanged at **132** — upload reuses
+`supplier_documents.edit`, download reuses
+`supplier_documents.view_sensitive`. No new perms.
+
+### Architecture mirror (verified — house pattern intact)
+- `SHAREPOINT_MODE='test-stub'` short-circuits to an in-process
+  `StubDocumentStore` — deterministic, no network, no Azure
+  dependency. Mirrors `AI_CAPTURE_MODEL='test-stub'` verbatim.
+- `SHAREPOINT_MODE='live'` constructs a `GraphDocumentStore`
+  (client-credentials OAuth2, token cache + 60s pre-expiry refresh,
+  simple PUT ≤4 MB / upload session > 4 MB with 10 MB chunks, streamed
+  download, 429/503 honour `Retry-After` with single retry). Live
+  path is NOT exercised during the build — operator verifies via
+  `backend/scripts/sharepoint_smoke_test.py`.
+- `DocumentStore` is intentionally document-type-agnostic — drawings,
+  invoices and QA photos can sit on the same engine later
+  (Track 5 backlog).
+
+### Gates landed
+- **Gate 1** — §R1 (config: 8 SharePoint settings + `is_sharepoint_stub`
+  property), §R2 (Graph client + stub + factory), §R5.0 (migration
+  `0042_file_ref_text`, file_ref widened String(500) → Text,
+  round-tripped).
+  Tests: `tests/test_sharepoint_client.py` — **25 passed**, double-run.
+  Artefact: `memory/Gate1_VERIFY_2.7-BE-rev-B.md`.
+- **Gate 2** — §R3 (service wiring: `upload_document_file` /
+  `download_document_file` / `_supplier_folder_path` /
+  `ALLOWED_DOC_MIME_TYPES`), §R4 (router: `POST/GET /{id}/file`,
+  §R4.2 client-settable `file_ref` removed from create/update
+  bodies, error map ValueError(size)→413 / ValueError→422 /
+  LookupError→404 / SharePointError→502 with zero Graph leakage).
+  Tests: `tests/test_supplier_documents.py` (12, reshape) +
+  `tests/test_supplier_document_files.py` (20 NEW, target ≥18) —
+  **32 passed**, double-run.
+  Artefact: `memory/Gate2_VERIFY_2.7-BE-rev-B.md`.
+- **Gate 3** (this gate) — §R6 (`backend/scripts/sharepoint_smoke_test.py`,
+  operator-run, `--grant` flag for Sites.Selected, refuses stub mode
+  with exit 2, no secret/token/Graph body ever printed). CHANGELOG +
+  PRD + this closing-doc append.
+
+### Deviations (full list — captured in CHANGELOG)
+- `RLock` (not `Lock`) in `StubDocumentStore` — `upload` calls
+  `ensure_folder` while holding the lock; `Lock` deadlocked.
+- Process-wide stub singleton + `reset_stub_store()` test helper.
+- 413 for size-cap, 422 for other content validation
+  (build pack left the choice; documented in router).
+- Download audit (`Export` action) — scope-creep per §R9 robustness
+  clause; every sensitive read of a supplier document is now logged.
+- Audit actions reused from existing `AUDIT_ACTIONS` enum
+  (`Add_Attachment` for upload, `Export` for download) — avoids a
+  Postgres enum migration.
+- `_safe_filename` on POSIX cannot resolve `\` as a separator;
+  Windows-style traversal is neutralised by char substitution rather
+  than basename stripping. Documented in the unit test.
+- No new dependencies. `httpx==0.28.1` (already pinned) carries the
+  Graph client; `msal` / `Office365-REST-Python-Client` deliberately
+  NOT added.
+
+### Final state — Gate 3 close
+- **Backend pytest double-run, full rev-B touch surface:**
+  - Gate 1 suite (`tests/test_sharepoint_client.py`): **25 passed**, both runs.
+  - Gate 2 suite (`tests/test_supplier_documents.py` +
+    `tests/test_supplier_document_files.py`): **32 passed**, both runs.
+- **Alembic head:** `0042_file_ref_text` (verified by
+  `alembic current`).
+- **Permission count:** **132** (unchanged — verified by
+  `SELECT count(*) FROM permissions`).
+- **Smoke-test refusal:** running
+  `python scripts/sharepoint_smoke_test.py` with default
+  (stub) mode prints the configuration, then prints
+  `REFUSED: this script is operator-run live verification.` and
+  exits with code **2**. The secret marker
+  (`THIS_SECRET_VALUE_MUST_NEVER_PRINT_xy321`) does NOT appear in any
+  output path — confirmed by `grep -c` against the captured run.
+- **Backlog file (`docs/SY_Hub_Phase2_Backlog.md`):** NOT touched
+  (operator-owned). Two backlog items logged via this closing doc:
+  - **B76** — Frontend document upload control (drag-drop on the
+    Documents tab, wired to `POST/GET /{id}/file`). Separate FE prompt.
+  - **B77** — Multi-site document routing (Track 5): per-document-type
+    target sites, external sharing for drawings, reusing the rev-B
+    `DocumentStore` engine.
+
+Ready for push.
