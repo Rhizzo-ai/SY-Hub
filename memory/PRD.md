@@ -18,6 +18,102 @@ Frontend / actuals / commitments / Xero are out of scope until later prompts.
 
 ## What's been implemented
 
+### Chat 42 — Build Pack 2.7-FE-docupload · Supplier-document file upload/download (Frontend only) (2026-02)
+
+**Wires the rev-B `POST/GET /v1/supplier-documents/{id}/file`
+endpoints (Chat 41 Build Pack 2.7-BE-rev-B) onto `DocumentsTab.jsx`.**
+Two-gate run, both verified on `origin/main` via raw-fetch before
+advancing. Backend FROZEN — zero changes; permissions stay **132**,
+alembic head stays **`0042_file_ref_text`**, `git status --porcelain
+backend/` empty at both gate-stop points. Closes backlog **B76**.
+
+**Gate 1 — API layer + hooks + their tests:**
+- `lib/api/supplierDocuments.js` — `uploadDocumentFile(id, file)`
+  (multipart POST through the shared axios `api`, field name `"file"`);
+  `downloadDocumentFile(id)` (cookie-aware blob via `authedFetch`
+  against `${API_BASE}/v1/supplier-documents/{id}/file`, returns
+  `{blob, filename}`, throws structured `{status, detail}` on
+  non-2xx); `parseContentDispositionFilename(header)` (RFC-5987
+  `filename*=UTF-8''…` preferred over plain `filename="…"`).
+- `hooks/supplierDocuments.js` — `useUploadDocumentFile(supplierId)`:
+  `useMutation({id, file})` invalidating `docsKeys.all(supplierId)`
+  on success. Download stays imperative.
+- Tests added: `lib/api/__tests__/supplierDocuments.test.js` (17),
+  `hooks/__tests__/supplierDocuments.test.jsx` (11). Gate 1 full-suite
+  Jest: 80 suites / 598 tests.
+
+**Gate 2 — Cleanup + File column + DocumentsTab tests:**
+- §R1 destructive cleanup: dialog `<Input>` `document-form-file-ref`
+  removed; `file_ref` purged from `emptyForm()`, `rowToForm()` and
+  the `onSubmit` payload builder; "File ref" `<SensitiveValue/>`
+  column replaced with the new "File" column. Repo-wide grep for
+  `document-form-file-ref` and `file_ref` in `DocumentsTab.jsx` →
+  zero hits.
+- §R2 File column (new `DocumentFileCell` + `FilePicker`
+  sub-components in the same file):
+  - `has_file && canViewSensitiveDocs` → file_name + human size
+    (via `formatFileSize`) + Download button; Replace control when
+    editable + not archived.
+  - `has_file && !canViewSensitiveDocs` → neutral "File attached"
+    indicator only.
+  - `!has_file && canEditDocs && !is_archived` → Upload control +
+    helper hint text ("PDF, image, Office docs · 25 MB max").
+  - Otherwise → `—` placeholder.
+  - Archived rows: NO Upload/Replace; Download still permitted on
+    existing files for sensitive viewers (§R2.4).
+- §R2.5 mobile-first upload: real `<input type="file">` (not
+  drag-drop-only) wrapped in `<label>` for tap-to-pick, `accept`
+  set to the EXACT §R0.3 backend allowlist (`ALLOWED_MIME_TYPES`
+  frozen at module scope). Client-side pre-check (`preCheckFile`)
+  fires BEFORE the request: empty / wrong-type / >25 MB blocked
+  with inline error; no toast spam. Toast mapping on server errors:
+  413 → "File is too large — 25 MB cap."; 422 → `detail` echoed;
+  502 → "Document storage is temporarily unavailable, try again
+  shortly." (raw detail NEVER echoed for 502).
+- §R2.6 download: blob → in-memory `<a download={filename ||
+  row.file_name || 'document'}>` → click → `URL.revokeObjectURL`
+  in `finally`. No SharePoint URL touches the DOM.
+- §R9 scope-creep (confirmed, not silent):
+  - Uploading-state guard (`uploadingId` disables the picker while
+    in flight; "Uploading…" copy).
+  - Inline file-type / size hint text under the empty-state Upload.
+  - Inline per-row pre-check error rendered next to the affordance.
+
+**§R5 component tests:** `DocumentsTab.test.jsx` grew **10 → 30 tests**.
+All 13 §R5 acceptance cases covered + §R2.4 archived-row guard +
+§R2.5 mobile-first invariant + §R9 uploading-state. Mocks for
+`@/hooks/supplierDocuments`, `@/lib/api/supplierDocuments`,
+`@/context/AuthContext`, `sonner`. NO real network.
+
+**Gate 2 VERIFY (canonical, 2nd-run):**
+- Full Jest: **80 suites / 618 tests passed** (delta vs Gate 1:
+  +20 tests; delta vs pack-start: +2 suites / +48 tests).
+- Targeted: `--testPathPattern="DocumentsTab"` → **30/30 passed**.
+- Greps: `document-form-file-ref` zero · `file_ref` in
+  `DocumentsTab.jsx` zero · `sharepoint|graph.microsoft` strict
+  (comments stripped) zero · runtime DOM emptiness re-proven by
+  §R5 #13.
+- Backend frozen: `git status --porcelain backend/` empty; alembic
+  head `0042_file_ref_text`; perms **132** (verified by `bootstrap.
+  verify.perms`).
+
+**Files landed (frontend only):**
+- `frontend/src/lib/api/supplierDocuments.js` (modified)
+- `frontend/src/hooks/supplierDocuments.js` (modified)
+- `frontend/src/components/suppliers/DocumentsTab.jsx` (modified)
+- `frontend/src/components/suppliers/__tests__/DocumentsTab.test.jsx` (modified)
+- `frontend/src/lib/api/__tests__/supplierDocuments.test.js` (added, Gate 1)
+- `frontend/src/hooks/__tests__/supplierDocuments.test.jsx` (added, Gate 1)
+- `CHANGELOG.md` (entry prepended for this pack)
+- `docs/chat-summaries/chat-42-closing.md` (new — first close for chat 42)
+- `memory/PRD.md` (this entry)
+
+Backlog **B76 — Supplier-document upload UI** delivered. Operator
+hand-marks `docs/SY_Hub_Phase2_Backlog.md` (operator-owned — NOT
+touched here).
+
+---
+
 ### Chat 41 — Build Pack 2.7-BE-rev-B · SharePoint/OneDrive via Microsoft Graph · **Gate 3 / pack close** (2026-02)
 
 Closes rev-B: operator-run smoke-test script + closing docs landed.

@@ -11,6 +11,185 @@ Each entry: date, prompt reference (if applicable), change, rationale.
 
 ## Entries
 
+## Chat 42 — Build Pack 2.7-FE-docupload — Supplier-document file upload/download control (Frontend) (2026-02)
+
+Frontend-only delivery wiring the rev-B `POST/GET /v1/supplier-documents/{id}/file`
+endpoints (Chat 41 / Build Pack 2.7-BE-rev-B) onto `DocumentsTab.jsx`.
+Backend FROZEN — zero changes, permissions remain **132**, alembic head
+remains **`0042_file_ref_text`**. Two-gate run, both verified on
+`origin/main` via raw-fetch before advancing. Closes backlog **B76**.
+
+### Gate 1 — API layer + hooks + their tests
+
+- **`lib/api/supplierDocuments.js`** — added two functions alongside
+  the existing list/create/patch/archive/unarchive set:
+  - `uploadDocumentFile(id, file)` — multipart POST via the shared
+    axios `api` instance (`withCredentials` rides cookies). Field name
+    `"file"` matches the backend's `file: UploadFile = File(...)`.
+    Returns the serialised doc with `has_file=true` + sensitive file
+    metadata. Replace re-uses this same endpoint (second upload
+    supersedes — backend-confirmed).
+  - `downloadDocumentFile(id)` — uses `authedFetch` against
+    `${API_BASE}/v1/supplier-documents/{id}/file`. NEVER axios — we
+    want the raw Blob, not a JSON envelope. Returns
+    `{ blob, filename }` where `filename` is parsed from
+    Content-Disposition. Throws a structured `{status, detail}` error
+    on non-2xx so the component can map status → toast per §R0.2.
+  - `parseContentDispositionFilename` helper — RFC-5987
+    `filename*=UTF-8''…` (percent-decoded) preferred over the plain
+    `filename="…"` form; `null` when neither is parseable.
+- **`hooks/supplierDocuments.js`** — added
+  `useUploadDocumentFile(supplierId)` (`useMutation({id, file})`),
+  invalidating `docsKeys.all(supplierId)` on success exactly like
+  `useCreateDocument`. Download stays imperative (no hook) — it's a
+  blob → object URL → click → revoke action, not cache-shaped.
+
+### Gate 2 — Cleanup + File column + DocumentsTab tests
+
+- **§R1 destructive cleanup (NOT additive):**
+  - Removed `document-form-file-ref` `<Input>` from the add/edit
+    dialog. Repo-wide grep for `document-form-file-ref` in
+    `DocumentsTab.jsx` → **zero matches**.
+  - Dropped `file_ref` from `emptyForm()`, `rowToForm()`, AND the
+    `onSubmit` payload builder. The
+    `if (form.file_ref) payload.file_ref = form.file_ref;` line was
+    deleted. Repo-wide grep for `file_ref` in `DocumentsTab.jsx` →
+    **zero matches**.
+  - Removed the "File ref" `<SensitiveValue/>` table column and
+    replaced with the new "File" column (§R2).
+- **§R2 File column** (new `DocumentFileCell` sub-component):
+  - `has_file && canViewSensitiveDocs` → file_name (testid
+    `document-row-file-name-{id}`) + human size via `formatFileSize`
+    (testid `document-row-file-size-{id}`) + Download button (testid
+    `document-row-download-{id}`); Replace control rendered when
+    editable + not archived.
+  - `has_file && !canViewSensitiveDocs` → neutral "File attached"
+    indicator only (testid `document-row-file-attached-{id}`). No
+    name, no size, no Download. File metadata is sensitive.
+  - `!has_file && canEditDocs && !is_archived` → Upload control
+    (testid `document-row-upload-{id}`) + helper hint text
+    ("PDF, image, Office docs · 25 MB max").
+  - Otherwise → `—` placeholder (testid `document-row-no-file-{id}`).
+  - Archived rows: NO Upload/Replace; Download is still permitted
+    on existing files for sensitive viewers (§R2.4).
+- **§R2.5 mobile-first upload picker** (new `FilePicker` sub-component):
+  - Baseline is a real `<input type="file">` (NOT drag-drop-only),
+    wrapped in a `<label>` for tap-to-pick on iOS/Android.
+  - `accept` attribute set to the EXACT §R0.3 backend allowlist
+    (`ALLOWED_MIME_TYPES`): PDF, JPEG, PNG, GIF, WebP, DOC, DOCX, XLS,
+    XLSX, CSV, TXT — frozen as a module-level constant.
+  - Client-side pre-check (`preCheckFile`) fires BEFORE the request:
+    empty (0 bytes) blocks with "File is empty…"; type not in
+    allowlist blocks with "Unsupported file type"; >25 MB blocks with
+    a message stating the cap. Inline error rendered per-row
+    (`document-row-upload-error-{id}`) — no toast spam.
+  - On success → `toast.success('File uploaded')` + cache invalidates
+    via the upload hook.
+  - Server error mapping (`uploadErrorMessage`):
+    - 413 → "File is too large — 25 MB cap."
+    - 422 → surfaces server `detail` verbatim.
+    - 502 → "Document storage is temporarily unavailable, try again
+      shortly." Hard rule: the raw backend detail is NOT echoed for
+      502 — never present storage outages as user-driven.
+- **§R2.6 download**: `downloadDocumentFile(id)` → blob → in-memory
+  `<a download={filename || row.file_name || 'document'}>` → click →
+  `URL.revokeObjectURL` in `finally`. No SharePoint URL touches the
+  DOM. 404 → "File not found." toast; 502 → same friendly
+  storage-unavailable toast.
+
+### §R9 scope-creep — confirmed (not silent)
+
+- **Uploading-state guard** — `uploadingId` component state disables
+  the picker label + `<input>` while a mutation is in flight
+  ("Uploading…" copy on the affordance). Prevents double-submit on
+  slow / mobile connections.
+- **Helper hint text** — small caption under the empty-state Upload
+  control listing the cap ("PDF, image, Office docs · 25 MB max").
+- **Inline per-row pre-check error** — surfaced in the cell itself
+  (`document-row-upload-error-{id}`), not via a toast, so the user
+  sees the problem next to the control. Cleared on the next file
+  pick.
+
+Backend deliberately NOT touched for any of these (all three are
+pure client-side affordances).
+
+### §R5 tests (Gate 2 acceptance: all 13 cases + supporting)
+
+`frontend/src/components/suppliers/__tests__/DocumentsTab.test.jsx`
+grew **10 → 30 tests**. Mocks: `@/hooks/supplierDocuments`,
+`@/lib/api/supplierDocuments`, `@/context/AuthContext`, `sonner` —
+NO real network.
+
+1. Cleanup — `document-form-file-ref` testid ABSENT (add + edit
+   dialogs).
+2. Upload happy path — pick a valid PDF → `useUploadDocumentFile`
+   called with `{id, file}` → row flips to `has_file=true` with name
+   + "100 B" + Download for sensitive viewer.
+3. Empty file pre-check — 0-byte blocked, `uploadMutate` NOT called,
+   inline "empty" error.
+4. Disallowed type — `application/octet-stream` `.exe` blocked, no
+   request, inline "Unsupported file type" error.
+5. Oversize — `Object.defineProperty(file, 'size', { value: 25 MB +
+   1 })` blocked, no request, inline "25 MB" cap message.
+6. Server 413 — pre-check bypassed (mock rejects with 413) →
+   `toast.error` matches `/too large/` + `/25 MB/`.
+7. Server 422 — `detail` echoed verbatim in the toast.
+8. Download 404 — `toast.error('File not found.')`.
+9. 502 (upload + download) — friendly storage-unavailable toast;
+   hard negative asserts the raw backend detail is NOT echoed.
+10. Download blob — `URL.createObjectURL(blob)` + `<a>.click()` +
+    `URL.revokeObjectURL(...)` all asserted; filename fallback to
+    `row.file_name` when Content-Disposition absent.
+11. Sensitive gating — without `view_sensitive`: neutral "File
+    attached" only; no name, no size, no Download. Cell text
+    asserted to NOT contain the filename.
+12. Edit gating — without `edit`: "No file" placeholder, no Upload
+    control. Archived rows: Download still available for sensitive
+    viewers; Replace absent.
+13. No-URL-leak — `cell.outerHTML.toLowerCase()` asserted to match
+    none of `sharepoint`, `graph.microsoft`, or `https?://`. Tested
+    for both sensitive and non-sensitive viewers.
+
+Plus: `§R2.4` archived-row guard (no Upload on archived rows);
+`§R2.5` mobile-first invariant (the upload control is an
+`<input type="file">` and the `accept` attribute contains every
+§R0.3 MIME).
+
+### Gate 1 & Gate 2 VERIFY (canonical, 2nd-run)
+
+- **Gate 1 full Jest:** Test Suites **80 passed**, Tests **598 passed**
+  (delta vs pre-pack baseline: +2 suites, +28 tests).
+- **Gate 2 full Jest:** Test Suites **80 passed**, Tests **618 passed**
+  (delta vs Gate 1: +20 tests; DocumentsTab.test.jsx 10 → 30).
+- **Gate 2 targeted Jest:** `--testPathPattern="DocumentsTab"` →
+  30 / 30 passed, ~1.2 s.
+- **§R6 greps (Gate 2):**
+  - `document-form-file-ref` in `DocumentsTab.jsx` → **0 hits**.
+  - `file_ref` in `DocumentsTab.jsx` → **0 hits**.
+  - `sharepoint | graph\.microsoft` in `DocumentsTab.jsx` (strict,
+    after stripping `/* … */` and `//` comments) → **0 hits**.
+    The 3 raw-grep hits are all source-comments describing the
+    security invariant ("The SharePoint URL NEVER reaches the DOM" /
+    "SHAREPOINT_MAX_BYTES default" / "never SharePoint URL").
+    Runtime DOM emptiness re-proven by §R5 #13.
+  - `git status --porcelain backend/` → empty. `alembic` head still
+    `0042_file_ref_text`; perms still **132**.
+- **Files changed (Gate 1 + Gate 2):**
+  - `frontend/src/lib/api/supplierDocuments.js`
+  - `frontend/src/hooks/supplierDocuments.js`
+  - `frontend/src/components/suppliers/DocumentsTab.jsx`
+  - `frontend/src/components/suppliers/__tests__/DocumentsTab.test.jsx`
+- **Files added (Gate 1):**
+  - `frontend/src/lib/api/__tests__/supplierDocuments.test.js`
+    (17 tests)
+  - `frontend/src/hooks/__tests__/supplierDocuments.test.jsx`
+    (11 tests)
+
+Backlog **B76** delivered. Operator hand-marks
+`docs/SY_Hub_Phase2_Backlog.md` (operator-owned — NOT touched here).
+
+---
+
 ## Chat 41 — Build Pack 2.7-BE-rev-B SharePoint/OneDrive Document Storage via Microsoft Graph (Backend) — **Gate 3 / pack close** (2026-02)
 
 Closes out rev-B: §R6 smoke-test script + closing docs. No new
