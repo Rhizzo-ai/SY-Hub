@@ -16,7 +16,7 @@ import * as path from 'path';
 const PREVIEW_URL =
   process.env.REACT_APP_PREVIEW_URL
   || process.env.REACT_APP_BACKEND_URL
-  || 'https://sy-hub-ops.preview.emergentagent.com';
+  || 'https://auth-verify-preview.preview.emergentagent.com';
 
 const AUTH_DIR = path.resolve(__dirname, 'playwright/.auth');
 
