@@ -11,6 +11,226 @@ Each entry: date, prompt reference (if applicable), change, rationale.
 
 ## Entries
 
+## Chat 44 — Build Pack 2.7-FE-docfix · Supplier-document upload bugfix + dialog attach + drag-drop (Frontend) (2026-02)
+
+Frontend-only delivery on top of Chat 43's B76 upload UI. Two gates as
+specified, plus a live-eyeball-caught multipart bug between Gate 2
+landing and the user's live upload attempt — fixed and verified end-to-
+end on `origin/main` before this close. Backend FROZEN throughout —
+zero changes, permissions remain **132**, alembic head remains
+**`0042_file_ref_text`**, `git status --porcelain backend/` empty at
+every gate-stop. Closes backlog **B78**.
+
+### Gate 1 — §R1 over-strict client pre-check fix
+
+The Chat-43 `preCheckFile` rejected valid files whenever the browser
+supplied an empty or surprising `file.type`. Symptom: tapping a PDF
+on iOS Safari and on certain Windows browsers got blocked with
+"Unsupported file type." even though the backend would have accepted
+it. Cause: a strict MIME-only match against `ALLOWED_MIME_TYPES`,
+with no fallback to extension.
+
+- **`frontend/src/components/suppliers/DocumentsTab.jsx`** —
+  - Added a module-level `ALLOWED_EXTENSIONS` constant mirroring the
+    backend allowlist `.pdf .jpg .jpeg .png .gif .webp .doc .docx
+    .xls .xlsx .csv .txt`.
+  - Added a `fileExtension(name)` helper — lowercase, last `.`-token
+    only (so `report.tar.gz` → `.gz`), tolerant of `null` /
+    `undefined` / dot-trailing inputs.
+  - Rewrote `preCheckFile(file)` to accept the file if **either** the
+    MIME matches `ALLOWED_MIME_TYPES` **or** the extension matches
+    `ALLOWED_EXTENSIONS`. Empty-file (`size === 0`) and >25 MB checks
+    unchanged. The server remains the source of truth — this client
+    pre-check is purely a UX-friendly fast-fail.
+- **`frontend/src/components/suppliers/__tests__/DocumentsTab.test.jsx`**
+  — added 5 `§R1` regression tests (`#1`–`#5`) covering: empty MIME +
+  good extension accepted; wrong MIME + good extension accepted;
+  good MIME + missing extension accepted; bad both → rejected;
+  `fileExtension` helper edge cases.
+
+### Gate 2 — §R2 dialog file-attach + §R3 desktop drag-drop + §R5 hints
+
+Layered onto the §R2.5 mobile baseline from Chat 43 — **the
+`<input type="file">` baseline survives intact** in every position
+(hard mobile constraint).
+
+- **`DocumentsTab.jsx`** —
+  - **§R2 dialog file-attach.** The Add/Edit dialog now carries an
+    optional attach area (testid `document-form-attach`) below the
+    archive checkbox. The staged file lives in a SEPARATE component
+    `useState` (`pendingFile`) — it is **never** added to the
+    create/patch JSON payload (`file_ref` stays system-owned; see
+    `file_ref`-comment-only invariant). The upload mutation fires
+    only **after** the create/patch settles: for create the new id
+    comes back from `create.mutateAsync` and is forwarded into
+    `upload.mutateAsync({id, file})`; for edit the existing
+    `editing` id is reused. Toasts and dialog close are gated on the
+    full sequence (or, when the upload fails, a doc-saved-but-upload-
+    failed toast that leaves the doc in place).
+  - **§R3 desktop drag-drop.** New `DropZone` sub-component wraps:
+    (a) the row Upload cell (testid `document-row-dropzone-{id}`)
+    and (b) the dialog attach area (testid `document-form-dropzone`).
+    `onDragOver` toggles a `data-dragover` attribute for the visual
+    state; `onDrop` reads `e.dataTransfer?.files?.[0]` and routes
+    through the SAME `preCheckFile` → `onPickFile` /
+    `onStageDialogFile` paths the click flow uses, so all pre-check
+    + toast mapping behaviours are reused.
+  - **§R5 hints (scope-creep, confirmed).** `<input accept>` now
+    appends the `.ext` list to the MIME list (Windows / older
+    Chromium pickers honour extensions more reliably). New copy
+    "or drag a file here" hint under the dialog attach and the row
+    Upload state.
+- **`DocumentsTab.test.jsx`** — added §R6 acceptance tests
+  **`#6`–`#14`** (plus `#6b` for the edit-path upload-after-patch
+  case). Coverage:
+  - `#6` / `#6b` — create/patch THEN upload chain, with the new id /
+    editing id passed to `useUploadDocumentFile`.
+  - `#7` — no staged file → create only, NO upload mutation.
+  - `#8` — payload purity: BOTH the create body AND the patch body
+    contain no `file` and no `file_ref` keys.
+  - `#9` — dialog pre-check on staged `.exe` → inline error, NOT
+    staged, no upload-on-save.
+  - `#10` — staged file resets on dialog reopen (stage → Cancel →
+    reopen → clean).
+  - `#11` — synthetic drop on the row dropzone routes through
+    `onPickFile` → `uploadMutate({id, file})`. Tap-to-pick `<input
+    type="file">` survives in DOM after the drop.
+  - `#12` — synthetic drop on the dialog dropzone stages the file
+    (filename shown). No upload yet — upload fires on Save.
+  - `#13` — pre-check applies on drop (`.exe` rejected on both row
+    and dialog).
+  - `#14` — mobile baseline intact: `<input type="file">` renders in
+    BOTH the row Upload state AND the dialog attach area, both
+    carry the §R5 extension list in `accept`.
+
+### Gate 2 follow-up — multipart Content-Type bug + wire-level test
+
+After Gate 2 landed on `main` the operator attempted a live upload
+from the row Upload control and the server returned 422:
+
+```
+{"type":"missing","loc":["body","file"],"msg":"Field required","input":null}
+```
+
+Server saw no `file` field — i.e. the request reached the endpoint,
+but the multipart body never arrived as multipart. Diagnosed from the
+three layers (`onPickFile` → `useUploadDocumentFile` → `uploadDocument
+File`): file flowed correctly through all three; the bug was deeper.
+
+**Root cause.** `frontend/src/lib/api.js` declares the shared axios
+instance with `headers: { 'Content-Type': 'application/json' }` at
+instance creation. axios 1.x's FormData auto-detection requires the
+merged `Content-Type` to be absent so the browser can fill in
+`multipart/form-data; boundary=…`. The instance-level default
+poisoned that auto-detection: axios shipped the request with
+`Content-Type: application/json` and a FormData body it could not
+serialise — server-side multipart parser found no `file` field →
+422. The §R3 API-layer test from Chat 43 missed the bug because
+both the component tests AND the hook tests mock `@/lib/api`
+entirely; nothing in the suite exercised the real axios `api`
+instance with its real defaults.
+
+**Fix** — one file, one line, scoped per-request:
+
+- **`frontend/src/lib/api/supplierDocuments.js`** — `uploadDocumentFile`
+  now passes `{ headers: { 'Content-Type': undefined } }` as the
+  third arg to `api.post`. axios 1.x interprets an undefined header
+  value at the per-request layer as "remove from merged headers",
+  which unblocks the FormData auto-detection. **`undefined` — NOT
+  the bare string `'multipart/form-data'`**, which would omit the
+  boundary and 422 identically. The shared `api` default stays
+  `application/json` for every other caller (zero blast radius).
+  `lib/api.js` itself was NOT touched.
+
+**Wire-level test (the blind spot closed):**
+
+- **`frontend/src/lib/api/__tests__/supplierDocuments.upload-
+  multipart.test.js`** (NEW) — does **not** `jest.mock('@/lib/api')`.
+  Imports the REAL `api` instance, installs a request interceptor
+  (captures the post-merge / pre-`transformRequest` view) AND a
+  custom adapter (captures the post-transform view), then calls
+  `uploadDocumentFile('D1', file)`. Asserts:
+  1. The merged request `Content-Type` at interceptor time is
+     **undefined** — proves the per-request override stripped the
+     JSON default during `mergeConfig`. (If the bug were back, this
+     would be `application/json`.)
+  2. The merged `Content-Type` at adapter time is NOT
+     `application/json` under any casing / bucket. (In jsdom axios
+     writes `application/x-www-form-urlencoded` here because browser
+     FormData is not on the Node `form-data` code path; in a real
+     browser the XHR layer overwrites with `multipart/form-data;
+     boundary=…` at `send()` time. Either way, the invariant that
+     matters — JSON did not win — holds.)
+  3. FormData body carries the File on field `file`.
+  4. POST verb + URL `/v1/supplier-documents/D1/file` + `baseURL`
+     intact; `withCredentials: true` rides through.
+  5. The shared `api.defaults.headers['Content-Type']` is STILL
+     `application/json` after the call — pinning the no-blast-radius
+     invariant.
+  6. `axios.VERSION` major ≥ 1 — surfaces a header-merge regression
+     if a future bump changes semantics.
+- **`frontend/src/lib/api/__tests__/supplierDocuments.test.js`** —
+  the Chat-43 §R3.1 assertion that pinned the (now-buggy) shape
+  `expect(opts).toBeUndefined()` was updated to pin the new
+  contract: `opts.headers['Content-Type']` is undefined. Comment
+  reasoning rewritten.
+
+### Gate-2-follow-up live confirmation
+
+After Save-to-GitHub of the multipart fix, the operator repeated the
+exact 422-repro upload from the row Upload control with a PDF —
+this time the request succeeded end-to-end (200, doc has_file=true,
+filename + size returned, download round-trip works). Dialog attach
++ drag-drop paths re-tested live in the same session.
+
+### VERIFY (canonical, double-run)
+
+- **Gate 1 full Jest:** Test Suites **80 passed**, Tests **624
+  passed** (delta vs B76 close: +6 tests = +5 §R1 cases + 1 helper).
+- **Gate 2 full Jest:** Test Suites **80 passed**, Tests **634
+  passed** (delta vs Gate 1: +10 tests; `DocumentsTab.test.jsx`
+  30 → 46).
+- **Gate 2 targeted Jest:** `--testPathPattern="DocumentsTab"` →
+  46 / 46 passed, ~2 s. The §R6 #6–#14 names visible in the run
+  list (`✓ #6 — dialog attach: create + upload happy path …`,
+  through `✓ #14 — mobile baseline intact …`).
+- **Gate 2 follow-up full Jest:** Test Suites **81 passed**, Tests
+  **639 passed** (delta vs Gate 2: +1 suite, +5 tests — all from
+  the new `supplierDocuments.upload-multipart.test.js`). Double-run
+  identical.
+- **Greps (Gate 2 follow-up):**
+  - `file_ref` in `DocumentsTab.jsx` → 3 hits, **all in `//` / `/*`
+    comments** documenting the system-owned invariant pinned by
+    Gate 2 test `#8`. No runtime references.
+  - `'type="file"'` in `DocumentsTab.jsx` → still present at the
+    single shared `<FilePicker/>` `<input>` (proves the mobile
+    tap-to-pick baseline survives drag-drop layering).
+  - `sharepoint | graph.microsoft | https?://` in `DocumentsTab.jsx`
+    → comments-only (per §R8 allowance from Chat 43); runtime DOM
+    emptiness re-pinned by §R5 #13 from Chat 43.
+  - `lib/api.js` shared instance default → still
+    `headers: { "Content-Type": "application/json" }` (the new
+    `instance default Content-Type is still application/json (NOT
+    changed by this fix)` test pins this).
+- **Backend frozen:** `git status --porcelain backend/` empty at
+  every gate-stop AND at push time. Alembic head still
+  `0042_file_ref_text`; perms still **132** (AST-parsed from
+  `backend/app/seed_rbac.py:PERMISSION_CATALOGUE` accumulator —
+  Chat 43 invariant unbroken).
+- **Files changed (whole pack):**
+  - `frontend/src/components/suppliers/DocumentsTab.jsx` (modified)
+  - `frontend/src/components/suppliers/__tests__/DocumentsTab.test.jsx` (modified)
+  - `frontend/src/lib/api/supplierDocuments.js` (modified — Gate-2 follow-up only)
+  - `frontend/src/lib/api/__tests__/supplierDocuments.test.js` (modified — Gate-2 follow-up only)
+- **Files added (whole pack):**
+  - `frontend/src/lib/api/__tests__/supplierDocuments.upload-multipart.test.js` (Gate-2 follow-up — 5 tests; closes the mocked-hook blind spot)
+
+Backlog **B78 — Supplier-document upload bugfix + dialog attach +
+drag-drop** delivered. Operator hand-marks
+`docs/SY_Hub_Phase2_Backlog.md` (operator-owned — NOT touched here).
+
+---
+
 ## Chat 43 — Build Pack 2.7-FE-docupload — Supplier-document file upload/download control (Frontend) (2026-02)
 
 Frontend-only delivery wiring the rev-B `POST/GET /v1/supplier-documents/{id}/file`
