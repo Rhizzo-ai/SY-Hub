@@ -1,4 +1,5 @@
-"""Supplier compliance documents service — Chat 32 §R3.3 (Prompt 2.7).
+"""Supplier compliance documents service — Chat 32 §R3.3 (Prompt 2.7)
++ Chat 41 §R3 (Build Pack 2.7-BE-rev-B) — Microsoft Graph upload/download wiring.
 
 Mirrors services/suppliers.py 1:1 conventions:
   - `ValueError` for validation failures.
@@ -6,29 +7,78 @@ Mirrors services/suppliers.py 1:1 conventions:
   - `_snapshot(d)` + `record_audit(...)` for every CUD.
   - Tenant-scoped queries.
 
+rev-B additions:
+  - `upload_document_file` / `download_document_file` — orchestrate the
+    `DocumentStore` (stub in tests, Graph in live) for binary content.
+  - Structured `file_ref` (JSON `StoredObjectRef`) — system-owned, no
+    client-supplied free text any more.
+  - Content-type allowlist + size cap (same idiom as actual_attachments).
+  - `has_file` / file metadata in serialise (sensitive-gated on the
+    sensitive caller; `has_file` itself is non-sensitive).
+
 Expiry is STORED ONLY — no scanning, no flagging side-effects (LD2).
 """
 from __future__ import annotations
 
+import json
+import logging
 import uuid
 from datetime import date, datetime, timezone
-from typing import Any, Optional
+from typing import IO, Any, Optional, Tuple
 
 from fastapi import Request
 from sqlalchemy import and_, select
 from sqlalchemy.orm import Session
 
+from app.config import get_settings
 from app.models.supplier_documents import (
     SupplierDocument, SUPPLIER_DOC_TYPES,
 )
 from app.models.suppliers import Supplier
 from app.services.audit import field_diff, record_audit
+from app.services.sharepoint_client import (
+    DocumentStore, SharePointError, StoredObjectRef, _safe_filename,
+)
+
+log = logging.getLogger(__name__)
 
 
 _AUDIT_COLS: tuple[str, ...] = (
     "supplier_id", "doc_type", "title", "file_ref",
     "issued_on", "expires_on", "notes", "is_archived",
 )
+
+
+# ---------------------------------------------------------------------------
+# rev-B: content-type allowlist + size cap.
+# ---------------------------------------------------------------------------
+
+# Mirrors actual_attachments.ALLOWED_MIME_TYPES (Build Pack §R0.3.1: "start
+# from this exact frozenset"). Supplier compliance docs are typically PDF /
+# image / office formats.
+ALLOWED_DOC_MIME_TYPES: frozenset[str] = frozenset({
+    "application/pdf",
+    "image/jpeg", "image/png", "image/gif", "image/webp",
+    "application/msword",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.ms-excel",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "text/csv", "text/plain",
+})
+
+
+def _supplier_folder_path(supplier_id: uuid.UUID | str) -> str:
+    """Stable per-supplier folder under the configured root folder.
+
+    Layout in the document store:
+
+        {SHAREPOINT_ROOT_FOLDER}/Suppliers/{supplier_id}/
+
+    The `_root_folder` prefix is owned by the GraphDocumentStore
+    `ensure_folder` implementation, so callers pass only the relative
+    path under root.
+    """
+    return f"Suppliers/{supplier_id}"
 
 
 def _snapshot(d: SupplierDocument) -> dict[str, Any]:
@@ -171,7 +221,7 @@ def create_document(
         supplier_id=supplier_id,
         doc_type=doc_type,
         title=title,
-        file_ref=(payload.get("file_ref") or None),
+        file_ref=None,  # rev-B: file_ref is system-owned via upload endpoint.
         issued_on=issued,
         expires_on=expires,
         notes=(payload.get("notes") or None),
@@ -227,8 +277,11 @@ def update_document(
         row.title = t
     if "doc_type" in payload:
         row.doc_type = _validate_doc_type(payload["doc_type"])
-    if "file_ref" in payload:
-        row.file_ref = payload["file_ref"] or None
+    # rev-B: `file_ref` is no longer client-settable; it is owned by the
+    # upload/download endpoints. Any client-supplied `file_ref` in the
+    # PATCH body is silently ignored here (the schema removed it; this
+    # is belt-and-braces in case the schema is bypassed in service-layer
+    # callers).
     if "issued_on" in payload:
         row.issued_on = _coerce_date(payload["issued_on"], field="issued_on")
     if "expires_on" in payload:
@@ -305,19 +358,178 @@ def set_archived(
 
 
 # ---------------------------------------------------------------------------
+# rev-B: file upload / download via DocumentStore
+# ---------------------------------------------------------------------------
+
+def upload_document_file(
+    db: Session,
+    tenant_id: uuid.UUID,
+    user_id: uuid.UUID,
+    document_id: uuid.UUID,
+    *,
+    file_stream: IO[bytes],
+    original_filename: str,
+    content_type: str,
+    store: DocumentStore,
+    request: Optional[Request] = None,
+) -> SupplierDocument:
+    """Upload a file and attach it to a supplier document.
+
+    Raises:
+        LookupError:      document not in tenant.
+        ValueError:       content-type not allowed, empty file, or
+                          file size exceeds cap.
+        SharePointError:  document storage failure (router → 502).
+
+    On success, supersedes any previously attached file (best-effort
+    delete on the old `StoredObjectRef`, idempotent in the store) and
+    persists the new structured `file_ref` JSON.
+    """
+    row = get_document(db, tenant_id, document_id)
+    if row is None:
+        raise LookupError(
+            f"supplier_document {document_id} not found in tenant"
+        )
+
+    if content_type not in ALLOWED_DOC_MIME_TYPES:
+        raise ValueError(f"content_type {content_type!r} not allowed")
+
+    max_bytes = get_settings().sharepoint_max_bytes
+    # Read max_bytes + 1 so we can detect the over-cap case without
+    # buffering an unbounded payload (mirrors actual_attachments).
+    data = file_stream.read(max_bytes + 1)
+    if len(data) == 0:
+        raise ValueError("file is empty")
+    if len(data) > max_bytes:
+        raise ValueError(
+            f"file exceeds maximum upload size of {max_bytes} bytes"
+        )
+
+    # Best-effort delete of the previous object if present. Idempotent
+    # in the store; never blocks the new upload.
+    old_ref_json = row.file_ref
+    if old_ref_json:
+        try:
+            store.delete(old_ref_json)
+        except SharePointError:
+            log.warning(
+                "supplier_documents: failed to delete previous object "
+                "for doc %s; proceeding with replacement", row.id,
+            )
+
+    folder = _supplier_folder_path(row.supplier_id)
+    new_ref: StoredObjectRef = store.upload(
+        folder_path=folder,
+        filename=original_filename,
+        content=data,
+        content_type=content_type,
+    )
+
+    before = _snapshot(row)
+    row.file_ref = new_ref.to_json()
+    row.updated_by = user_id
+    row.updated_at = datetime.now(timezone.utc)
+    db.flush()
+    after = _snapshot(row)
+
+    record_audit(
+        db, action="Add_Attachment",
+        resource_type="supplier_document",
+        resource_id=row.id,
+        actor_user_id=user_id,
+        field_changes=field_diff(before, after),
+        metadata={
+            "supplier_id": str(row.supplier_id),
+            "doc_type": row.doc_type,
+            "file_name": new_ref.name,
+            "file_size": new_ref.size,
+            "file_content_type": new_ref.content_type,
+        },
+        request=request,
+    )
+    return row
+
+
+def download_document_file(
+    db: Session,
+    tenant_id: uuid.UUID,
+    user_id: uuid.UUID,
+    document_id: uuid.UUID,
+    *,
+    store: DocumentStore,
+    request: Optional[Request] = None,
+) -> Tuple[bytes, str, str]:
+    """Download the file attached to a supplier document.
+
+    Returns `(content, filename, content_type)`. Raises:
+
+        LookupError:      doc not in tenant, OR doc has no file attached.
+        SharePointError:  document storage failure (router → 502).
+
+    Audits as "Export" — the file is leaving the platform via the API.
+    """
+    row = get_document(db, tenant_id, document_id)
+    if row is None:
+        raise LookupError(
+            f"supplier_document {document_id} not found in tenant"
+        )
+    if not row.file_ref:
+        raise LookupError(
+            f"supplier_document {document_id} has no file attached"
+        )
+
+    content, filename, ctype = store.download(row.file_ref)
+
+    record_audit(
+        db, action="Export",
+        resource_type="supplier_document",
+        resource_id=row.id,
+        actor_user_id=user_id,
+        metadata={
+            "supplier_id": str(row.supplier_id),
+            "doc_type": row.doc_type,
+            "file_name": filename,
+            "file_size": len(content),
+        },
+        request=request,
+    )
+    return content, filename, ctype
+
+
+# ---------------------------------------------------------------------------
 # Serialisation
 # ---------------------------------------------------------------------------
 
 # Fields gated behind supplier_documents.view_sensitive.
+# rev-B: file metadata (file_name / file_size / file_content_type) is
+# derived from the StoredObjectRef JSON and is sensitive — non-sensitive
+# callers only see `has_file=true|false`.
 SENSITIVE_RESPONSE_FIELDS: frozenset[str] = frozenset({
     "file_ref",
+    "file_name",
+    "file_size",
+    "file_content_type",
     "notes",
 })
+
+
+def _parse_stored_ref(file_ref: Optional[str]) -> Optional[StoredObjectRef]:
+    if not file_ref:
+        return None
+    try:
+        return StoredObjectRef.from_json(file_ref)
+    except SharePointError:
+        # Legacy / pre-rev-B file_ref values are plain strings, not JSON.
+        # Treat them as opaque — no derived metadata.
+        return None
 
 
 def serialise(
     row: SupplierDocument, *, include_sensitive: bool,
 ) -> dict[str, Any]:
+    has_file = bool(row.file_ref)
+    ref = _parse_stored_ref(row.file_ref)
+
     base: dict[str, Any] = {
         "id": str(row.id),
         "tenant_id": str(row.tenant_id),
@@ -332,10 +544,16 @@ def serialise(
         ),
         "created_at": row.created_at.isoformat() if row.created_at else None,
         "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+        # has_file is non-sensitive — every viewer sees whether the doc
+        # has a file or not. The name/ref/size are gated below.
+        "has_file": has_file,
     }
     if include_sensitive:
         base["file_ref"] = row.file_ref
         base["notes"] = row.notes
+        base["file_name"] = ref.name if ref else None
+        base["file_size"] = ref.size if ref else None
+        base["file_content_type"] = ref.content_type if ref else None
     else:
         for k in SENSITIVE_RESPONSE_FIELDS:
             base[k] = None

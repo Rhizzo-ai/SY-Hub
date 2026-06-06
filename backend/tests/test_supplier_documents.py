@@ -101,13 +101,17 @@ def _mk_supplier(admin_session, name_suffix: str = "") -> str:
 
 class TestCreate:
     def test_create_document_persists(self, admin, engine):
-        """Gate 19: create document → persists with validated doc_type."""
+        """Gate 19: create document → persists with validated doc_type.
+
+        rev-B §R4.2: `file_ref` is REMOVED from the create body — it's
+        system-owned via the upload endpoint. Any client-supplied
+        `file_ref` here is silently dropped (Pydantic extra=ignore).
+        """
         sid = _mk_supplier(admin, "ok")
         body = {
             "supplier_id": sid,
             "doc_type": "Public_Liability",
             "title": "PL Insurance 2026",
-            "file_ref": "s3://docs/pl-2026.pdf",
             "issued_on": str(date.today()),
             "expires_on": str(date.today() + timedelta(days=365)),
             "notes": "Renewed Feb",
@@ -118,6 +122,35 @@ class TestCreate:
         assert out["doc_type"] == "Public_Liability"
         assert out["title"] == "PL Insurance 2026"
         assert out["is_archived"] is False
+        # rev-B §R4.2 VERIFY: a freshly-created doc has no file attached.
+        assert out["has_file"] is False
+        assert out["file_ref"] is None
+
+    def test_create_ignores_client_supplied_file_ref(self, admin, engine):
+        """rev-B §R4.2 VERIFY: a client-supplied `file_ref` in the
+        create body MUST NOT land in the persisted row. The schema
+        removed the field; Pydantic silently drops it.
+        """
+        sid = _mk_supplier(admin, "noref")
+        body = {
+            "supplier_id": sid,
+            "doc_type": "Other",
+            "title": "Should ignore file_ref",
+            "file_ref": "s3://attacker-supplied/evil.pdf",
+        }
+        r = admin.post(f"{BASE_URL}/api/v1/supplier-documents", json=body)
+        assert r.status_code == 201, r.text
+        out = r.json()
+        # Persisted file_ref must be None — the client's string is gone.
+        assert out["file_ref"] is None
+        assert out["has_file"] is False
+        # GET round-trip confirms the persisted state.
+        r2 = admin.get(
+            f"{BASE_URL}/api/v1/supplier-documents/{out['id']}"
+        )
+        assert r2.status_code == 200
+        assert r2.json()["file_ref"] is None
+        assert r2.json()["has_file"] is False
 
     def test_invalid_doc_type_rejected(self, admin, engine):
         """Gate 20: invalid doc_type → 422."""
@@ -148,10 +181,10 @@ class TestListArchiveFlag:
         """Gate 21: list excludes archived by default; include_archived returns them."""
         sid = _mk_supplier(admin, "lst")
         # Create one active doc and one to-be-archived doc.
-        d1 = admin.post(
+        admin.post(
             f"{BASE_URL}/api/v1/supplier-documents",
             json={"supplier_id": sid, "doc_type": "Other", "title": "Active"},
-        ).json()
+        )
         d2 = admin.post(
             f"{BASE_URL}/api/v1/supplier-documents",
             json={"supplier_id": sid, "doc_type": "Other", "title": "ToArchive"},
@@ -298,13 +331,17 @@ class TestReadonlyCannotView:
         holding suppliers.create). Per-resource sensitive gating
         (view_sensitive distinct from view) is therefore not testable
         against the seeded test users; the gating itself is exercised at
-        the serialiser layer in `services.supplier_documents.serialise`."""
+        the serialiser layer in `services.supplier_documents.serialise`.
+
+        rev-B note: `file_ref` is now system-owned, so the test body
+        drops the legacy client `file_ref` string and just creates a
+        plain doc.
+        """
         sid = _mk_supplier(admin, "ro")
         d = admin.post(
             f"{BASE_URL}/api/v1/supplier-documents",
             json={
                 "supplier_id": sid, "doc_type": "Other", "title": "T",
-                "file_ref": "s3://secret.pdf",
                 "notes": "internal-only",
             },
         ).json()
@@ -325,7 +362,7 @@ class TestSerialiserGating:
             supplier_id = uuid.uuid4()
             doc_type = "Other"
             title = "T"
-            file_ref = "s3://secret.pdf"
+            file_ref = None  # rev-B: no attached file in this fixture.
             issued_on = None
             expires_on = None
             notes = "internal-only"
@@ -337,8 +374,13 @@ class TestSerialiserGating:
 
         # WITH sensitive perm — values flow through.
         out_full = serialise(_FakeRow(), include_sensitive=True)
-        assert out_full["file_ref"] == "s3://secret.pdf"
         assert out_full["notes"] == "internal-only"
+        # has_file is non-sensitive in rev-B and remains visible.
+        assert out_full["has_file"] is False
+        # No file means file_name/size/content_type are None even for
+        # the sensitive viewer.
+        assert out_full["file_name"] is None
+        assert out_full["file_size"] is None
 
         # WITHOUT sensitive perm — sensitive fields are nulled.
         out_lite = serialise(_FakeRow(), include_sensitive=False)
@@ -348,3 +390,4 @@ class TestSerialiserGating:
             )
         # Non-sensitive fields still present.
         assert out_lite["title"] == "T"
+        assert out_lite["has_file"] is False

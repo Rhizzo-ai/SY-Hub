@@ -11,6 +11,108 @@ Each entry: date, prompt reference (if applicable), change, rationale.
 
 ## Entries
 
+## Chat 41 — Build Pack 2.7-BE-rev-B SharePoint/OneDrive Document Storage via Microsoft Graph (Backend) — **Gate 2** (2026-02)
+
+Wires the rev-B Graph stub into the supplier_documents service +
+router. `file_ref` is now system-owned (a structured
+`StoredObjectRef` JSON) — clients can no longer hand-write it.
+Smoke-test script + closing docs remain at Gate 3.
+
+End-of-Gate-2 head: **`0042_file_ref_text`** (unchanged from Gate 1).
+Permissions unchanged at **132** — upload reuses
+`supplier_documents.edit`, download reuses
+`supplier_documents.view_sensitive`.
+
+### §R3 — Service wiring (`services/supplier_documents.py`)
+- `ALLOWED_DOC_MIME_TYPES` — frozenset copied verbatim from
+  `actual_attachments.ALLOWED_MIME_TYPES` per §R0.3.1.
+- `_supplier_folder_path(supplier_id)` → `"Suppliers/{supplier_id}"`
+  (the `SHAREPOINT_ROOT_FOLDER` prefix is owned by the store's
+  `ensure_folder`).
+- `upload_document_file(...)` — content-type allowlist check
+  (`ValueError`), `read(max_bytes+1)` size-cap idiom
+  (`ValueError("file is empty")` / `ValueError("file exceeds maximum
+  upload size ...")`), best-effort delete of previous object on
+  replacement, store.upload, persists structured `file_ref` JSON,
+  audits as `Add_Attachment`.
+- `download_document_file(...)` — loads doc → 404 if not in tenant
+  or no file attached; `store.download` returns bytes; audits as
+  `Export` (file leaving the platform).
+- `serialise(..., include_sensitive)` — adds `has_file` (always
+  visible) and parses the `StoredObjectRef` JSON for `file_name` /
+  `file_size` / `file_content_type` (sensitive-gated alongside
+  `file_ref` and `notes`).
+
+### §R4 — Router (`routers/supplier_documents.py`)
+- **§R4.2 tightening:** `file_ref` REMOVED from both
+  `SupplierDocumentCreateBody` and `SupplierDocumentUpdateBody`.
+  Pydantic silently drops any client-supplied `file_ref` (verified by
+  static introspection + two HTTP tests).
+- `POST /supplier-documents/{id}/file` — multipart upload behind
+  `supplier_documents.edit`. Returns the serialised doc (sensitive,
+  matching the create endpoint pattern). Error map:
+  `ValueError("...exceeds maximum...")` → **413**, other
+  `ValueError` → **422**, `LookupError` → **404**, `SharePointError`
+  → **502 "document storage unavailable"** (never leaks Graph
+  internals).
+- `GET /supplier-documents/{id}/file` — `StreamingResponse` behind
+  `supplier_documents.view_sensitive`. `Content-Disposition:
+  attachment; filename="..."` with sanitised name; SharePoint URL
+  never leaves the module.
+- `_document_store_dep()` — FastAPI dependency for the configured
+  `DocumentStore` (resolves to the in-process Stub singleton in
+  tests, GraphDocumentStore in live mode).
+
+### §R5.1 — Tests (all in `SHAREPOINT_MODE='test-stub'`)
+- `test_supplier_documents.py` — 12 tests, rev-B reshape:
+  - removed `file_ref` from existing create-body fixture
+  - new `test_create_ignores_client_supplied_file_ref` (§R4.2)
+  - serialiser test now exercises `has_file` shape
+- `test_supplier_document_files.py` — **20 NEW tests** (≥18 target),
+  end-to-end HTTP against the running FastAPI app + stub store:
+  happy upload (200 + `has_file=true` + name/size), JSON
+  envelope parse, download round-trip (bytes + content-type +
+  Content-Disposition), arbitrary-binary round-trip, no-file → 404,
+  unknown-doc → 404, over-cap → 413, bad-mime → 422, empty → 422,
+  traversal sanitised, edit-perm → 403 on upload, view_sensitive
+  → 403 on download, cross-tenant upload → 404, replacement
+  supersedes, PATCH cannot mutate `file_ref`, audit rows
+  (`Add_Attachment` upload + `Export` download), non-sensitive
+  serialiser sees `has_file=true` but null name/ref.
+
+### Deviations / scope-creep notes
+- Audit actions chosen from the existing `AUDIT_ACTIONS` enum to
+  avoid a new Postgres enum migration: upload → `Add_Attachment`
+  (matches actuals pattern), download → `Export` (file leaving the
+  platform). Both rows include `file_name` + `file_size` in
+  `metadata` for forensics.
+- 413 vs 422 split for size-cap: chose **413** for "Payload Too
+  Large" semantics, **422** for the other content-validation
+  failures (content-type, empty). Documented in the router
+  docstring + the VERIFY artefact.
+- Download audit is a deliberate scope-creep ("welcome and
+  expected" per §R9 robustness clause) — the platform now logs
+  every sensitive read of a supplier doc.
+
+### Gate 2 VERIFY artefacts
+- Double-run pytest:
+  - Run 1: **32 passed in 6.62s**
+  - Run 2: **32 passed in 6.60s**
+- §R4.2 VERIFY (`file_ref` removed) — both Pydantic model
+  introspections list `[supplier_id?, doc_type, title, issued_on,
+  expires_on, notes]` and explicitly no `file_ref`.
+- Error mapping — grep proof + live pytest coverage at all four
+  status codes (404 / 413 / 422 / 502). The two
+  `SharePointError → HTTPException` blocks in the router both emit
+  exactly `status_code=502, detail="document storage unavailable"`.
+- Permission count: `SELECT count(*) FROM permissions` → **132**
+  (unchanged).
+- `alembic current` → `0042_file_ref_text (head)`.
+
+Full artefact: `memory/Gate2_VERIFY_2.7-BE-rev-B.md`.
+
+Gate 2 **STOPPED here** awaiting operator review per §R7.
+
 ## Chat 41 — Build Pack 2.7-BE-rev-B SharePoint/OneDrive Document Storage via Microsoft Graph (Backend) — **Gate 1 only** (2026-02)
 
 External-auth integration. Gate 1 lands the test-stub surface and the

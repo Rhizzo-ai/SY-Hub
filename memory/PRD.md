@@ -18,6 +18,40 @@ Frontend / actuals / commitments / Xero are out of scope until later prompts.
 
 ## What's been implemented
 
+### Chat 41 — Build Pack 2.7-BE-rev-B · SharePoint/OneDrive via Microsoft Graph · **Gate 2** (2026-02)
+
+Wires the Gate 1 stub into the supplier_documents service + router.
+`file_ref` is now system-owned (structured `StoredObjectRef` JSON);
+clients can no longer hand-write it.
+
+**Gate 2 head:** `0042_file_ref_text` (unchanged from Gate 1).
+**Perms:** unchanged at **132** — upload reuses
+`supplier_documents.edit`, download reuses
+`supplier_documents.view_sensitive`.
+
+Files landed at Gate 2:
+- `backend/app/services/supplier_documents.py` — `upload_document_file`,
+  `download_document_file`, `_supplier_folder_path`,
+  `ALLOWED_DOC_MIME_TYPES`, structured `file_ref`, `has_file` + file
+  metadata in `serialise`, client-settable `file_ref` removed at
+  service layer.
+- `backend/app/routers/supplier_documents.py` (rewrote) — `file_ref`
+  dropped from `SupplierDocumentCreateBody`/`UpdateBody`,
+  `POST /{id}/file` (multipart, `supplier_documents.edit`),
+  `GET /{id}/file` (StreamingResponse,
+  `supplier_documents.view_sensitive`), error map
+  `ValueError(size)→413`, `ValueError→422`, `LookupError→404`,
+  `SharePointError→502 "document storage unavailable"`.
+- `backend/tests/test_supplier_documents.py` (12 tests; rev-B reshape).
+- `backend/tests/test_supplier_document_files.py` (20 new tests).
+
+Deferred to Gate 3: `backend/scripts/sharepoint_smoke_test.py`,
+chat-41-closing.md rev-B section.
+
+VERIFY artefacts: `memory/Gate2_VERIFY_2.7-BE-rev-B.md`.
+
+---
+
 ### Chat 41 — Build Pack 2.7-BE-rev-B · SharePoint/OneDrive via Microsoft Graph · **Gate 1** (2026-02)
 
 External-auth integration. Gate 1 lands the test-stub surface, the
