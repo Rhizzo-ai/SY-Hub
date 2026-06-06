@@ -18,6 +18,85 @@ Frontend / actuals / commitments / Xero are out of scope until later prompts.
 
 ## What's been implemented
 
+### Chat 41 — Build Pack 2.7-FE-revision · Gate 1 + 3 operator-eyeball follow-ons (2026-02)
+
+**Frontend Suppliers Contact-Book rework + 3 follow-on changes the
+operator caught at eyeball.** Single Gate-1 sweep covering §R1–§R8,
+then CIS placement fix (FE-only), then `suppliers.delete` (BE + FE),
+then `vat_registered` removal (DB + BE + FE — migration `0041`), then
+Step 2B widening pass (multi-field search, click-to-sort, expanded
+seed).
+
+**Pytest double-run on pod (canonical, second-run):**
+- **1292 passed, 3 xpassed (1295 total), 0 failed, 0 errors** — 232.67 s.
+- Each run on a freshly-bootstrapped DB. One pre-existing test-isolation
+  gap surfaced (`test_entities_api` mutates entities that
+  `test_projects` module fixtures rely on) — candidate backlog item,
+  not in scope for this pack.
+
+**Frontend craco test:** **78 suites / 570 tests passed** (single
+deterministic run).
+
+**§R9 VERIFY greps — all zero-hit:**
+- `default_vat_rate / cis_subtype / 'Subcontractor'` in
+  `SupplierForm.jsx / SupplierDetail.jsx / SupplierList.jsx`
+- `labelCisSubtype / CIS_SUBTYPE_LABEL` anywhere in `frontend/src/`
+
+**Permissions count target hit exactly: 132** (was 131; +`suppliers.delete`).
+
+**Alembic head: `0041_drop_vat_registered`** (round-trip
+up → down → up clean; downgrade re-adds `vat_registered` BOOLEAN NOT
+NULL DEFAULT false for dev safety).
+
+**Highlights:**
+- §R1 — `lib/api/trades.js` + `hooks/trades.js` (TanStack Query, exported
+  `tradesKeys`, `staleTime: 60_000`).
+- §R2 — `<TradePicker/>` (combobox over command + popover; client-side
+  filter; canonical-name resolution from backend POST; perm-gated Add).
+- §R3 — `SupplierForm.jsx` 4-way type select; CIS sub-block
+  Contractor-gated (CIS status, CIS-registered, UTR with 10-digit
+  client validation); address block, trading_name + contact_name.
+- §R4 — `SupplierDetail.jsx` mirror: subtitle ` · CIS …` Contractor-gated;
+  address block hidden when all-null; Documents tab gated; Delete button.
+- §R5 — `SupplierList.jsx` 4-way type filter with `?type=` seed and
+  stale-bookmark fallback; Trade column default-on; CIS badge + amber
+  unverified cue Contractor-gated; dynamic colSpan.
+- §R6 — `<ColumnPicker/>` (session-only optional-column visibility;
+  per-user persistence is backlog **B-COLS**).
+- §R7 — Subcontractors nav + `HardHat` icon removed; `canViewTrades`
+  + `canCreateTrades` capabilities added; `labelCisSubtype` +
+  `CIS_SUBTYPE_LABEL` deleted from `cisFormat.js`.
+- §R8 — 78 suites, +3 brand-new test files (14 new tests), existing
+  Form/Detail/List + cisFormat suites reworked method-by-method;
+  `setupTests.js` `Element.prototype.scrollIntoView` shim added (cmdk
+  on jsdom).
+- **Eyeball follow-on 1 (FE-only):** CIS status `<select>` moved INSIDE
+  the `isContractor` block on Form; cis_status omitted from non-
+  Contractor submits; Detail subtitle ` · CIS …` Contractor-gated;
+  paired render-presence tests added (the previous payload-only test
+  let stale JSX slip through).
+- **Eyeball follow-on 2 (BE + FE):** `suppliers.delete` permission
+  added (mirrors `suppliers.archive` distribution); `DELETE
+  /api/v1/suppliers/{id}` (204/409/403/404); 5-table linked-record
+  gate (purchase_orders/actuals/subcontracts/cis_verifications/
+  supplier_documents); audit row recorded before DELETE; FE Delete
+  button on Detail with toast for 409 (preserves backend's exact
+  detail message) and stays-put on conflict.
+- **Eyeball follow-on 3 Step 2A (DB + BE + FE):** `vat_registered`
+  dropped entirely — operator decision; "has a VAT number" is the
+  de-facto registered signal, Xero owns VAT logic. Migration 0041,
+  full purge from model/service/router/seed/Form/Detail/List + tests.
+- **Eyeball follow-on 3 Step 2B (BE + FE + seed):**
+  - Search widened: single `q` matches across name, trading_name,
+    contact_name, notes, and the joined `trades.name`
+    (case-insensitive, contains). Composes AND with the
+    `supplier_type` filter.
+  - Click-to-sort: 7 sortable columns on `SupplierList.jsx` with
+    asc/desc/clear cycle, `aria-sort` + arrow indicator.
+  - Seed expanded to 11 varied contacts across all 4 types + 8
+    trades; idempotent via `_REPAIRABLE_FIELDS` upsert (re-run:
+    0 created, 11 repaired).
+
 ### Chat 41 — Build Pack 2.7-BE-rev-A · Gate 3 (2026-02)
 
 **§R5 tests + §R6 seed + CHANGELOG + chat-41-closing + PRD update.** Final gate of the rev-A run. STOP at Gate 3 for push readiness.

@@ -11,6 +11,296 @@ Each entry: date, prompt reference (if applicable), change, rationale.
 
 ## Entries
 
+## Chat 41 — Build Pack 2.7-FE-revision Suppliers Contact-Book Rework (Frontend) + 3 operator-eyeball follow-ons (2026-02)
+
+Frontend reshape against the rev-A backend (committed at
+`0040_contact_book_rework`, 131 perms). Single Gate-1 sweep covering
+§R1–§R8, then **three operator-eyeball follow-ons** (CIS placement
+fix, hard-delete + `suppliers.delete` permission, full
+`vat_registered` drop), then **Step 2A/2B widening pass** (multi-field
+search, click-to-sort, expanded seed). Backend-frozen rule was LIFTED
+twice along the way — once for `suppliers.delete` and once for
+`vat_registered` + search widening — both flagged here.
+
+End-of-pack head: **`0041_drop_vat_registered`** (BE-rev-A was 0040;
++1 schema migration from this run). Permissions **131 → 132**
+(`+suppliers.delete`). Roles 10 (unchanged).
+
+### §R1–§R8 — Frontend rework (Gate 1)
+
+- **§R1 — Trades API client + hook.** New `lib/api/trades.js`
+  (`listTrades` + `createTrade`) and `hooks/trades.js` (TanStack Query
+  `useTrades` + `useCreateTrade`, exported `tradesKeys`,
+  `staleTime: 60_000` — trades are a small slow-moving vocabulary).
+- **§R2 — `<TradePicker/>` component.** Combobox built on
+  `command` + `popover` shadcn primitives. **Client-side filter** —
+  fetch the live list once with `include_archived:false`, filter
+  in-memory by typed text (no debounce race, instant). Resolves to the
+  **backend's canonical name** from the POST response (case-insensitive
+  get-or-create: typing `electrician` when `Electrician` exists picks
+  the existing row + casing). "— None —" entry clears the value. The
+  "Add" affordance is **hidden** (not disabled) for users without
+  `trades.create`. Archived trades hidden in the pick list but
+  honoured if a supplier already references one (display reads the
+  supplier row).
+- **§R3 — `SupplierForm.jsx` rework.** 4-way type select
+  (`Contractor / Supplier / Consultant / Other`, default `Supplier`);
+  `cis_subtype` + `default_vat_rate` dropped; added `trade`
+  (via `<TradePicker/>`), `trading_name`, `contact_name`, full address
+  block (address_line1/2, city, postcode, country); UTR validated
+  (exactly 10 digits, only enforced when shown) inside a
+  Contractor-gated sub-block; sensitive block unchanged.
+- **§R4 — `SupplierDetail.jsx` rework.** Same field drops + additions
+  as Form; address block hidden when every address field is null;
+  Documents tab gated on `supplier_documents.view`; CIS + Contracts
+  tabs gated on Contractor. Subtitle line lost the `vat-registered`
+  cell; subsection layout preserved.
+- **§R5 — `SupplierList.jsx` rework.** 4-way type filter with seed
+  from `?type=`; stale `?type=Subcontractor` bookmarks fall back to
+  `All`; default-VAT column dropped; Trade column shown by default;
+  heading label driven by selected TYPE_OPTIONS; CIS badge + amber
+  unverified-cue cue gate on Contractor; dynamic `colSpan = CORE +
+  visible.size`.
+- **§R6 — `<ColumnPicker/>` component.** Popover with one checkbox
+  per optional column (Trade / CIS / Payment terms / Email / Phone —
+  the VAT-reg toggle was added then removed in Step 2A). Core
+  columns (Name / Type / Status) **not listed** (locked, no clutter).
+  Session-only — per-user persistence is backlog **B-COLS**
+  (operator-owned).
+- **§R7 — Nav + capability + cisFormat hygiene.**
+  - `components/AppShell.jsx`: Subcontractors nav entry + `HardHat`
+    icon import removed. Single "Suppliers" entry.
+  - `lib/poCapability.js`: `canViewTrades` + `canCreateTrades` added.
+  - `lib/cisFormat.js`: `CIS_SUBTYPE_LABEL` + `labelCisSubtype`
+    deleted (zero callers; the rev-A backend stopped serving the
+    field).
+- **§R8 — Test rework + §R9 VERIFY greps.**
+  - Existing suites reworked method-by-method
+    (`SupplierForm.test.jsx`, `SupplierDetail.test.jsx`,
+    `SupplierList.test.jsx`, `cisFormat.test.js`).
+  - 3 new suites — `lib/api/__tests__/trades.test.js`,
+    `components/suppliers/__tests__/TradePicker.test.jsx`,
+    `components/suppliers/__tests__/ColumnPicker.test.jsx` (14 new
+    tests; target was ≥ 12).
+  - `jest.mock('@/hooks/trades', …)` added to SupplierForm test
+    (the picker is now embedded in the form).
+  - VERIFY greps:
+    - `default_vat_rate / cis_subtype / 'Subcontractor'` in 3 page
+      files → **zero hit**
+    - `labelCisSubtype / CIS_SUBTYPE_LABEL` anywhere in
+      `frontend/src/` → **zero hit**
+  - `setupTests.js` shim added: `Element.prototype.scrollIntoView`
+    (cmdk calls it on selection; jsdom doesn't ship it) — same shape
+    as the existing `ResizeObserver` shim.
+- **§R10 — Smoke verified.** Login → /suppliers/new live, all four
+  type options render, Contractor block flips correctly, sensitive
+  block hides for view-only.
+
+### Eyeball follow-on 1 — CIS placement fix (FRONTEND only)
+
+Operator caught at eyeball: the **CIS status `<select>`** rendered
+for ALL contact types on `SupplierForm`, and the cis_status appeared
+in the `SupplierDetail` header line regardless of type. CIS is
+contractor-only.
+
+- `pages/SupplierForm.jsx`: CIS status `<select>` moved INSIDE the
+  `{isContractor && (…)}` block (now sits above CIS-registered + UTR).
+  Payload: `cis_status` moved from the always-on body into the
+  `if (isContractor)` branch — non-Contractor submits **omit the key**
+  rather than sending a stale value. Edit Contractor→Supplier and
+  save → patch drops `cis_status`.
+- `pages/SupplierDetail.jsx`: subtitle split. Wrapper carries
+  `data-testid="supplier-detail-subtitle"`; the ` · CIS …` segment is
+  now gated by `isContractor` with its own
+  `data-testid="supplier-detail-subtitle-cis"`.
+- Tests: added a dedicated `"CIS field is Contractor-gated …
+  render-presence"` describe block — pairs the assertion across a
+  same-mount type-flip (Supplier → Contractor → CIS select appears
+  AND is contained in `supplier-form-contractor-block` → flip back →
+  CIS select disappears) plus `.each(['Consultant','Other'])` cases.
+  The payload-only test that previously let stale JSX slip through is
+  retained for regression on the SUBMIT path.
+
+### Eyeball follow-on 2 — Supplier hard-delete (BACKEND + FRONTEND)
+
+Operator decision: add a hard delete that is **blocked when the
+supplier has linked records**. Archive stays the soft path; delete is
+strictly for typo-cleanup.
+
+- **Permission:** `suppliers.delete` added (131 → **132**). Verified
+  not previously minted. Sensitive set includes `delete`. Role
+  distribution **mirrors `suppliers.archive`** exactly:
+  - super_admin: ✅ (wildcard)
+  - director: ✅ (wildcard, 127 → 128)
+  - finance_director: ✅ (explicit grant)
+  - everyone else: ❌
+- **Backend service** (`app/services/suppliers.py`):
+  - new exception `SupplierHasLinkedRecords(kinds: list[str])`
+  - new `delete_supplier(…)` that probes 5 linked tables via a
+    `_LINKED_RECORD_TABLES: tuple[tuple[str, str, str], ...]`
+    `(table, fk_col, label)` tuple — `purchase_orders/supplier_id`,
+    `actuals/supplier_id`, `subcontracts/subcontractor_id` (note the
+    column name), `subcontractor_cis_verifications/supplier_id`,
+    `supplier_documents/supplier_id`.
+  - Records `action="Delete"` audit row **before** the DELETE so the
+    FK from the audit row doesn't fire on the row we're about to
+    drop.
+- **Backend router** (`app/routers/suppliers.py`): new
+  `DELETE /api/v1/suppliers/{id}` returning **204** on success and
+  **409** with operator-readable detail
+  (`Cannot delete: supplier has linked records (purchase_orders) —
+  archive instead.`) when any linked relation has rows. 403 / 404
+  paths preserved.
+- **Frontend:**
+  - `lib/api/suppliers.js` — `deleteSupplier(id)` (204, no body).
+  - `hooks/purchaseOrders.js` — `useDeleteSupplier` (removes the
+    detail-key cache + invalidates list).
+  - `lib/poCapability.js` — `canDeleteSupplier(me)` reading the new
+    perm.
+  - `pages/SupplierDetail.jsx` — Delete button next to Archive /
+    Restore, gated on the capability. Click → `window.confirm` → on
+    success `toast.success(...)` + `navigate('/suppliers')`. On 409
+    surfaces the **backend's exact `detail`** via `toast.error(...)`
+    and **stays put** (no navigation). 403 / network errors fall
+    back to a "Delete failed: …" toast.
+- **Backend tests** (`tests/test_suppliers.py::TestSupplierDelete`,
+  4 tests): 204 + audit row on the happy path; 409 when a
+  `supplier_documents` link exists (function name retains the
+  original PO wording; the lighter linkage is used because the
+  handler iterates the same `_LINKED_RECORD_TABLES` tuple — proving
+  one entry proves the wiring for all); 403 for PM (no
+  `suppliers.delete`); 404 for unknown id.
+- **Frontend tests** (`SupplierDetail.test.jsx`, 5 tests): button
+  hidden without perm; button shown with perm; cancel-at-confirm
+  no-ops; success path drives `mutateAsync` + `toast.success` +
+  navigate; 409 path surfaces backend detail via `toast.error` and
+  does not navigate.
+
+### Eyeball follow-on 3, Step 2A — `vat_registered` dropped entirely (DB + BACKEND + FRONTEND)
+
+Operator decision: drop the standalone `vat_registered` flag. "Has a
+VAT number" is the de-facto registered signal, the invoice carries the
+rate, Louise + Xero own VAT logic. Full removal — no dead column —
+same clean approach as `default_vat_rate` in BE-rev-A.
+
+- **Migration `0041_drop_vat_registered`** (`down_revision =
+  0040_contact_book_rework`).
+  - `upgrade()` drops `suppliers.vat_registered`.
+  - `downgrade()` re-adds it as `BOOLEAN NOT NULL DEFAULT false`,
+    then strips the server default — mirrors the 0040 pattern.
+  - Round-trip log (live):
+    `0041 → downgrade -1 → 0040 → upgrade head → 0041`.
+- **Backend:** removed from
+  `models/suppliers.py` (mapped_column + docstring),
+  `services/suppliers.py` (`_AUDIT_COLS`, create-path read +
+  assignment, update-path branch, serialise key, docstring),
+  `routers/suppliers.py` (`SupplierCreateBody` + `SupplierUpdateBody`
+  fields), and `scripts/seed_contact_book.py` (kwarg).
+- **Frontend:** VAT-registered checkbox + key removed from
+  `SupplierForm.jsx`; DetailRow removed from `SupplierDetail.jsx`;
+  optional column entry + header + body cell removed from
+  `SupplierList.jsx`. Payment-terms field is now full-width
+  (previously paired with the checkbox).
+- **Tests:**
+  - `test_supplier_contact_book.py`: `TestVatRegisteredIndependent`
+    class deleted (3 tests); shape assertion now requires
+    `vat_registered` to be **absent**.
+  - `test_migration_0040_contact_book.py`: head sentinel bumped to
+    `0041_drop_vat_registered`; `test_new_columns_present_with_…`
+    now asserts only `trade_id` at head (rev-trail comment points to
+    the new 0041 test).
+  - `test_migration_0041_drop_vat_registered.py` (new): 3 tests —
+    head is 0041, column absent at head, surviving rev-A columns
+    intact.
+  - `test_subcontractors.py`: column removed from expected-columns
+    set + explicit "must be absent" assertion; head sentinel bumped.
+  - `test_suppliers.py`: removed from create body + from the
+    "present" shape assertion, added to the "absent" set.
+  - Head-sentinel bumps in: `test_budget_changes_migration.py`,
+    `test_migration_0025_actuals.py`,
+    `test_migration_0028_user_preferences.py`,
+    `test_subcontracts_migration.py`,
+    `test_sc_valuations_migration.py`, `test_bootstrap.py`.
+  - Frontend: 3 vat tests replaced with `"checkbox is gone + key
+    absent"` (1 test); Detail Yes/No row test replaced with
+    `queryByTestId == null`.
+
+### Eyeball follow-on 3, Step 2B — search widening + click-to-sort + seed expansion
+
+Backend-frozen rule lifted for the search widening (Part 1) and the
+seed expansion (Part 3); the click-to-sort (Part 2) is frontend-only.
+
+- **Part 1 — Multi-field search (BACKEND).**
+  `services/suppliers.list_suppliers` now `outerjoin(Trade,
+  Supplier.trade_id == Trade.id)` and ORs the `q` ILIKE across
+  **name, trading_name, contact_name, notes, and the joined
+  `trades.name`** (case-insensitive, contains). `supplier_type` filter
+  + `include_archived` still AND. Same `q` param, same response
+  shape — purely widened. No N+1 (`Supplier.trade` is
+  `lazy="joined"`, the explicit outerjoin shares the cycle).
+  7 new HTTP tests in `tests/test_supplier_search_widened.py`:
+  match-on-trade, match-on-trading_name, match-on-contact_name,
+  match-on-notes, case-insensitive across all fields (3 sub-cases),
+  q-of-wrong-type excluded by type filter, name-match regression.
+- **Part 2 — Click-to-sort (FRONTEND).** `pages/SupplierList.jsx`:
+  cycle **unsorted → asc → desc → unsorted** (3rd click clears).
+  Different column resets to asc. Sort is client-side over the
+  loaded rows (list isn't paginated-heavy: default `limit=100`, no
+  page param wired). No existing sortable-table pattern in the repo
+  (`grep onClick.*sort` zero-hit), so the implementation is
+  self-contained. Sortable columns: Name / Type / Trade / CIS /
+  Payment terms / Email / Phone (Status stays unsortable — it's a
+  2-state chip). `lucide-react` `ArrowUp / ArrowDown / ArrowUpDown`
+  reflects state; `aria-sort` set to `ascending | descending | none`;
+  testids `supplier-list-sort-{col}` (button) +
+  `supplier-list-sort-{col}-{asc|desc|none}` (indicator). Hidden-col
+  active-sort auto-clears on the next render so the indicator
+  doesn't ghost. 3 new frontend tests covering Name (asc/desc/clear
+  + aria-sort), Trade (non-name col + null-trade sink), and
+  cross-column reset.
+- **Part 3 — Expanded contact seed (BACKEND).**
+  `scripts/seed_contact_book.py` extended (NOT replaced) from 4
+  contacts to **11** with varied data:
+  - 3 Contractors — 2 share trade "Electrical" (sort grouping); CIS
+    statuses gross / net_20 / net_30
+  - 3 Suppliers (1 archived)
+  - 2 Consultants
+  - 3 Other (1 archived)
+  - plus 8 trades
+  Notes contain searchable keywords (`Brickwork`, `Roofing`).
+  Idempotency is upsert-by-name with a `_REPAIRABLE_FIELDS` loop —
+  a re-run converges on the script's intent without duplicates
+  (run 1: 11 created, 0 repaired · run 2: 0 created, 11 repaired).
+
+### Pytest double-run on pod (final, second-run canonical)
+
+- **1292 passed, 3 xpassed (1295 total), 0 failed, 0 errors.**
+- First run 234.83 s, second run 232.67 s.
+- Each run on a freshly-bootstrapped DB (one-time pollution gap
+  surfaced — `test_entities_api.py` mutates entities used by
+  `test_projects.py` module fixtures; not in scope to fix this pack,
+  candidate for backlog).
+
+### Frontend craco test (final)
+
+- **78 suites / 570 tests passed** — single deterministic run.
+
+### Push readiness
+
+- All §R9 VERIFY greps zero-hit (verified post-Step-2B):
+  - `default_vat_rate / cis_subtype / 'Subcontractor'` in
+    `SupplierForm.jsx / SupplierDetail.jsx / SupplierList.jsx`
+  - `labelCisSubtype / CIS_SUBTYPE_LABEL` anywhere in `frontend/src/`
+- Alembic head `0041_drop_vat_registered`; migration round-trip
+  clean.
+- Permissions count **132** (verified by `bootstrap.verify.perms`).
+- Backend + frontend live smoke green; preview `/api/health` 200.
+- Backlog file (`docs/SY_Hub_Phase2_Backlog.md`) **NOT touched** per
+  the opener.
+
+Ready for push.
+
+
 ## Chat 41 — Build Pack 2.7-BE-rev-A Suppliers Contact-Book Rework (Backend) (2026-02)
 
 Backend-only reshape against the 2.7 baseline frozen by Chat 40. Three
