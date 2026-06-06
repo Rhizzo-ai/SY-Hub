@@ -97,7 +97,7 @@ describe('Supplier-documents API — existing endpoints (regression pin)', () =>
 });
 
 describe('uploadDocumentFile — §R3.1 multipart contract', () => {
-  test('POSTs to /v1/supplier-documents/{id}/file with FormData field "file"', async () => {
+  test('POSTs to /v1/supplier-documents/{id}/file with FormData field "file" and Content-Type:undefined per-request override (B78 Gate-2)', async () => {
     const file = new File(['hello'], 'cert.pdf', { type: 'application/pdf' });
     api.post.mockResolvedValueOnce({
       data: {
@@ -113,11 +113,18 @@ describe('uploadDocumentFile — §R3.1 multipart contract', () => {
     expect(url).toBe('/v1/supplier-documents/D1/file');
     expect(body).toBeInstanceOf(FormData);
     expect(body.get('file')).toBe(file);
-    // Critically: NO manual Content-Type header — axios + browser set the
-    // multipart boundary. Asserting opts is undefined keeps anyone from
-    // bolting on `headers: { 'Content-Type': 'multipart/form-data' }` and
-    // breaking the boundary.
-    expect(opts).toBeUndefined();
+
+    // B78 Gate-2 follow-up: the shared `api` instance defaults to
+    // Content-Type: application/json. For multipart, the caller MUST set
+    // Content-Type to `undefined` on this request so axios strips it from
+    // the merged headers and the browser fills in the multipart boundary.
+    // Use `undefined` — NOT 'multipart/form-data' as a literal string,
+    // which would omit the boundary and the server would 422 with
+    // {loc:["body","file"], type:"missing"}.
+    expect(opts).toBeDefined();
+    expect(opts.headers).toBeDefined();
+    expect(Object.prototype.hasOwnProperty.call(opts.headers, 'Content-Type')).toBe(true);
+    expect(opts.headers['Content-Type']).toBeUndefined();
 
     expect(out).toEqual({
       id: 'D1', has_file: true, file_name: 'cert.pdf',

@@ -76,9 +76,27 @@ export async function unarchiveDocument(id) {
 export async function uploadDocumentFile(id, file) {
   const fd = new FormData();
   fd.append('file', file);
+  // Build Pack 2.7-FE-docfix B78 Gate-2 follow-up — multipart boundary fix.
+  //
+  // The shared `api` instance in lib/api.js declares an instance-level
+  // default `Content-Type: application/json`. That default short-circuits
+  // axios 1.x's FormData auto-detection: instead of stripping the
+  // Content-Type and letting the browser fill in
+  // `multipart/form-data; boundary=…`, axios ships the request as JSON
+  // with an unserialised FormData body. The server then sees no `file`
+  // field and 422s with
+  //   {type:"missing", loc:["body","file"], msg:"Field required"}.
+  //
+  // Setting Content-Type to `undefined` on THIS request (only) tells
+  // axios to remove it from the merged headers, allowing the browser to
+  // generate the correct multipart Content-Type WITH a boundary. The
+  // shared `api` default (JSON) stays intact for the rest of the app.
+  // Use `undefined` — NOT the bare string 'multipart/form-data', which
+  // would omit the boundary and misfire identically.
   const { data } = await api.post(
     `/v1/supplier-documents/${id}/file`,
     fd,
+    { headers: { 'Content-Type': undefined } },
   );
   return data;
 }
