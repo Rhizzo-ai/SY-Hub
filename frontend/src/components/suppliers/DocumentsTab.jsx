@@ -1,9 +1,24 @@
 /**
- * <DocumentsTab/> — Chat 40 §R3 #13 / §R4.5.
+ * <DocumentsTab/> — Chat 40 §R3 #13 / Build Pack 2.7-FE-docupload §R1+§R2.
  *
  * Toolbar (Add + show-archived toggle) → table → add/edit dialog.
- * Archived rows are visually de-emphasised. File ref + notes are
- * sensitive (gated on supplier_documents.view_sensitive).
+ * Archived rows are visually de-emphasised. Notes are sensitive
+ * (gated on supplier_documents.view_sensitive); the attached file's
+ * metadata + bytes are sensitive too.
+ *
+ * File column (§R2):
+ *   has_file && canViewSensitiveDocs  →  file_name + size + Download
+ *   has_file && !canViewSensitiveDocs →  neutral "File attached"
+ *   !has_file && canEditDocs          →  Upload control (mobile tap-to-pick)
+ *   !has_file && !canEditDocs         →  "—"
+ *   has_file && canEditDocs (not archived) → Replace control
+ *
+ * Upload (§R2.5): tap-to-pick <input type="file"> baseline; client-side
+ * pre-check rejects empty/disallowed-type/>25 MB BEFORE the request fires.
+ * Server errors map per §R0.2 (413/422/404/502).
+ *
+ * Download (§R2.6): authedFetch via downloadDocumentFile → blob → object
+ * URL → click → revoke. The SharePoint URL NEVER reaches the DOM.
  *
  * Edit pre-fills from the cached row (§R0: single-doc GET is
  * intentionally not surfaced).
@@ -25,22 +40,86 @@ import {
 import { useAuth } from '@/context/AuthContext';
 import {
   useSupplierDocuments, useCreateDocument, usePatchDocument,
-  useArchiveDocument, useUnarchiveDocument,
+  useArchiveDocument, useUnarchiveDocument, useUploadDocumentFile,
 } from '@/hooks/supplierDocuments';
+import { downloadDocumentFile } from '@/lib/api/supplierDocuments';
 import {
   canCreateDocs, canEditDocs, canArchiveDocs, canViewSensitiveDocs,
 } from '@/lib/poCapability';
-import SensitiveValue from '@/components/po/SensitiveValue';
 import DocExpiryBadge from '@/components/suppliers/DocExpiryBadge';
 import {
   DOC_TYPE_OPTIONS, formatDate, labelDocType,
 } from '@/lib/cisFormat';
 
+// ─── §R0.3 backend allowlist — MUST mirror exactly ──────────────────────
+export const ALLOWED_MIME_TYPES = Object.freeze([
+  'application/pdf',
+  'image/jpeg',
+  'image/png',
+  'image/gif',
+  'image/webp',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.ms-excel',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'text/csv',
+  'text/plain',
+]);
+// SHAREPOINT_MAX_BYTES default — server is source of truth, this just
+// fails fast on the client.
+export const MAX_FILE_BYTES = 25 * 1024 * 1024;
+const ACCEPT_ATTR = ALLOWED_MIME_TYPES.join(',');
+
+function formatFileSize(bytes) {
+  if (bytes == null || Number.isNaN(bytes)) return '';
+  if (bytes < 1024) return `${bytes} B`;
+  const kb = bytes / 1024;
+  if (kb < 1024) return `${kb.toFixed(kb < 10 ? 1 : 0)} KB`;
+  const mb = kb / 1024;
+  if (mb < 1024) return `${mb.toFixed(mb < 10 ? 1 : 0)} MB`;
+  return `${(mb / 1024).toFixed(2)} GB`;
+}
+
+// Returns an inline error string when the file fails pre-check, else null.
+// Order matters: empty wins over type/size so we don't blame the file's
+// type when it has no bytes at all.
+function preCheckFile(file) {
+  if (!file) return 'No file selected.';
+  if (file.size === 0) return 'File is empty — please pick a non-empty file.';
+  if (!ALLOWED_MIME_TYPES.includes(file.type)) {
+    return `Unsupported file type${file.type ? ` (${file.type})` : ''}.`;
+  }
+  if (file.size > MAX_FILE_BYTES) {
+    return 'File is too large — 25 MB cap.';
+  }
+  return null;
+}
+
+// Maps an upload error to a §R0.2 toast string. Never echoes a raw
+// server detail back as if it were user-driven for 502 (storage down).
+function uploadErrorMessage(err) {
+  const status = err?.response?.status;
+  const detail = err?.response?.data?.detail;
+  if (status === 413) return 'File is too large — 25 MB cap.';
+  if (status === 422) return typeof detail === 'string' ? detail : 'Upload rejected.';
+  if (status === 502) {
+    return 'Document storage is temporarily unavailable, try again shortly.';
+  }
+  return (typeof detail === 'string' && detail) || err?.message || 'Upload failed.';
+}
+
+function downloadErrorMessage(err) {
+  if (err?.status === 404) return 'File not found.';
+  if (err?.status === 502) {
+    return 'Document storage is temporarily unavailable, try again shortly.';
+  }
+  return err?.detail || err?.message || 'Download failed.';
+}
+
 function emptyForm() {
   return {
     doc_type: 'Public_Liability',
     title: '',
-    file_ref: '',
     issued_on: '',
     expires_on: '',
     notes: '',
@@ -51,7 +130,6 @@ function rowToForm(row) {
   return {
     doc_type: row.doc_type,
     title: row.title ?? '',
-    file_ref: row.file_ref ?? '',
     issued_on: row.issued_on ?? '',
     expires_on: row.expires_on ?? '',
     notes: row.notes ?? '',
@@ -69,12 +147,20 @@ export default function DocumentsTab({ supplierId }) {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState(null); // doc id when editing, null on create
   const [form, setForm] = useState(emptyForm());
+  // Per-row inline pre-check error (id → message). Cleared on successful
+  // request fire or on a fresh file pick. Lives in component state so
+  // there's no leakage between rows.
+  const [rowErrors, setRowErrors] = useState({});
+  // Per-row "uploading…" flag (§R9 scope-creep — prevents double-submit
+  // and gives a clear in-flight indicator on slow/mobile connections).
+  const [uploadingId, setUploadingId] = useState(null);
 
   const list = useSupplierDocuments(supplierId, { includeArchived });
   const create = useCreateDocument(supplierId);
   const patch = usePatchDocument(supplierId);
   const archive = useArchiveDocument(supplierId);
   const unarchive = useUnarchiveDocument(supplierId);
+  const upload = useUploadDocumentFile(supplierId);
 
   const onChange = (k) => (e) => setForm({ ...form, [k]: e.target.value });
 
@@ -97,7 +183,6 @@ export default function DocumentsTab({ supplierId }) {
         title: form.title?.trim(),
       };
       // Optional fields — omit when blank so backend `notnull` defaults stand.
-      if (form.file_ref) payload.file_ref = form.file_ref;
       if (form.issued_on) payload.issued_on = form.issued_on;
       if (form.expires_on) payload.expires_on = form.expires_on;
       if (form.notes) payload.notes = form.notes;
@@ -133,6 +218,47 @@ export default function DocumentsTab({ supplierId }) {
     }
   };
 
+  // ─── §R2.5 Upload (and §R2.3 Replace — same endpoint, supersede). ────
+  const onPickFile = async (rowId, file) => {
+    setRowErrors((s) => ({ ...s, [rowId]: null }));
+    const inline = preCheckFile(file);
+    if (inline) {
+      // §R2.5: BLOCK the request entirely; surface inline so the user
+      // sees the problem without a noisy toast.
+      setRowErrors((s) => ({ ...s, [rowId]: inline }));
+      return;
+    }
+    setUploadingId(rowId);
+    try {
+      await upload.mutateAsync({ id: rowId, file });
+      toast.success('File uploaded');
+    } catch (err) {
+      toast.error(uploadErrorMessage(err));
+    } finally {
+      setUploadingId(null);
+    }
+  };
+
+  // ─── §R2.6 Download — bytes-only via authedFetch, never SharePoint URL.
+  const onDownload = async (row) => {
+    try {
+      const { blob, filename } = await downloadDocumentFile(row.id);
+      const objectUrl = URL.createObjectURL(blob);
+      try {
+        const a = document.createElement('a');
+        a.href = objectUrl;
+        a.download = filename || row.file_name || 'document';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      } finally {
+        URL.revokeObjectURL(objectUrl);
+      }
+    } catch (err) {
+      toast.error(downloadErrorMessage(err));
+    }
+  };
+
   const rows = list.data?.items ?? [];
 
   return (
@@ -165,7 +291,7 @@ export default function DocumentsTab({ supplierId }) {
               <TableHead>Title</TableHead>
               <TableHead>Issued</TableHead>
               <TableHead>Expires</TableHead>
-              <TableHead>File ref</TableHead>
+              <TableHead>File</TableHead>
               <TableHead className="w-32">Actions</TableHead>
             </TableRow>
           </TableHeader>
@@ -201,10 +327,16 @@ export default function DocumentsTab({ supplierId }) {
                     />
                   </span>
                 </TableCell>
-                <TableCell>
-                  <SensitiveValue
-                    value={d.file_ref} hidden={!canSensitive}
-                    testid={`document-row-file-ref-${d.id}`}
+                <TableCell data-testid={`document-row-file-${d.id}`}>
+                  <DocumentFileCell
+                    row={d}
+                    canEdit={canEdit}
+                    canSensitive={canSensitive}
+                    accept={ACCEPT_ATTR}
+                    inlineError={rowErrors[d.id]}
+                    isUploading={uploadingId === d.id}
+                    onPickFile={(file) => onPickFile(d.id, file)}
+                    onDownload={() => onDownload(d)}
                   />
                 </TableCell>
                 <TableCell>
@@ -269,14 +401,6 @@ export default function DocumentsTab({ supplierId }) {
                 data-testid="document-form-title"
               />
             </div>
-            <div>
-              <Label htmlFor="doc-form-fileref">File ref</Label>
-              <Input
-                id="doc-form-fileref" type="text"
-                value={form.file_ref} onChange={onChange('file_ref')}
-                data-testid="document-form-file-ref"
-              />
-            </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <Label htmlFor="doc-form-issued">Issued on</Label>
@@ -318,3 +442,156 @@ export default function DocumentsTab({ supplierId }) {
     </div>
   );
 }
+
+
+/**
+ * File-cell renderer (§R2.1–§R2.4).
+ *
+ * Pulled out as a sub-component so each row's conditional branches stay
+ * legible. No external state — the parent owns the row-error/uploading
+ * maps and just hands this component what to show.
+ */
+function DocumentFileCell({
+  row, canEdit, canSensitive, accept,
+  inlineError, isUploading, onPickFile, onDownload,
+}) {
+  const hasFile = !!row.has_file;
+  const isArchived = !!row.is_archived;
+
+  // ─── R2.1 — file present ───────────────────────────────────────────
+  if (hasFile) {
+    if (canSensitive) {
+      // Sensitive viewer: name + size + Download.
+      return (
+        <div className="flex flex-col gap-1">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span
+              className="text-sm break-all"
+              data-testid={`document-row-file-name-${row.id}`}
+            >
+              {row.file_name ?? 'Attached file'}
+            </span>
+            {row.file_size != null && (
+              <span
+                className="text-xs text-slate-500"
+                data-testid={`document-row-file-size-${row.id}`}
+              >
+                {formatFileSize(row.file_size)}
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={onDownload}
+              className="text-xs underline text-sy-teal-700"
+              data-testid={`document-row-download-${row.id}`}
+            >
+              Download
+            </button>
+          </div>
+          {canEdit && !isArchived && (
+            <FilePicker
+              rowId={row.id}
+              accept={accept}
+              isUploading={isUploading}
+              onPickFile={onPickFile}
+              label="Replace"
+              testid={`document-row-replace-${row.id}`}
+            />
+          )}
+          {inlineError && (
+            <span
+              className="text-xs text-red-600"
+              data-testid={`document-row-upload-error-${row.id}`}
+            >
+              {inlineError}
+            </span>
+          )}
+        </div>
+      );
+    }
+    // Non-sensitive viewer: neutral indicator ONLY (no name, no size,
+    // no Download). File metadata is sensitive.
+    return (
+      <span
+        className="text-sm text-slate-500"
+        data-testid={`document-row-file-attached-${row.id}`}
+      >
+        File attached
+      </span>
+    );
+  }
+
+  // ─── R2.2 — no file ────────────────────────────────────────────────
+  if (canEdit && !isArchived) {
+    return (
+      <div className="flex flex-col gap-1">
+        <FilePicker
+          rowId={row.id}
+          accept={accept}
+          isUploading={isUploading}
+          onPickFile={onPickFile}
+          label="Upload"
+          testid={`document-row-upload-${row.id}`}
+        />
+        <span className="text-[11px] text-slate-500">
+          PDF, image, Office docs · 25 MB max
+        </span>
+        {inlineError && (
+          <span
+            className="text-xs text-red-600"
+            data-testid={`document-row-upload-error-${row.id}`}
+          >
+            {inlineError}
+          </span>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <span
+      className="text-sm text-slate-400"
+      data-testid={`document-row-no-file-${row.id}`}
+    >
+      —
+    </span>
+  );
+}
+
+/**
+ * Mobile-first <input type="file"> baseline (§R2.5).
+ *
+ * Tap-to-pick is the only required interaction. The visible button is a
+ * <label> wrapping a screen-reader-only file input — taps on iOS/Android
+ * open the system file picker directly. NO drag-and-drop-only path.
+ *
+ * `key` is reset after each pick so the same file can be re-selected
+ * (browsers suppress `onChange` if the value is unchanged).
+ */
+function FilePicker({ rowId, accept, isUploading, onPickFile, label, testid }) {
+  const [nonce, setNonce] = useState(0);
+  const labelClasses = isUploading
+    ? 'inline-flex items-center text-xs underline text-slate-400 cursor-not-allowed'
+    : 'inline-flex items-center text-xs underline text-sy-teal-700 cursor-pointer';
+  return (
+    <label className={labelClasses}>
+      <span>{isUploading ? 'Uploading…' : label}</span>
+      <input
+        key={nonce}
+        type="file"
+        accept={accept}
+        disabled={isUploading}
+        className="sr-only"
+        data-testid={testid}
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          setNonce((n) => n + 1);
+          if (f) onPickFile(f);
+        }}
+      />
+    </label>
+  );
+}
+
+DocumentsTab.preCheckFile = preCheckFile;
+DocumentsTab.formatFileSize = formatFileSize;
