@@ -697,3 +697,27 @@ path exists today.
   table folded into `compute_effective_permissions`) or rely on finer-grained
   roles. Verified against `backend/app/auth/permissions.py` Chat 41.
   Owner: Track 4/5 design. From Chat 41.
+
+  - **B71** — Per-user table column-visibility persistence, platform-wide.
+  2.7-FE-revision ships session-only column choice on the Suppliers list;
+  make it persist per user and apply the same to the budgets grid and any
+  future table. Needs a per-user prefs store. From Chat 41.
+
+- **B72** — Full demo dataset across ALL modules (projects, budgets, POs,
+  bills, actuals, etc.), properly linked and valid, built in dependency
+  order so records pass approval/validation rules. Its own focused session.
+  Extends the contact seed shipped in Chat 41. From Chat 41.
+
+- **B73** — Sample invoice PDFs for AI-capture testing. A varied generated
+  set (different layouts/suppliers/VAT) for first-pass testing; supplement
+  with real anonymised invoices for hardening (real-world mess is what
+  breaks extraction). Tied to the invoicing-test phase. From Chat 41.
+
+- **B74** — Test-isolation debt. test_entities_api mutates entities that
+  test_projects relies on; also the rev-A cross-module session-pollution.
+  Workaround is drop+recreate DB before each pytest run. Fix properly with
+  an autouse conftest wipe or pytest-xdist --forked. P2. From Chat 41.
+
+- **B75** — Adopt the widened multi-field search as the standard pattern for
+  ALL list/search boxes platform-wide (bills, projects, documents, etc.) as
+  each module is built — match the Suppliers behaviour. From Chat 41.
