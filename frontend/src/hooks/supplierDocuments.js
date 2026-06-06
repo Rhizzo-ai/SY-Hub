@@ -59,3 +59,23 @@ export function useUnarchiveDocument(supplierId) {
     onSuccess: () => invalidateDocsAndSuppliers(qc, supplierId),
   });
 }
+
+/**
+ * File upload mutation — Build Pack 2.7-FE-docupload §R4.1.
+ *
+ * Mirrors useCreateDocument: invalidates the docs list on success so the
+ * row flips to the file-present state (the server response carries
+ * has_file=true + sensitive file metadata). Replace uses the SAME
+ * mutation — the backend treats a second upload as supersede.
+ *
+ * Download is intentionally NOT a hook: it's an imperative action
+ * (blob → object URL → click → revoke) that doesn't belong in
+ * react-query's cache.
+ */
+export function useUploadDocumentFile(supplierId) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, file }) => docsApi.uploadDocumentFile(id, file),
+    onSuccess: () => invalidateDocsAndSuppliers(qc, supplierId),
+  });
+}
