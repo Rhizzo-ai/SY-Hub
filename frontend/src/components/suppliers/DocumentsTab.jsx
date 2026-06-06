@@ -14,7 +14,11 @@
  *   has_file && canEditDocs (not archived) → Replace control
  *
  * Upload (§R2.5): tap-to-pick <input type="file"> baseline; client-side
- * pre-check rejects empty/disallowed-type/>25 MB BEFORE the request fires.
+ * pre-check rejects empty/oversize/disallowed BEFORE the request fires.
+ * Build Pack 2.7-FE-docfix §R1: pre-check now accepts a file when its
+ * MIME OR its extension matches the §R0.3 allowlist (browsers report '',
+ * variants, or octet-stream for legitimate files). Server stays the
+ * authoritative validator — the client is deliberately not stricter.
  * Server errors map per §R0.2 (413/422/404/502).
  *
  * Download (§R2.6): authedFetch via downloadDocumentFile → blob → object
@@ -68,7 +72,30 @@ export const ALLOWED_MIME_TYPES = Object.freeze([
 // SHAREPOINT_MAX_BYTES default — server is source of truth, this just
 // fails fast on the client.
 export const MAX_FILE_BYTES = 25 * 1024 * 1024;
+
+// ─── §R1.1 extension fallback — mirrors §R0.3, lower-case, dot-prefixed ──
+// Used by preCheckFile when browsers report file.type as '' or a variant
+// that is not in ALLOWED_MIME_TYPES (e.g. some PDFs report '', some CSVs
+// report application/vnd.ms-excel, .doc/.xls often report
+// application/octet-stream). Server stays the real validator — we just
+// must not be stricter than it is.
+export const ALLOWED_EXTENSIONS = Object.freeze([
+  '.pdf',
+  '.jpg', '.jpeg', '.png', '.gif', '.webp',
+  '.doc', '.docx',
+  '.xls', '.xlsx',
+  '.csv', '.txt',
+]);
+
 const ACCEPT_ATTR = ALLOWED_MIME_TYPES.join(',');
+
+// ─── §R1.2 fileExtension(name) — '.pdf' for 'report.PDF', '' when none ──
+export function fileExtension(name) {
+  if (typeof name !== 'string') return '';
+  const dot = name.lastIndexOf('.');
+  if (dot < 0 || dot === name.length - 1) return '';
+  return name.slice(dot).toLowerCase();
+}
 
 function formatFileSize(bytes) {
   if (bytes == null || Number.isNaN(bytes)) return '';
@@ -81,12 +108,24 @@ function formatFileSize(bytes) {
 }
 
 // Returns an inline error string when the file fails pre-check, else null.
-// Order matters: empty wins over type/size so we don't blame the file's
-// type when it has no bytes at all.
+// Order matters (§R1.3):
+//   1. no file       → "No file selected."
+//   2. empty (0 B)   → "File is empty — …"            (wins over type so we
+//                       don't blame the file's type when it has no bytes)
+//   3. type gate     → accept if MIME ∈ ALLOWED_MIME_TYPES
+//                       OR extension ∈ ALLOWED_EXTENSIONS.
+//                       Only when BOTH fail → "Unsupported file type…".
+//                       (Browsers often report file.type as '' or a variant
+//                       not in the allowlist for legitimate files — server
+//                       remains the source of truth, the client must not
+//                       be stricter than the server.)
+//   4. size > MAX    → "File is too large — 25 MB cap."
 function preCheckFile(file) {
   if (!file) return 'No file selected.';
   if (file.size === 0) return 'File is empty — please pick a non-empty file.';
-  if (!ALLOWED_MIME_TYPES.includes(file.type)) {
+  const mimeOk = ALLOWED_MIME_TYPES.includes(file.type);
+  const extOk = ALLOWED_EXTENSIONS.includes(fileExtension(file.name));
+  if (!mimeOk && !extOk) {
     return `Unsupported file type${file.type ? ` (${file.type})` : ''}.`;
   }
   if (file.size > MAX_FILE_BYTES) {
@@ -595,3 +634,4 @@ function FilePicker({ rowId, accept, isUploading, onPickFile, label, testid }) {
 
 DocumentsTab.preCheckFile = preCheckFile;
 DocumentsTab.formatFileSize = formatFileSize;
+DocumentsTab.fileExtension = fileExtension;

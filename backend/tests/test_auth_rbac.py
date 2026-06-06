@@ -15,7 +15,7 @@ from tests.conftest import login_with_auto_enroll, plain_login
 
 BASE_URL = os.environ.get('REACT_APP_BACKEND_URL', '').rstrip('/')
 if not BASE_URL:
-    BASE_URL = "https://syhub-rules.preview.emergentagent.com"
+    BASE_URL = "https://docpack-2-7-fe.preview.emergentagent.com"
 
 # Test credentials
 TEST_PASSWORD = "TestUser-Dev-2026!"

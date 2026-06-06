@@ -735,3 +735,82 @@ describe('§R2.5 — mobile-first <input type="file"> + accept allowlist', () =>
     });
   });
 });
+
+
+// =========================================================================
+// Build Pack 2.7-FE-docfix §R1 — extension-fallback pre-check (Gate 1)
+//
+// The over-strict client pre-check rejected valid files whose
+// browser-reported MIME was '' or a variant outside the §R0.3 allowlist
+// (e.g. .doc/.xls reporting application/octet-stream, .csv reporting
+// application/vnd.ms-excel on some Windows browsers). The server stays
+// the source of truth — the client must accept when MIME OR extension
+// matches the allowlist, and never be stricter than the server.
+//
+// Gate 1 tests #1–#5: prove the fallback works AND the other guards
+// (empty / oversize / genuinely-bad type) still bite.
+// =========================================================================
+
+describe('Build Pack 2.7-FE-docfix §R1 — preCheckFile extension fallback', () => {
+  // Tap into the helper attached to the default export so we can unit-test
+  // the pure function without going through the rendered tree.
+  const { preCheckFile, fileExtension } = DocumentsTab;
+
+  function pcFile({ name, type, size }) {
+    // We must not allocate real bytes for the oversize case; defineProperty
+    // lets us assert size > MAX without OOM'ing jsdom.
+    const f = new File([new Uint8Array(Math.min(size, 8))], name, { type });
+    Object.defineProperty(f, 'size', { value: size, configurable: true });
+    return f;
+  }
+
+  test('#1 — empty MIME + valid extension is ACCEPTED (file.type === "" but name ends in .pdf)', () => {
+    const f = pcFile({ name: 'plan.pdf', type: '', size: 1024 });
+    expect(preCheckFile(f)).toBeNull();
+  });
+
+  test('#2 — variant MIME (.csv reporting application/vnd.ms-excel) is ACCEPTED via extension', () => {
+    const f = pcFile({
+      name: 'invoices.csv',
+      type: 'application/vnd.ms-excel',
+      size: 2048,
+    });
+    expect(preCheckFile(f)).toBeNull();
+  });
+
+  test('#3 — genuinely bad file (.exe + octet-stream) is STILL REJECTED, no MIME, no extension match', () => {
+    const f = pcFile({
+      name: 'virus.exe',
+      type: 'application/octet-stream',
+      size: 1024,
+    });
+    const msg = preCheckFile(f);
+    expect(msg).toMatch(/unsupported file type/i);
+    // Surfaces the offending MIME for debuggability.
+    expect(msg).toMatch(/application\/octet-stream/);
+  });
+
+  test('#4 — empty (0 B) file wins over the type gate (empty.pdf with valid extension still flagged empty)', () => {
+    const f = pcFile({ name: 'empty.pdf', type: 'application/pdf', size: 0 });
+    expect(preCheckFile(f)).toMatch(/empty/i);
+  });
+
+  test('#5 — oversize (> 25 MB) is STILL REJECTED even with a valid type+extension', () => {
+    const f = pcFile({
+      name: 'huge.pdf',
+      type: 'application/pdf',
+      size: 25 * 1024 * 1024 + 1,
+    });
+    expect(preCheckFile(f)).toMatch(/25 MB/);
+  });
+
+  test('helper — fileExtension is case-insensitive and tolerant of edge inputs', () => {
+    expect(fileExtension('report.PDF')).toBe('.pdf');
+    expect(fileExtension('Spreadsheet.XLSX')).toBe('.xlsx');
+    expect(fileExtension('archive.tar.gz')).toBe('.gz');
+    expect(fileExtension('no-extension')).toBe('');
+    expect(fileExtension('trailing.')).toBe('');    // dot at end → no ext
+    expect(fileExtension(null)).toBe('');
+    expect(fileExtension(undefined)).toBe('');
+  });
+});
