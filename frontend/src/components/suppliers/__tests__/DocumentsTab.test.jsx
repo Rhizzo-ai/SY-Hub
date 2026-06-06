@@ -814,3 +814,331 @@ describe('Build Pack 2.7-FE-docfix §R1 — preCheckFile extension fallback', ()
     expect(fileExtension(undefined)).toBe('');
   });
 });
+
+
+// =========================================================================
+// Build Pack 2.7-FE-docfix §R6 — Gate 2 acceptance suite (tests #6–#14)
+//
+// Covers:
+//   §R2 — Add/Edit dialog file-attach (staged in a SEPARATE useState; the
+//         create/patch JSON payload MUST stay file/file_ref-free; upload
+//         fires ONLY after the save settles, with the resulting doc id).
+//   §R3 — desktop drag-and-drop layered on top of the existing tap-to-pick
+//         <input type="file"> (mobile baseline survives intact — a hard
+//         platform constraint).
+//   §R5 — UI hints + extension list on the input `accept`.
+// =========================================================================
+
+describe('Build Pack 2.7-FE-docfix §R6 — Gate 2 dialog attach + drag-drop', () => {
+  test('#6 — dialog attach: create + upload happy path (create THEN upload with new id)', async () => {
+    setMe(ALL_PERMS);
+    createMutate.mockResolvedValueOnce({ id: 'NEW', doc_type: 'Public_Liability', title: 'PL' });
+    render(<DocumentsTab supplierId="S1" />);
+
+    fireEvent.click(screen.getByTestId('documents-tab-add-btn'));
+    expect(screen.getByTestId('document-form')).toBeInTheDocument();
+    expect(screen.getByTestId('document-form-attach')).toBeInTheDocument();
+
+    fireEvent.change(screen.getByTestId('document-form-title'),
+                     { target: { value: 'PL' } });
+
+    const file = makeFile({ name: 'cert.pdf', type: 'application/pdf', size: 128 });
+    await act(async () => {
+      fireEvent.change(screen.getByTestId('document-form-file'),
+                       { target: { files: [file] } });
+    });
+    // Staged preview visible.
+    expect(screen.getByTestId('document-form-file-staged')).toBeInTheDocument();
+    expect(screen.getByTestId('document-form-file-name')).toHaveTextContent('cert.pdf');
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('document-form-save'));
+    });
+
+    // create fires FIRST (no file/file_ref in payload).
+    await waitFor(() => expect(createMutate).toHaveBeenCalled());
+    const createBody = createMutate.mock.calls[0][0];
+    expect(createBody).not.toHaveProperty('file');
+    expect(createBody).not.toHaveProperty('file_ref');
+
+    // upload fires AFTER, with the new doc id from the server.
+    await waitFor(() => expect(uploadMutate).toHaveBeenCalledWith({ id: 'NEW', file }));
+
+    // Order: create resolved before upload was invoked.
+    const createOrder = createMutate.mock.invocationCallOrder[0];
+    const uploadOrder = uploadMutate.mock.invocationCallOrder[0];
+    expect(uploadOrder).toBeGreaterThan(createOrder);
+
+    // Success toast + dialog closes.
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith('Document added'));
+    await waitFor(() => expect(screen.queryByTestId('document-form')).toBeNull());
+  });
+
+  test('#6b — dialog attach: edit + upload happy path (patch THEN upload with editing id)', async () => {
+    setMe(ALL_PERMS);
+    hooks.useSupplierDocuments.mockReturnValue({
+      data: { items: [{ id: 'D1', doc_type: 'Other', title: 'Existing',
+        is_archived: false, has_file: false }] },
+      isLoading: false, isError: false,
+    });
+    render(<DocumentsTab supplierId="S1" />);
+
+    fireEvent.click(screen.getByTestId('document-row-edit-D1'));
+    expect(screen.getByTestId('document-form-attach')).toBeInTheDocument();
+
+    const file = makeFile({ name: 'updated.pdf', type: 'application/pdf', size: 64 });
+    await act(async () => {
+      fireEvent.change(screen.getByTestId('document-form-file'),
+                       { target: { files: [file] } });
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('document-form-save'));
+    });
+
+    await waitFor(() => expect(patchMutate).toHaveBeenCalled());
+    const patchArgs = patchMutate.mock.calls[0][0];
+    expect(patchArgs.id).toBe('D1');
+    expect(patchArgs.body).not.toHaveProperty('file');
+    expect(patchArgs.body).not.toHaveProperty('file_ref');
+
+    await waitFor(() => expect(uploadMutate).toHaveBeenCalledWith({ id: 'D1', file }));
+    const patchOrder = patchMutate.mock.invocationCallOrder[0];
+    const uploadOrder = uploadMutate.mock.invocationCallOrder[0];
+    expect(uploadOrder).toBeGreaterThan(patchOrder);
+  });
+
+  test('#7 — dialog attach: no file staged → create only, NO upload mutation', async () => {
+    setMe(ALL_PERMS);
+    createMutate.mockResolvedValueOnce({ id: 'NEW' });
+    render(<DocumentsTab supplierId="S1" />);
+
+    fireEvent.click(screen.getByTestId('documents-tab-add-btn'));
+    fireEvent.change(screen.getByTestId('document-form-title'),
+                     { target: { value: 'PL' } });
+
+    // NB: no staged file — submit straight away.
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('document-form-save'));
+    });
+
+    await waitFor(() => expect(createMutate).toHaveBeenCalled());
+    // Upload MUST NOT fire when there is nothing staged.
+    expect(uploadMutate).not.toHaveBeenCalled();
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith('Document added'));
+  });
+
+  test('#8 — dialog attach: create AND patch payloads contain NO file / file_ref keys', async () => {
+    setMe(ALL_PERMS);
+    // — Create branch —
+    createMutate.mockResolvedValueOnce({ id: 'NEW' });
+    const { rerender } = render(<DocumentsTab supplierId="S1" />);
+
+    fireEvent.click(screen.getByTestId('documents-tab-add-btn'));
+    fireEvent.change(screen.getByTestId('document-form-title'),
+                     { target: { value: 'PL' } });
+    const file1 = makeFile({ name: 'a.pdf', type: 'application/pdf', size: 32 });
+    await act(async () => {
+      fireEvent.change(screen.getByTestId('document-form-file'),
+                       { target: { files: [file1] } });
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('document-form-save'));
+    });
+    await waitFor(() => expect(createMutate).toHaveBeenCalled());
+    const createBody = createMutate.mock.calls[0][0];
+    expect(Object.keys(createBody)).not.toEqual(expect.arrayContaining(['file', 'file_ref']));
+    expect(createBody).not.toHaveProperty('file');
+    expect(createBody).not.toHaveProperty('file_ref');
+
+    // — Patch branch —
+    hooks.useSupplierDocuments.mockReturnValue({
+      data: { items: [{ id: 'D2', doc_type: 'Other', title: 'Existing',
+        is_archived: false, has_file: false }] },
+      isLoading: false, isError: false,
+    });
+    rerender(<DocumentsTab supplierId="S1" />);
+
+    fireEvent.click(screen.getByTestId('document-row-edit-D2'));
+    const file2 = makeFile({ name: 'b.pdf', type: 'application/pdf', size: 32 });
+    await act(async () => {
+      fireEvent.change(screen.getByTestId('document-form-file'),
+                       { target: { files: [file2] } });
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('document-form-save'));
+    });
+    await waitFor(() => expect(patchMutate).toHaveBeenCalled());
+    const patchBody = patchMutate.mock.calls[0][0].body;
+    expect(Object.keys(patchBody)).not.toEqual(expect.arrayContaining(['file', 'file_ref']));
+    expect(patchBody).not.toHaveProperty('file');
+    expect(patchBody).not.toHaveProperty('file_ref');
+  });
+
+  test('#9 — dialog attach: pre-check rejects .exe → inline error, NOT staged, no upload-on-save', async () => {
+    setMe(ALL_PERMS);
+    createMutate.mockResolvedValueOnce({ id: 'NEW' });
+    render(<DocumentsTab supplierId="S1" />);
+
+    fireEvent.click(screen.getByTestId('documents-tab-add-btn'));
+    fireEvent.change(screen.getByTestId('document-form-title'),
+                     { target: { value: 'PL' } });
+
+    const bad = makeFile({ name: 'virus.exe', type: 'application/octet-stream', size: 32 });
+    await act(async () => {
+      fireEvent.change(screen.getByTestId('document-form-file'),
+                       { target: { files: [bad] } });
+    });
+
+    // Inline error shown; nothing staged.
+    expect(screen.getByTestId('document-form-file-error'))
+      .toHaveTextContent(/unsupported file type/i);
+    expect(screen.queryByTestId('document-form-file-staged')).toBeNull();
+
+    // Save still allowed (file is optional) — but upload MUST NOT fire.
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('document-form-save'));
+    });
+    await waitFor(() => expect(createMutate).toHaveBeenCalled());
+    expect(uploadMutate).not.toHaveBeenCalled();
+  });
+
+  test('#10 — dialog attach: staged file resets on reopen (stage → Cancel → reopen → clean)', async () => {
+    setMe(ALL_PERMS);
+    render(<DocumentsTab supplierId="S1" />);
+
+    // 1st open: stage a file.
+    fireEvent.click(screen.getByTestId('documents-tab-add-btn'));
+    const file = makeFile({ name: 'first.pdf', type: 'application/pdf', size: 32 });
+    await act(async () => {
+      fireEvent.change(screen.getByTestId('document-form-file'),
+                       { target: { files: [file] } });
+    });
+    expect(screen.getByTestId('document-form-file-staged')).toBeInTheDocument();
+    expect(screen.getByTestId('document-form-file-name')).toHaveTextContent('first.pdf');
+
+    // Cancel — dialog closes via onOpenChange(false) path.
+    fireEvent.click(screen.getByTestId('document-form-cancel'));
+    await waitFor(() => expect(screen.queryByTestId('document-form')).toBeNull());
+
+    // Reopen — the staged preview MUST NOT survive.
+    fireEvent.click(screen.getByTestId('documents-tab-add-btn'));
+    expect(screen.getByTestId('document-form')).toBeInTheDocument();
+    expect(screen.queryByTestId('document-form-file-staged')).toBeNull();
+    expect(screen.queryByTestId('document-form-file-error')).toBeNull();
+  });
+
+  test('#11 — drag-drop: row dropzone routes a valid file through onPickFile → uploadMutate', async () => {
+    setMe(ALL_PERMS);
+    hooks.useSupplierDocuments.mockReturnValue({
+      data: { items: [{ id: 'D1', doc_type: 'Other', title: 'X',
+        is_archived: false, has_file: false }] },
+      isLoading: false, isError: false,
+    });
+    render(<DocumentsTab supplierId="S1" />);
+
+    const dropzone = screen.getByTestId('document-row-dropzone-D1');
+    const file = makeFile({ name: 'dropped.pdf', type: 'application/pdf', size: 100 });
+
+    // Drag-over toggles the visual state (proves the handler is wired).
+    await act(async () => {
+      fireEvent.dragOver(dropzone, { dataTransfer: { files: [file] } });
+    });
+    expect(dropzone.getAttribute('data-dragover')).toBe('true');
+
+    await act(async () => {
+      fireEvent.drop(dropzone, { dataTransfer: { files: [file] } });
+    });
+
+    await waitFor(() => expect(uploadMutate).toHaveBeenCalledWith({ id: 'D1', file }));
+    expect(dropzone.getAttribute('data-dragover')).toBe('false');
+    // Tap-to-pick <input type="file"> MUST still be in the DOM after the drop.
+    expect(screen.getByTestId('document-row-upload-D1').tagName).toBe('INPUT');
+  });
+
+  test('#12 — drag-drop: dialog dropzone stages the file (filename + size shown)', async () => {
+    setMe(ALL_PERMS);
+    render(<DocumentsTab supplierId="S1" />);
+    fireEvent.click(screen.getByTestId('documents-tab-add-btn'));
+
+    const dropzone = screen.getByTestId('document-form-dropzone');
+    const file = makeFile({ name: 'staged.pdf', type: 'application/pdf', size: 256 });
+
+    await act(async () => {
+      fireEvent.drop(dropzone, { dataTransfer: { files: [file] } });
+    });
+
+    expect(screen.getByTestId('document-form-file-staged')).toBeInTheDocument();
+    expect(screen.getByTestId('document-form-file-name')).toHaveTextContent('staged.pdf');
+    // Tap-to-pick input survives in the dialog.
+    expect(screen.getByTestId('document-form-file').tagName).toBe('INPUT');
+    // No upload yet — staging only; upload fires on Save.
+    expect(uploadMutate).not.toHaveBeenCalled();
+  });
+
+  test('#13 — drag-drop: pre-check applies on drop (.exe blocked, NOT staged, no request)', async () => {
+    setMe(ALL_PERMS);
+    hooks.useSupplierDocuments.mockReturnValue({
+      data: { items: [{ id: 'D1', doc_type: 'Other', title: 'X',
+        is_archived: false, has_file: false }] },
+      isLoading: false, isError: false,
+    });
+    render(<DocumentsTab supplierId="S1" />);
+
+    // Row drop: .exe rejected → inline error, no upload.
+    const rowZone = screen.getByTestId('document-row-dropzone-D1');
+    const bad = makeFile({ name: 'virus.exe', type: 'application/octet-stream', size: 16 });
+    await act(async () => {
+      fireEvent.drop(rowZone, { dataTransfer: { files: [bad] } });
+    });
+    expect(uploadMutate).not.toHaveBeenCalled();
+    expect(screen.getByTestId('document-row-upload-error-D1'))
+      .toHaveTextContent(/unsupported file type/i);
+
+    // Dialog drop: .exe rejected → inline error, NOT staged.
+    fireEvent.click(screen.getByTestId('documents-tab-add-btn'));
+    const dialogZone = screen.getByTestId('document-form-dropzone');
+    await act(async () => {
+      fireEvent.drop(dialogZone, { dataTransfer: { files: [bad] } });
+    });
+    expect(screen.getByTestId('document-form-file-error'))
+      .toHaveTextContent(/unsupported file type/i);
+    expect(screen.queryByTestId('document-form-file-staged')).toBeNull();
+  });
+
+  test('#14 — mobile baseline intact: tap-to-pick <input type="file"> renders in BOTH the row Upload state AND the dialog attach area', () => {
+    setMe(ALL_PERMS);
+    hooks.useSupplierDocuments.mockReturnValue({
+      data: { items: [{ id: 'D1', doc_type: 'Other', title: 'X',
+        is_archived: false, has_file: false }] },
+      isLoading: false, isError: false,
+    });
+    render(<DocumentsTab supplierId="S1" />);
+
+    // — Row Upload state —
+    const rowInput = screen.getByTestId('document-row-upload-D1');
+    expect(rowInput.tagName).toBe('INPUT');
+    expect(rowInput.getAttribute('type')).toBe('file');
+    const rowAccept = rowInput.getAttribute('accept') || '';
+    expect(rowAccept).toContain('application/pdf');
+    // §R5 — extensions appended for friendlier OS picker on Windows etc.
+    expect(rowAccept).toContain('.pdf');
+    expect(rowAccept).toContain('.csv');
+
+    // The DropZone wraps the input but does NOT replace it.
+    expect(screen.getByTestId('document-row-dropzone-D1')).toBeInTheDocument();
+
+    // — Dialog attach area —
+    fireEvent.click(screen.getByTestId('documents-tab-add-btn'));
+    expect(screen.getByTestId('document-form-attach')).toBeInTheDocument();
+    expect(screen.getByTestId('document-form-dropzone')).toBeInTheDocument();
+
+    const dialogInput = screen.getByTestId('document-form-file');
+    expect(dialogInput.tagName).toBe('INPUT');
+    expect(dialogInput.getAttribute('type')).toBe('file');
+    const dialogAccept = dialogInput.getAttribute('accept') || '';
+    expect(dialogAccept).toContain('application/pdf');
+    expect(dialogAccept).toContain('.pdf');
+    expect(dialogAccept).toContain('.csv');
+  });
+});
