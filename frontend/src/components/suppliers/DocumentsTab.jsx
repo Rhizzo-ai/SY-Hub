@@ -21,6 +21,22 @@
  * authoritative validator — the client is deliberately not stricter.
  * Server errors map per §R0.2 (413/422/404/502).
  *
+ * Build Pack 2.7-FE-docfix §R2 — Add/Edit dialog file-attach:
+ *   The dialog reuses <FilePicker/> under Notes (gated on canEditDocs).
+ *   The staged file lives in component state ONLY (`pendingFile`); it is
+ *   NEVER serialised into the create/patch JSON payload (`file_ref` stays
+ *   system-owned). On Save: create → if staged, upload with the new doc
+ *   id; on Edit: patch → if staged, upload with the editing id. The
+ *   staged file resets on every dialog open AND close.
+ *
+ * Build Pack 2.7-FE-docfix §R3 — desktop drag-and-drop:
+ *   `<DropZone/>` wraps the row Upload cell and the dialog attach area.
+ *   It layers `onDragOver/onDragLeave/onDrop` on top of the existing
+ *   tap-to-pick input — the input survives intact (mobile baseline is
+ *   a hard platform constraint). Drops route through the same
+ *   `preCheckFile` → `onPickFile` path as tap; multi-file drops take
+ *   only the first file.
+ *
  * Download (§R2.6): authedFetch via downloadDocumentFile → blob → object
  * URL → click → revoke. The SharePoint URL NEVER reaches the DOM.
  *
@@ -87,7 +103,11 @@ export const ALLOWED_EXTENSIONS = Object.freeze([
   '.csv', '.txt',
 ]);
 
-const ACCEPT_ATTR = ALLOWED_MIME_TYPES.join(',');
+// §R5 scope-creep: include extensions so the OS picker is friendlier on
+// platforms where MIME-only `accept` filters too aggressively (notably
+// Windows + some mobile keyboards). The pre-check + server remain the
+// real gate — `accept` is just a hint.
+const ACCEPT_ATTR = [...ALLOWED_MIME_TYPES, ...ALLOWED_EXTENSIONS].join(',');
 
 // ─── §R1.2 fileExtension(name) — '.pdf' for 'report.PDF', '' when none ──
 export function fileExtension(name) {
@@ -186,6 +206,11 @@ export default function DocumentsTab({ supplierId }) {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState(null); // doc id when editing, null on create
   const [form, setForm] = useState(emptyForm());
+  // ─── §R2.1 — staged file for the dialog attach. Held in a SEPARATE
+  // useState; NEVER folded into `form` (which becomes the create/patch
+  // JSON payload). `file_ref` is system-owned and that invariant is hard.
+  const [pendingFile, setPendingFile] = useState(null);
+  const [pendingFileError, setPendingFileError] = useState(null);
   // Per-row inline pre-check error (id → message). Cleared on successful
   // request fire or on a fresh file pick. Lives in component state so
   // there's no leakage between rows.
@@ -203,40 +228,108 @@ export default function DocumentsTab({ supplierId }) {
 
   const onChange = (k) => (e) => setForm({ ...form, [k]: e.target.value });
 
+  // ─── §R2.4 — single source of truth for resetting the staged file.
+  // Called on every dialog open AND close path so no stale carry-over
+  // ever survives between dialog lifecycles.
+  const clearPendingFile = () => {
+    setPendingFile(null);
+    setPendingFileError(null);
+  };
+
+  // §R2.2 — stage a file picked from the dialog's FilePicker/DropZone.
+  // Runs preCheckFile; on failure surfaces the inline error and does
+  // NOT stage anything (so Save can never accidentally upload a file
+  // that already failed the client gate).
+  const onStageDialogFile = (file) => {
+    setPendingFileError(null);
+    const inline = preCheckFile(file);
+    if (inline) {
+      setPendingFileError(inline);
+      setPendingFile(null);
+      return;
+    }
+    setPendingFile(file);
+  };
+
+  // §R3.x — dialog DropZone delegate. Same gate as tap.
+  const onDropDialogFile = (file) => onStageDialogFile(file);
+
+  // §R2.4 — open paths reset staged file on every entry to the dialog.
   const openCreate = () => {
     setEditing(null);
     setForm(emptyForm());
+    clearPendingFile();
     setDialogOpen(true);
   };
   const openEdit = (row) => {
     setEditing(row.id);
     setForm(rowToForm(row));
+    clearPendingFile();
     setDialogOpen(true);
   };
 
+  // §R2.4 — close paths reset staged file too (covers Cancel button,
+  // Esc, backdrop click, and any other onOpenChange(false) trigger).
+  const handleDialogOpenChange = (open) => {
+    if (!open) clearPendingFile();
+    setDialogOpen(open);
+  };
+  const closeDialog = () => handleDialogOpenChange(false);
+
   const onSubmit = async (e) => {
     e.preventDefault();
+    // §R2.1 — build payload exactly as today. No `file`, no `file_ref`.
+    //         The staged file is uploaded as a SEPARATE step after the
+    //         create/patch settles successfully.
+    const payload = {
+      doc_type: form.doc_type,
+      title: form.title?.trim(),
+    };
+    // Optional fields — omit when blank so backend `notnull` defaults stand.
+    if (form.issued_on) payload.issued_on = form.issued_on;
+    if (form.expires_on) payload.expires_on = form.expires_on;
+    if (form.notes) payload.notes = form.notes;
+
+    // Snapshot the staged file before we start; the dialog may close
+    // mid-flight and React state could otherwise be stale by the time
+    // the upload step runs.
+    const stagedFile = pendingFile;
+
+    let savedId = null;
     try {
-      const payload = {
-        doc_type: form.doc_type,
-        title: form.title?.trim(),
-      };
-      // Optional fields — omit when blank so backend `notnull` defaults stand.
-      if (form.issued_on) payload.issued_on = form.issued_on;
-      if (form.expires_on) payload.expires_on = form.expires_on;
-      if (form.notes) payload.notes = form.notes;
       if (editing) {
         await patch.mutateAsync({ id: editing, body: payload });
+        savedId = editing;
         toast.success('Document updated');
       } else {
-        await create.mutateAsync(payload);
+        const created = await create.mutateAsync(payload);
+        // The server returns the new doc shape (`id`, `doc_type`, …).
+        // Be defensive — fall back to `null` if the test mocks return
+        // an empty object: in that case we can't chain the upload, so
+        // we behave exactly as today.
+        savedId = created?.id ?? null;
         toast.success('Document added');
       }
-      setDialogOpen(false);
     } catch (err) {
       const detail = err?.response?.data?.detail ?? err?.message ?? 'Save failed';
       toast.error(typeof detail === 'string' ? detail : JSON.stringify(detail));
+      return; // create/patch failed — do NOT attempt the upload.
     }
+
+    // §R2.3 — chain the upload AFTER the save succeeds. The doc exists
+    // either way; if the upload fails we close + toast the mapped error
+    // so the operator can retry the file from the row.
+    if (stagedFile && savedId) {
+      try {
+        await upload.mutateAsync({ id: savedId, file: stagedFile });
+      } catch (err) {
+        closeDialog();
+        toast.error(uploadErrorMessage(err));
+        return;
+      }
+    }
+
+    closeDialog();
   };
 
   const onArchive = async (row) => {
@@ -412,7 +505,7 @@ export default function DocumentsTab({ supplierId }) {
         </Table>
       )}
 
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+      <Dialog open={dialogOpen} onOpenChange={handleDialogOpenChange}>
         <DialogContent data-testid="document-form-dialog">
           <DialogHeader>
             <DialogTitle>{editing ? 'Edit document' : 'Add document'}</DialogTitle>
@@ -466,8 +559,74 @@ export default function DocumentsTab({ supplierId }) {
                 data-testid="document-form-notes"
               />
             </div>
+            {/*
+              §R2.2 — file-attach (optional). Gated on canEditDocs(me) so a
+              viewer who somehow lands in the dialog never sees the attach
+              control. The staged file lives in `pendingFile` — it is NEVER
+              folded into `form`/the payload (assert in tests #8). On Save:
+              create/patch first, then upload with the resulting id.
+              §R3 — DropZone layered on top of FilePicker (desktop polish);
+              the tap-to-pick input survives intact as the mobile baseline.
+              §R5 — extension list now on the input's `accept`, plus the
+              friendly "or drag a file here" hint inside the drop-zone, and
+              the same "PDF, image, Office docs · 25 MB max" hint as the
+              row Upload cell — single source of truth.
+            */}
+            {canEditDocs(me) && (
+              <div data-testid="document-form-attach">
+                <Label>Attach file (optional)</Label>
+                <DropZone
+                  testid="document-form-dropzone"
+                  onDropFile={onDropDialogFile}
+                >
+                  <FilePicker
+                    rowId="form"
+                    accept={ACCEPT_ATTR}
+                    isUploading={false}
+                    onPickFile={onStageDialogFile}
+                    label={pendingFile ? 'Choose different file' : 'Choose file'}
+                    testid="document-form-file"
+                  />
+                  <span className="text-[11px] text-slate-500 mt-1">
+                    or drag a file here · PDF, image, Office docs · 25 MB max
+                  </span>
+                </DropZone>
+                {pendingFile && (
+                  <div
+                    className="mt-1 flex items-center gap-2 text-xs text-slate-700"
+                    data-testid="document-form-file-staged"
+                  >
+                    <span
+                      className="break-all"
+                      data-testid="document-form-file-name"
+                    >
+                      {pendingFile.name}
+                    </span>
+                    <span className="text-slate-500">
+                      ({formatFileSize(pendingFile.size)})
+                    </span>
+                    <button
+                      type="button"
+                      onClick={clearPendingFile}
+                      className="underline text-sy-teal-700"
+                      data-testid="document-form-file-clear"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                )}
+                {pendingFileError && (
+                  <span
+                    className="block text-xs text-red-600 mt-1"
+                    data-testid="document-form-file-error"
+                  >
+                    {pendingFileError}
+                  </span>
+                )}
+              </div>
+            )}
             <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setDialogOpen(false)}
+              <Button type="button" variant="outline" onClick={closeDialog}
                       data-testid="document-form-cancel">
                 Cancel
               </Button>
@@ -564,17 +723,22 @@ function DocumentFileCell({
   if (canEdit && !isArchived) {
     return (
       <div className="flex flex-col gap-1">
-        <FilePicker
-          rowId={row.id}
-          accept={accept}
-          isUploading={isUploading}
-          onPickFile={onPickFile}
-          label="Upload"
-          testid={`document-row-upload-${row.id}`}
-        />
-        <span className="text-[11px] text-slate-500">
-          PDF, image, Office docs · 25 MB max
-        </span>
+        <DropZone
+          testid={`document-row-dropzone-${row.id}`}
+          onDropFile={onPickFile}
+        >
+          <FilePicker
+            rowId={row.id}
+            accept={accept}
+            isUploading={isUploading}
+            onPickFile={onPickFile}
+            label="Upload"
+            testid={`document-row-upload-${row.id}`}
+          />
+          <span className="text-[11px] text-slate-500 mt-1">
+            or drag a file here · PDF, image, Office docs · 25 MB max
+          </span>
+        </DropZone>
         {inlineError && (
           <span
             className="text-xs text-red-600"
@@ -629,6 +793,59 @@ function FilePicker({ rowId, accept, isUploading, onPickFile, label, testid }) {
         }}
       />
     </label>
+  );
+}
+
+/**
+ * DropZone — §R3 desktop drag-and-drop, layered on top of FilePicker.
+ *
+ * Hard contract: the children (a <FilePicker/> with its <input type="file">)
+ * MUST remain interactive — tap-to-pick is the mobile baseline and is the
+ * only required path. The drop-zone is a passive enhancement: on desktop
+ * it adds onDragOver/onDragLeave/onDrop handlers that route the dropped
+ * file through the same `onDropFile(file)` callback as the input's
+ * onChange. Multi-file drops take only the first file (single-file model
+ * everywhere else in the tab).
+ *
+ * `onDropFile` is expected to perform the same pre-check the input path
+ * does (parent owns the gate — see `onPickFile` for the row and
+ * `onStageDialogFile` for the dialog). DropZone itself is dumb.
+ */
+function DropZone({ testid, onDropFile, children }) {
+  const [isOver, setIsOver] = useState(false);
+  const base =
+    'flex flex-col items-start gap-1 rounded-md border border-dashed px-3 py-2 transition-colors';
+  const tone = isOver
+    ? 'border-sy-teal-600 bg-sy-teal-50/60'
+    : 'border-slate-300 bg-transparent';
+  return (
+    <div
+      data-testid={testid}
+      data-dragover={isOver ? 'true' : 'false'}
+      className={`${base} ${tone}`}
+      onDragOver={(e) => {
+        // Must preventDefault — without it the browser opens the file
+        // in a new tab instead of letting us handle the drop.
+        e.preventDefault();
+        if (!isOver) setIsOver(true);
+      }}
+      onDragEnter={(e) => {
+        e.preventDefault();
+        setIsOver(true);
+      }}
+      onDragLeave={(e) => {
+        e.preventDefault();
+        setIsOver(false);
+      }}
+      onDrop={(e) => {
+        e.preventDefault();
+        setIsOver(false);
+        const file = e.dataTransfer?.files?.[0];
+        if (file) onDropFile(file);
+      }}
+    >
+      {children}
+    </div>
   );
 }
 
