@@ -731,14 +731,6 @@ path exists today.
 - **B77** — Multi-site document routing (Track 5). Per-doc-type target sites
   + external sharing, reusing the rev-B DocumentStore engine. From Chat 41.
 
-- **B78** — Document-upload fix-pack. IN PROGRESS Chat 44 (Build Pack
-  2.7-FE-docfix). Three frontend fixes found in Chat 43 eyeball test:
-  (1) extension-fallback in the client pre-check (valid files with empty/
-  variant MIME types were being rejected before the request fired —
-  server stays the real validator); (2) optional file-attach in the Add/Edit
-  dialog (create-and-upload in one action); (3) desktop drag-and-drop layered
-  on top of tap-to-pick. Frontend only, backend frozen.
-
 - **B78** — Document-upload fix-pack (rejection bug + dialog-attach + drag-drop). ← DELIVERED + live-verified Chat 44.
 
 - **B79** — Whole-platform folder/file document-management model (Track 5). Replaces the flat typed-row supplier-docs surface with named folders + files (rename /
