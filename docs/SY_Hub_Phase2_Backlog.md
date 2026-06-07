@@ -721,3 +721,20 @@ path exists today.
 - **B75** — Adopt the widened multi-field search as the standard pattern for
   ALL list/search boxes platform-wide (bills, projects, documents, etc.) as
   each module is built — match the Suppliers behaviour. From Chat 41.
+
+- **B76** — Frontend document upload/download control. DELIVERED Chat 43
+  (Build Pack 2.7-FE-docupload). Real Upload/Download/Replace controls wired
+  onto the rev-B endpoints in the Suppliers → Documents tab; dead free-text
+  file_ref removed; sensitive-gated file column; mobile-first tap-to-pick;
+  618 tests / 80 suites green. Verified on origin/main.
+
+- **B77** — Multi-site document routing (Track 5). Per-doc-type target sites
+  + external sharing, reusing the rev-B DocumentStore engine. From Chat 41.
+
+- **B78** — Document-upload fix-pack. IN PROGRESS Chat 44 (Build Pack
+  2.7-FE-docfix). Three frontend fixes found in Chat 43 eyeball test:
+  (1) extension-fallback in the client pre-check (valid files with empty/
+  variant MIME types were being rejected before the request fired —
+  server stays the real validator); (2) optional file-attach in the Add/Edit
+  dialog (create-and-upload in one action); (3) desktop drag-and-drop layered
+  on top of tap-to-pick. Frontend only, backend frozen.
