@@ -43,6 +43,16 @@ export function canEditDocs(me)          { return hasPerm(me, 'supplier_document
 export function canArchiveDocs(me)       { return hasPerm(me, 'supplier_documents.archive'); }
 
 
+// ─── Document folders (Chat 46, Build Pack 2.7-DOCS-FE §R2.0) ────────
+// Folder VIEW follows `canViewDocs` (the backend gates folder reads on
+// the owner-surface view perm — supplier_documents.view for suppliers).
+// Folder WRITES (create / rename / archive / unarchive) and MOVES use
+// the platform-wide `documents.*` actions.
+export function canCreateFolder(me) { return hasPerm(me, 'documents.create'); }
+export function canEditFolder(me)   { return hasPerm(me, 'documents.edit'); }
+export function canMoveDocs(me)     { return hasPerm(me, 'documents.move'); }
+
+
 // ─── Purchase Orders ─────────────────────────────────────────────────
 export function canViewPOs(me)                { return hasPerm(me, 'pos.view'); }
 export function canViewSensitivePO(me)        { return hasPerm(me, 'pos.view_sensitive'); }

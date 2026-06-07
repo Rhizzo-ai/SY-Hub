@@ -3,8 +3,12 @@ const path = require("path");
 require("dotenv").config();
 
 // Check if we're in development/preview mode (not production build)
-// Craco sets NODE_ENV=development for start, NODE_ENV=production for build
-const isDevServer = process.env.NODE_ENV !== "production";
+// Craco sets NODE_ENV=development for start, NODE_ENV=production for build,
+// NODE_ENV=test for `craco test`. Visual-edits is a DEV-ONLY tool — loading
+// it under test breaks Jest's babel pipeline on deeply recursive React
+// components (Maximum call stack size exceeded inside babel-traverse).
+const isDevServer = process.env.NODE_ENV !== "production"
+  && process.env.NODE_ENV !== "test";
 
 // Environment variable overrides
 const config = {

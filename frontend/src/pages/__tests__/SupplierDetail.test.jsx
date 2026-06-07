@@ -28,8 +28,8 @@ jest.mock('sonner', () => ({
 jest.mock('@/components/suppliers/CISTab', () => () => (
   <div data-testid="cis-tab-stub" />
 ));
-jest.mock('@/components/suppliers/DocumentsTab', () => () => (
-  <div data-testid="documents-tab-stub" />
+jest.mock('@/components/suppliers/DocumentFolderView', () => () => (
+  <div data-testid="document-folder-view-stub" />
 ));
 let mockNavigate = jest.fn();
 

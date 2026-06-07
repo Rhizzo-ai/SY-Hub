@@ -41,7 +41,7 @@ import {
 import SensitiveValue from '@/components/po/SensitiveValue';
 import CISStatusBadge from '@/components/suppliers/CISStatusBadge';
 import CISTab from '@/components/suppliers/CISTab';
-import DocumentsTab from '@/components/suppliers/DocumentsTab';
+import DocumentFolderView from '@/components/suppliers/DocumentFolderView';
 import {
   labelCisStatus, labelCurrentCisStatus,
 } from '@/lib/cisFormat';
@@ -271,7 +271,7 @@ export default function SupplierDetail() {
 
         {showDocsTab && (
           <TabsContent value="documents" className="mt-4">
-            <DocumentsTab supplierId={s.id} />
+            <DocumentFolderView supplierId={s.id} />
           </TabsContent>
         )}
 

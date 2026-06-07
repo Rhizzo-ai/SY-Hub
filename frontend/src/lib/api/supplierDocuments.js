@@ -56,6 +56,22 @@ export async function unarchiveDocument(id) {
   return data;
 }
 
+
+/**
+ * POST /v1/supplier-documents/{id}/move — Build Pack 2.7-DOCS-FE §R3.2.
+ *
+ * Re-files a document into a folder (or to "unfiled" when folderId is
+ * null). The backend gates on `documents.move`; the folder MUST belong
+ * to the same supplier (422 otherwise).
+ */
+export async function moveDocument(id, folderId) {
+  const { data } = await api.post(
+    `/v1/supplier-documents/${id}/move`,
+    { folder_id: folderId ?? null },
+  );
+  return data;
+}
+
 // ---------------------------------------------------------------------------
 // File upload / download (Build Pack 2.7-FE-docupload §R3, rev-B endpoints).
 //

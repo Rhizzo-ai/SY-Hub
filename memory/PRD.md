@@ -18,6 +18,119 @@ Frontend / actuals / commitments / Xero are out of scope until later prompts.
 
 ## What's been implemented
 
+### Chat 46 — Build Pack 2.7-DOCS-FE · Document Folder Tree UI (Frontend, B79 Part 2 of 2) (2026-02)
+
+Frontend-only delivery on top of Chat 45's B79-BE folder engine.
+Replaces the flat `<DocumentsTab/>` with a **two-pane folder
+browser** (tree left, files right). Folders nest unlimited depth;
+docs move by drag-and-drop AND by a "Move to…" button (button =
+canonical testable path, drag = polish). All upload / replace /
+download primitives reused verbatim from a new shared module.
+**Closes backlog B79** (-BE + -FE).
+
+**Backend FROZEN throughout** — zero `backend/` touches, alembic
+head stays `0043_document_folders`, permissions stay 133, roles
+stay 10.
+
+**Operator-pinned decisions honoured:** F1 desktop-first two-pane
+(mobile is a separate future build; the narrow-viewport fallback is
+a graceful placeholder, not a real mobile UX); F2 drag primary +
+button canonical; F3 reuse file primitives; F4 `doc_type` + `title`
+optional with auto-fill-from-filename placeholder.
+
+**Gate 1 — shared module extraction:** new
+`components/suppliers/documentFileShared.jsx` carries the §R0.3
+allowlist + `ACCEPT_ATTR` + `fileExtension` + `formatFileSize` +
+`preCheckFile` (four-step) + `uploadErrorMessage` +
+`downloadErrorMessage` + `<FilePicker/>` + `<DropZone/>` +
+`<DocumentFileCell/>`. The retiring `DocumentsTab.jsx` re-imports
+them and its existing **46-test suite stayed green unchanged** —
+refactor-safety proven. New `documentFileShared.test.jsx` ports the
+relevant coverage: **37 tests** (precheck, allowlists, fileExtension,
+formatFileSize, error mappers, FilePicker uploading-state +
+key-reset, DropZone drag handlers, DocumentFileCell branches incl.
+the no-URL-leak guard).
+
+**Gate 2 — API + hooks:** new `lib/api/documentFolders.js`
+(`listFolderTree`, `getFolder`, `createFolder`, `renameFolder`,
+`moveFolder` null→root, `archiveFolder`, `unarchiveFolder`). New
+`hooks/documentFolders.js` (`folderKeys`, `useFolderTree`, plus the
+five mutations with cross-resource invalidation: archive/unarchive
+of a folder invalidates BOTH the tree AND the docs list).
+`lib/api/supplierDocuments.js` gains `moveDocument(id, folderId)`;
+`hooks/supplierDocuments.js` gains `useMoveDocument` (invalidates
+docs + the broad folder tree). `lib/poCapability.js` gains
+`canCreateFolder` (`documents.create`), `canEditFolder`
+(`documents.edit`), `canMoveDocs` (`documents.move`). New
+`lib/api/__tests__/documentFolders.test.js` — **16 wire-level tests**
+asserting exact URL + body / params (Chat 44 lesson — mocked-hook
+tests never cross the wire).
+
+**Gate 3 — folder view:** new `components/suppliers/DocumentFolderView.jsx`
+(top-level state + dialogs + 4 layout helpers + 3 sub-tables) +
+`FolderNode.jsx` (recursive tree with the action menu + drop
+target) + `FolderPicker.jsx` (flat indented radio list with
+`excludeId` for folder-move). **No useEffect**: default-root-expanded
+is a pure `useMemo` overlay of `overrides ∪ every-root-open` so the
+lint rule `react-hooks/set-state-in-effect` stays clean and no
+re-entrant render path appears when the tree refetches. Direct
+contents only (right pane filter matches backend `file_count` —
+non-recursive). Error mapping centralised in a `mapMoveError`
+helper. New `DocumentFolderView.test.jsx` — **21 tests** covering
+R6 #1-#21 verbatim: tree render/expand/select/All/archived, folder
+CRUD (create from header, create-sub from node, rename, archive +
+422 message, move + 422 message, perm-gating), files (DocumentFileCell
+reuse, prefill folder_id on Add, optional fields submit cleanly,
+"Move to…" → folder / null / hidden without `documents.move`),
+drag (dragStart sets payload, drop invokes the mutation), desktop
+notice, refactor-safety tracer.
+
+**Gate 4 — mount + retire:** `pages/SupplierDetail.jsx` swapped to
+`<DocumentFolderView/>` at the `<TabsContent value="documents">`
+block. `SupplierDetail.test.jsx` mock retargeted from
+`DocumentsTab` to `DocumentFolderView`. **Deleted**
+`components/suppliers/DocumentsTab.jsx` +
+`components/suppliers/__tests__/DocumentsTab.test.jsx`. Grep confirms
+zero remaining `DocumentsTab` runtime imports.
+
+**Final 2nd-run FE suite:** **83 suites passed, 667 tests passed,
+0 failures, 0 errors.** Baseline (Chat 44 close): 81 / 639. Net:
+**+2 suites (+3 new − 1 deleted), +28 tests** (+74 ported/new
+across 3 new files − 46 from the deleted DocumentsTab suite).
+Direction up, accounting balances.
+
+**Deviations flagged for review (none silent):**
+- `craco.config.js` `isDevServer` excludes `NODE_ENV=test` —
+  `@emergentbase/visual-edits/craco` (dev-only) was loading under
+  Jest and crashing babel-traverse on recursive `<FolderNode/>` with
+  a stack overflow. One-line guard. `start`/`develop` untouched.
+- The view split into 3 files (`DocumentFolderView` + `FolderNode`
+  + `FolderPicker`) instead of one. Build Pack §R4.1 describes one
+  component; the split is a structural refinement (small files,
+  dodges the babel-stack issue, follows the house
+  "keep components small" guideline). Semantics unchanged.
+
+**Live eyeball test items (operator must run before declaring
+done):** create folder; create subfolder via per-node "+"; drag a
+doc to a folder; "Move to…" → Unfiled; upload a file via row
+control + via dialog attach; rename folder; archive non-empty
+folder to see the 422 message surface; move folder into itself/
+descendant to see the loop-guard 422; confirm narrow notice at
+<768px.
+
+**Backlog surfaced (operator hand-adds; this agent did NOT touch
+`docs/SY_Hub_Phase2_Backlog.md`):** B79 CLOSED; mobile-optimised
+document/folder UX; Role & Permissions Admin screen (carried);
+external-party folder access (portal 2.9, carried); folder UI
+enhancements (multi-select bulk move, folder zip download,
+drag-folder-onto-folder); physical storage path reorg; cascade
+archive; owner-type expansion (project, subcontract).
+
+**Files landed:** see `CHANGELOG.md` §Chat-46. 9 new, 6 modified,
+2 deleted — all confined to `frontend/`.
+
+---
+
 ### Chat 45 — Build Pack 2.7-DOCS-BE · Document Folder Engine (Backend, B79 Part 1 of 2) (2026-02)
 
 Backend-only. Polymorphic logical folder tree (`document_folders`)

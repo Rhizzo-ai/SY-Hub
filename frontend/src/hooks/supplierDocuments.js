@@ -79,3 +79,29 @@ export function useUploadDocumentFile(supplierId) {
     onSuccess: () => invalidateDocsAndSuppliers(qc, supplierId),
   });
 }
+
+
+/**
+ * Move a supplier document into / out of a folder — Build Pack
+ * 2.7-DOCS-FE §R3.4. On success invalidates BOTH the docs list AND the
+ * folder tree (file_count changes per folder when a doc re-files).
+ *
+ * The owner tuple is `('supplier', supplierId)`; future owner types
+ * will keep this shape (only the discriminator changes) so the hook
+ * doesn't need a generic owner argument.
+ */
+export function useMoveDocument(supplierId) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, folderId }) => docsApi.moveDocument(id, folderId),
+    onSuccess: () => {
+      invalidateDocsAndSuppliers(qc, supplierId);
+      // file_count badges on the folder tree need to redraw — broad
+      // invalidate the supplier-owned tree (any include_archived
+      // variant).
+      qc.invalidateQueries({
+        queryKey: ['document-folders', 'supplier', supplierId],
+      });
+    },
+  });
+}
