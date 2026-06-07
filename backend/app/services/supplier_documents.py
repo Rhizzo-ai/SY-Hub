@@ -46,6 +46,8 @@ log = logging.getLogger(__name__)
 _AUDIT_COLS: tuple[str, ...] = (
     "supplier_id", "doc_type", "title", "file_ref",
     "issued_on", "expires_on", "notes", "is_archived",
+    # Chat 45 §R2.8 (Build Pack 2.7-DOCS-BE) — folder association.
+    "folder_id",
 )
 
 
@@ -97,12 +99,50 @@ def _snapshot(d: SupplierDocument) -> dict[str, Any]:
 # Validators
 # ---------------------------------------------------------------------------
 
-def _validate_doc_type(value: Any) -> str:
+def _validate_doc_type(value: Any) -> Optional[str]:
+    # Chat 45 §R2.9 (Build Pack 2.7-DOCS-BE) — doc_type is now optional.
+    # Validate ONLY when a non-null, non-empty value is supplied;
+    # NULL/empty → return None (the field is no longer mandatory).
+    if value is None or value == "":
+        return None
     if value not in SUPPLIER_DOC_TYPES:
         raise ValueError(
             f"doc_type must be one of {SUPPLIER_DOC_TYPES}, got {value!r}"
         )
     return value
+
+
+def _load_folder_for_supplier(
+    db: Session,
+    tenant_id: uuid.UUID,
+    supplier_id: uuid.UUID,
+    folder_id_raw: Any,
+) -> Optional[uuid.UUID]:
+    """Validate that `folder_id_raw` refers to a folder owned by this
+    supplier in this tenant, and is not archived. None / "" → returns
+    None (clear). Returns the resolved UUID on success.
+
+    Raises:
+        ValueError   — wrong owner / archived / malformed.
+        LookupError  — folder not in tenant (router → 404).
+    """
+    if folder_id_raw is None or folder_id_raw == "":
+        return None
+    try:
+        folder_id = uuid.UUID(str(folder_id_raw))
+    except (ValueError, TypeError) as e:
+        raise ValueError(f"folder_id not a uuid: {e}") from e
+    # Defer to the document_folders service for the lookup so we share
+    # the tenant-scoped query path.
+    from app.services.document_folders import get_folder as _get_folder
+    folder = _get_folder(db, tenant_id, folder_id)
+    if folder is None:
+        raise LookupError(f"document_folder {folder_id} not found in tenant")
+    if folder.owner_type != "supplier" or folder.owner_id != supplier_id:
+        raise ValueError("folder belongs to a different supplier")
+    if folder.is_archived:
+        raise ValueError("destination folder is archived")
+    return folder_id
 
 
 def _coerce_date(value: Any, *, field: str) -> Optional[date]:
@@ -207,14 +247,25 @@ def create_document(
     _load_supplier(db, tenant_id, supplier_id)
 
     doc_type = _validate_doc_type(payload.get("doc_type"))
-    title = (payload.get("title") or "").strip()
-    if not title:
-        raise ValueError("title is required")
-    if len(title) > 200:
-        raise ValueError("title must be ≤ 200 characters")
+    # Chat 45 §R2.9 — title is now optional. Blank/missing → leave NULL
+    # (the FE / upload path will auto-fill from filename later; backend
+    # just permits NULL). Length-guard still runs when a value is given.
+    title_raw = payload.get("title")
+    title: Optional[str] = None
+    if title_raw is not None:
+        t = (title_raw or "").strip()
+        if t:
+            if len(t) > 200:
+                raise ValueError("title must be ≤ 200 characters")
+            title = t
 
     issued = _coerce_date(payload.get("issued_on"), field="issued_on")
     expires = _coerce_date(payload.get("expires_on"), field="expires_on")
+
+    # Optional folder association (validated against tenant + supplier).
+    folder_id = _load_folder_for_supplier(
+        db, tenant_id, supplier_id, payload.get("folder_id"),
+    )
 
     row = SupplierDocument(
         tenant_id=tenant_id,
@@ -226,6 +277,7 @@ def create_document(
         expires_on=expires,
         notes=(payload.get("notes") or None),
         is_archived=False,
+        folder_id=folder_id,
         created_by=user_id,
         updated_by=user_id,
     )
@@ -269,14 +321,25 @@ def update_document(
     before = _snapshot(row)
 
     if "title" in payload:
-        t = (payload["title"] or "").strip()
-        if not t:
-            raise ValueError("title cannot be empty")
-        if len(t) > 200:
-            raise ValueError("title must be ≤ 200 characters")
-        row.title = t
+        # Chat 45 §R2.9 — title may be cleared via PATCH (set to null/blank).
+        raw = payload["title"]
+        if raw is None:
+            row.title = None
+        else:
+            t = (raw or "").strip()
+            if not t:
+                row.title = None
+            else:
+                if len(t) > 200:
+                    raise ValueError("title must be ≤ 200 characters")
+                row.title = t
     if "doc_type" in payload:
+        # Chat 45 §R2.9 — doc_type may be cleared (None) or set to a value.
         row.doc_type = _validate_doc_type(payload["doc_type"])
+    if "folder_id" in payload:
+        row.folder_id = _load_folder_for_supplier(
+            db, tenant_id, row.supplier_id, payload["folder_id"],
+        )
     # rev-B: `file_ref` is no longer client-settable; it is owned by the
     # upload/download endpoints. Any client-supplied `file_ref` in the
     # PATCH body is silently ignored here (the schema removed it; this
@@ -351,6 +414,62 @@ def set_archived(
         metadata={
             "supplier_id": str(row.supplier_id),
             "doc_type": row.doc_type,
+        },
+        request=request,
+    )
+    return row
+
+
+# ---------------------------------------------------------------------------
+# Chat 45 §R2.8 (Build Pack 2.7-DOCS-BE) — supplier-doc ↔ folder move.
+# ---------------------------------------------------------------------------
+
+def move_document_to_folder(
+    db: Session,
+    tenant_id: uuid.UUID,
+    user_id: uuid.UUID,
+    document_id: uuid.UUID,
+    folder_id_raw: Any,
+    *,
+    request: Optional[Request] = None,
+) -> SupplierDocument:
+    """Re-file `document_id` into `folder_id_raw` (None = unfiled / root).
+
+    Raises:
+        LookupError: doc not in tenant, OR folder not in tenant.
+        ValueError:  folder belongs to a different supplier or is archived.
+    """
+    row = get_document(db, tenant_id, document_id)
+    if row is None:
+        raise LookupError(
+            f"supplier_document {document_id} not found in tenant"
+        )
+
+    new_folder_id = _load_folder_for_supplier(
+        db, tenant_id, row.supplier_id, folder_id_raw,
+    )
+    if row.folder_id == new_folder_id:
+        return row
+
+    before = _snapshot(row)
+    row.folder_id = new_folder_id
+    row.updated_by = user_id
+    row.updated_at = datetime.now(timezone.utc)
+    db.flush()
+
+    after = _snapshot(row)
+    record_audit(
+        db, action="Update",
+        resource_type="supplier_document",
+        resource_id=row.id,
+        actor_user_id=user_id,
+        field_changes=field_diff(before, after),
+        metadata={
+            "supplier_id": str(row.supplier_id),
+            "moved_from": (
+                str(before["folder_id"]) if before["folder_id"] else None
+            ),
+            "moved_to": str(new_folder_id) if new_folder_id else None,
         },
         request=request,
     )
@@ -536,6 +655,7 @@ def serialise(
         "supplier_id": str(row.supplier_id),
         "doc_type": row.doc_type,
         "title": row.title,
+        "folder_id": str(row.folder_id) if row.folder_id else None,
         "issued_on": row.issued_on.isoformat() if row.issued_on else None,
         "expires_on": row.expires_on.isoformat() if row.expires_on else None,
         "is_archived": bool(row.is_archived),

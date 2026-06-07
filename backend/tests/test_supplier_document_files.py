@@ -508,6 +508,7 @@ class TestSerialiserNonSensitive:
             supplier_id = uuid.uuid4()
             doc_type = "Other"
             title = "T"
+            folder_id = None  # Chat 45 §R1.2 — unfiled.
             file_ref = ref.to_json()
             issued_on = None
             expires_on = None

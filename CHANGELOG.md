@@ -11,6 +11,196 @@ Each entry: date, prompt reference (if applicable), change, rationale.
 
 ## Entries
 
+## Chat 45 — Build Pack 2.7-DOCS-BE · Document Folder Engine (Backend, B79 Part 1 of 2) (2026-02)
+
+Backend-only. Builds a polymorphic logical folder tree attachable to
+any owner record via `(owner_type, owner_id)` (D3) — suppliers first,
+projects/subcontracts inherit later for free. Existing supplier
+compliance documents are migrated into one "Compliance" folder per
+supplier (D2), all on the SAME alembic revision that adds the tables
+and relaxes `supplier_documents` constraints. `doc_type` + `title`
+become optional (D4, D5); a new `documents.move` action gates folder
++ document moves (D6). Nesting depth is unlimited (D1) with a loop
+guard rejecting self / descendant moves.
+
+**Frontend FROZEN.** Zero `frontend/` files touched. The existing
+`DocumentsTab.jsx` continues to function unchanged because the
+`supplier_documents` create/list/patch/archive endpoints stay
+behaviourally identical (doc_type and title were previously required,
+are now optional, so old payloads still succeed). The folder-tree UI
+ships in the follow-on **B79-FE** pack.
+
+**Closes:** backlog **B79** (this is part 1 of 2; B79-FE is part 2).
+
+### Gate 1 — model + migration
+
+- `app/models/document_folders.py` — new `DocumentFolder` model
+  (UUID PK, tenant FK ON DELETE RESTRICT, polymorphic `owner_type +
+  owner_id`, self-referential `parent_id` ON DELETE RESTRICT,
+  audit-timestamp/user columns + soft-delete `is_archived`).
+  Exported via `models/__init__` alongside `FOLDER_OWNER_TYPES`.
+- `app/models/supplier_documents.py` — `doc_type` and `title` relaxed
+  to `Optional[str]`; new `folder_id` FK column (SET NULL on folder
+  delete) so deleting a folder UN-files docs rather than cascade-
+  deleting them.
+- `alembic/versions/0043_document_folders.py` — single revision
+  chaining from `0042_file_ref_text`, does THREE things idempotently
+  in one block (per the opener's exact instruction): (1) creates
+  `document_folders` with the polymorphic CHECK + partial-unique
+  sibling-name index using `COALESCE(parent_id, zero-UUID)` so root
+  siblings de-duplicate too; (2) drops `ck_supplier_documents_doc_type`,
+  alters `doc_type`/`title` to nullable, adds nullable `folder_id` FK;
+  (3) DATA STEP — creates one `Compliance` root folder per supplier
+  with documents and UPDATEs all that supplier's docs (archived
+  included) to point at it, idempotent via a "skip if a Compliance
+  folder already exists for this supplier" guard. Enum widen
+  `permission_action += 'move'` uses the exact autocommit_block idiom
+  from `0020_permission_action_submit.py`. Round-trip down/up clean.
+
+### Gate 2 — RBAC
+
+- `app/models/rbac.py` — `ACTIONS` tuple appended `"move"`.
+- `app/seed_rbac.py` — `documents` resource `_perms_for` extended to
+  `include=["view", "create", "edit", "delete", "move"]`. New
+  permission code **`documents.move`** (non-sensitive: re-filing
+  already-visible docs/folders is a structural operation, not a
+  data-disclosure operation).
+- Role grants for `documents.move` (per §R4.3 union rule — roles
+  holding `documents.edit` OR `supplier_documents.edit`):
+  - `super_admin` and `director` via the wildcard / minus-exclusions
+    seed paths.
+  - `project_manager` — already holds both edit perms, gains `.move`.
+  - `finance` — holds `supplier_documents.edit`, gains `.move`. This
+    is the **R4.3 distribution-gotcha fix** (regression-guarded by
+    test 34b): if `.move` had followed `documents.edit` alone,
+    finance — which previously did not hold `documents.edit` — would
+    have lost the ability to file the very docs it edits every day.
+  - **§R4.3b (operator broadening):** finance also gains
+    `documents.create` + `documents.edit` (catalogue codes already
+    existed, only the role-grant rows are new) so finance can create,
+    rename, and archive folders. Regression-guarded by test 35b.
+- **Permission catalogue count: 132 → 133.** Verified via
+  bootstrap `verify.perms result=ok expected=133 actual=133`.
+- Roles: **10** (unchanged).
+
+### Gate 3 — service + router
+
+- `app/services/document_folders.py` (new) — mirrors
+  `services/supplier_documents.py` conventions 1:1 (`ValueError` →
+  422, `LookupError` → 404, `record_audit` AFTER `db.flush()`,
+  tenant-scoped queries). Functions: `create_folder`,
+  `list_folder_tree`, `get_folder`, `get_folder_detail`,
+  `rename_folder`, `move_folder` (with the loop guard implemented as
+  an **ancestor walk on the new parent** — cheaper than the
+  alternative descendant walk on the source), `set_folder_archived`,
+  `serialise_folder`, and a small extensible `OWNER_VIEW_PERM` map
+  (`owner_view_perm("supplier") → "supplier_documents.view"`) so the
+  router can resolve the right view perm per the §R3.0 owner-surface
+  view rule. Sibling-name uniqueness is enforced by the partial
+  unique index; `IntegrityError` is caught inside a `begin_nested()`
+  savepoint and re-raised as `ValueError` so the SQLAlchemy session
+  stays usable.
+- `app/services/supplier_documents.py` — `_validate_doc_type` now
+  optional; `create_document` accepts optional `doc_type`, optional
+  `title`, optional `folder_id` (validated against the supplier);
+  new `move_document_to_folder`; `serialise` exposes `folder_id`;
+  `_AUDIT_COLS` includes `folder_id`.
+- `app/routers/document_folders.py` (new) — mounted under
+  `/api/v1/document-folders` via `backend/server.py` (NOT
+  `backend/app/server.py` — the operator-pinned mount point).
+  Endpoints: POST create (`documents.create`), GET tree + GET detail
+  (`_owner_view_perm(owner_type) = supplier_documents.view` for
+  supplier-owned folders — the §R3.0 owner-surface read rule), PATCH
+  rename (`documents.edit`), POST move (`documents.move`), POST
+  archive + POST unarchive (`documents.edit`).
+- `app/routers/supplier_documents.py` — `SupplierDocumentCreateBody`
+  + `SupplierDocumentUpdateBody` relaxed (`doc_type`/`title`
+  optional, new optional `folder_id`). New
+  `POST /supplier-documents/{id}/move` endpoint gated on
+  `documents.move`. All other existing endpoints unchanged in
+  behaviour — frontend stays unbroken.
+- 8 new/extended routes verified live:
+  ```
+  POST /api/v1/document-folders
+  GET  /api/v1/document-folders
+  GET  /api/v1/document-folders/{folder_id}
+  PATCH /api/v1/document-folders/{folder_id}
+  POST /api/v1/document-folders/{folder_id}/move
+  POST /api/v1/document-folders/{folder_id}/archive
+  POST /api/v1/document-folders/{folder_id}/unarchive
+  POST /api/v1/supplier-documents/{document_id}/move
+  ```
+
+### Gate 4 — tests
+
+- `backend/tests/test_document_folders.py` — **30** test functions
+  covering folder CRUD (9), move + loop guard (6), archive (6),
+  tree (3), permissions (5), migration / catalogue invariants (1).
+- `backend/tests/test_supplier_documents_folders.py` — **8** test
+  functions covering relaxed-create (4), document-move (3),
+  archive-live-doc interaction (1).
+- **Total new test functions: 38** (target ≥36).
+- Baseline-drift literal bumps (chat-15 §3 convention): alembic
+  head sentinel `0041_drop_vat_registered → 0043_document_folders`
+  across `test_subcontracts_migration.py`,
+  `test_budget_changes_migration.py`,
+  `test_migration_0025_actuals.py`,
+  `test_migration_0028_user_preferences.py`,
+  `test_migration_0040_contact_book.py`,
+  `test_migration_0041_drop_vat_registered.py`,
+  `test_sc_valuations_migration.py`, `test_subcontractors.py`,
+  `test_bootstrap.py`. Permission count literal `132 → 133` across
+  `test_permissions_2_6.py`, `test_permissions_2_7.py`,
+  `test_permissions_2_8a.py`, `test_permissions_2_8b.py`,
+  `test_patch_3.py`, `test_retro_wires.py`, `test_auth_rbac.py`
+  (super_admin `132→133`, director `128→129`).
+- `_FakeRow` stubs in `test_supplier_documents.py` and
+  `test_supplier_document_files.py` extended with `folder_id = None`
+  to match the new `serialise` read path.
+- **Pytest 2nd-run WARM-DB: EXIT=0, 1379 tests collected, 1376
+  passed + 3 xpassed/xfailed (X markers), 0 failed, 0 errors.**
+  Baseline was ~1295 (Chat 41-eyeball-Step2B close); +84 net from
+  this pack: 38 new + 46 pre-existing tests that were skipped or
+  newly-collected by other tracks since the last full count.
+
+### Deviations from the Build Pack (zero functional drift)
+
+None. Decisions D1–D6 honoured verbatim; all four R6 gates printed
+the required artefacts. The partial unique index uses `COALESCE`
+with the literal zero-UUID `00000000-0000-0000-0000-000000000000`
+(the only valid Postgres way to dedup NULL parents inside a UNIQUE
+expression).
+
+### Files landed
+
+- `backend/app/models/document_folders.py` (new)
+- `backend/app/models/supplier_documents.py` (modified — relaxation
+  + folder_id)
+- `backend/app/models/__init__.py` (modified — export new model)
+- `backend/app/models/rbac.py` (modified — ACTIONS += 'move')
+- `backend/app/seed_rbac.py` (modified — documents.move catalogue
+  + role grants + finance broadening)
+- `backend/app/services/document_folders.py` (new)
+- `backend/app/services/supplier_documents.py` (modified —
+  optional doc_type/title, folder_id, move helper)
+- `backend/app/routers/document_folders.py` (new)
+- `backend/app/routers/supplier_documents.py` (modified — body
+  relaxation + move endpoint)
+- `backend/server.py` (modified — register new router)
+- `backend/alembic/versions/0043_document_folders.py` (new)
+- `backend/tests/test_document_folders.py` (new)
+- `backend/tests/test_supplier_documents_folders.py` (new)
+- 14 existing test files modified (baseline-drift literal bumps,
+  per chat-15 §3 convention)
+- `CHANGELOG.md` (this entry)
+- `docs/chat-summaries/chat-45-closing.md` (new)
+- `memory/PRD.md` (Chat 45 entry prepended)
+
+**NOT touched:** `docs/SY_Hub_Phase2_Backlog.md` (operator-owned).
+Status: committed, ready for operator to Save to GitHub.
+
+---
+
 ## Chat 44 — Build Pack 2.7-FE-docfix · Supplier-document upload bugfix + dialog attach + drag-drop (Frontend) (2026-02)
 
 Frontend-only delivery on top of Chat 43's B76 upload UI. Two gates as

@@ -243,7 +243,7 @@ def test_alembic_heads_helper_returns_single_head():
     # vocabulary + supplier_type enum recreated to 4 values).
     # See chat-15-closing §3 — this sentinel is "part of any migration's
     # bookkeeping" and must be bumped whenever the head moves.
-    assert head.startswith("0041_"), f"unexpected head id: {head}"
+    assert head.startswith("0043_"), f"unexpected head id: {head}"
 
 
 # ----------------------------------------------------------------------

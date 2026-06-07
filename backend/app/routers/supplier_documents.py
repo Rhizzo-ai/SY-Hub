@@ -61,8 +61,12 @@ router = APIRouter(prefix="/supplier-documents", tags=["supplier_documents"])
 
 class SupplierDocumentCreateBody(BaseModel):
     supplier_id: uuid.UUID
-    doc_type: str = Field(..., max_length=40)
-    title: str = Field(..., min_length=1, max_length=200)
+    # Chat 45 §R3.2 (Build Pack 2.7-DOCS-BE) — doc_type + title relaxed
+    # to optional. folder_id added (optional). Validation is done in
+    # the service layer (folder ownership, doc_type vocabulary).
+    doc_type: Optional[str] = Field(None, max_length=40)
+    title: Optional[str] = Field(None, max_length=200)
+    folder_id: Optional[uuid.UUID] = None
     issued_on: Optional[str] = Field(None, description="ISO date (YYYY-MM-DD)")
     expires_on: Optional[str] = Field(None, description="ISO date (YYYY-MM-DD)")
     notes: Optional[str] = Field(None)
@@ -70,10 +74,16 @@ class SupplierDocumentCreateBody(BaseModel):
 
 class SupplierDocumentUpdateBody(BaseModel):
     doc_type: Optional[str] = Field(None, max_length=40)
-    title: Optional[str] = Field(None, min_length=1, max_length=200)
+    title: Optional[str] = Field(None, max_length=200)
+    folder_id: Optional[uuid.UUID] = None
     issued_on: Optional[str] = Field(None)
     expires_on: Optional[str] = Field(None)
     notes: Optional[str] = Field(None)
+
+
+class SupplierDocumentMoveBody(BaseModel):
+    """Chat 45 §R3.2 — re-file a document into a folder (or root)."""
+    folder_id: Optional[uuid.UUID] = None
 
 
 # ---------------------------------------------------------------------------
@@ -262,6 +272,39 @@ def unarchive_endpoint(
         )
     except LookupError:
         raise HTTPException(status_code=404, detail="Supplier document not found")
+
+    db.commit()
+    db.refresh(row)
+    return svc.serialise(row, include_sensitive=include_sensitive)
+
+
+@router.post("/{document_id}/move")
+def move_document_endpoint(
+    document_id: uuid.UUID,
+    body: SupplierDocumentMoveBody,
+    request: Request,
+    pair: tuple[Principal, UserPermissions] = Depends(_perm_dep),
+    db: Session = Depends(get_db),
+):
+    """Chat 45 §R3.2 — re-file a supplier document into a folder.
+
+    Permission: `documents.move`. Body: `{folder_id: uuid | null}`
+    (null = unfiled/root). The folder MUST belong to the same supplier
+    and be in the same tenant.
+    """
+    principal, perms = pair
+    _check_perm(perms, "documents.move")
+    include_sensitive = perms.has("supplier_documents.view_sensitive")
+
+    try:
+        row = svc.move_document_to_folder(
+            db, principal.tenant_id, principal.user.id, document_id,
+            body.folder_id, request=request,
+        )
+    except LookupError:
+        raise HTTPException(status_code=404, detail="Supplier document not found")
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
 
     db.commit()
     db.refresh(row)

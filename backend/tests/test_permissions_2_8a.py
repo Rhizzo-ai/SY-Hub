@@ -53,7 +53,7 @@ class TestPermissionCount28a:
             count = c.execute(text(
                 "SELECT COUNT(*) FROM permissions"
             )).scalar()
-        assert count == 132, (
+        assert count == 133, (
             f"Expected 132 permissions (112 baseline + 10 from 2.8a "
             f"+ 7 from 2.8b + 2 from 2.7-BE-rev-A + 1 from 2.7-FE-rev "
             f"eyeball); got {count}"

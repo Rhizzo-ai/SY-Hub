@@ -77,6 +77,9 @@ ACTIONS = (
     # `release` (PC / DLP releases on the subcontract).
     "certify",
     "release",
+    # Chat 45 §R4.1 (Build Pack 2.7-DOCS-BE) — folder + document move.
+    # Cross-surface action: gates folder move + supplier-document move.
+    "move",
 )
 
 ENTITY_SCOPES = ("All", "Specific")

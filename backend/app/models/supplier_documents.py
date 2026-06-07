@@ -52,8 +52,19 @@ class SupplierDocument(Base):
         nullable=False,
     )
 
-    doc_type: Mapped[str] = mapped_column(String(40), nullable=False)
-    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    # Chat 45 §R1.2 (2.7-DOCS-BE) — doc_type + title relaxed to nullable.
+    # The folder tree is now the organising principle; doc_type is an
+    # optional category tag retained for future compliance registers.
+    # title may be auto-filled from filename by the upload path.
+    doc_type: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
+    title: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    # Chat 45 §R1.2 — optional logical folder. SET NULL on folder delete
+    # so deleting a folder un-files its docs rather than cascade-deleting.
+    folder_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("document_folders.id", ondelete="SET NULL"),
+        nullable=True, index=True,
+    )
     file_ref: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     issued_on: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
     expires_on: Mapped[Optional[date]] = mapped_column(Date, nullable=True)

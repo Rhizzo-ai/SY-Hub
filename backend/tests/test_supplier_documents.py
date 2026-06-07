@@ -362,6 +362,7 @@ class TestSerialiserGating:
             supplier_id = uuid.uuid4()
             doc_type = "Other"
             title = "T"
+            folder_id = None  # Chat 45 §R1.2 — unfiled.
             file_ref = None  # rev-B: no attached file in this fixture.
             issued_on = None
             expires_on = None

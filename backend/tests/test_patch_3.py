@@ -75,7 +75,7 @@ class TestPatch3Permissions:
             #   suppliers.delete (+1) → 132.
             # Function name retains "81" — renaming is out of scope (see
             # chat-22 §2 + Future_Tasks polish entry).
-            assert total == 132
+            assert total == 133
         finally:
             db.close()
 

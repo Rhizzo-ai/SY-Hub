@@ -35,7 +35,7 @@ class TestSchemaMigration:
             )).scalar()
         finally:
             db.close()
-        assert head == "0041_drop_vat_registered", (
+        assert head == "0043_document_folders", (
             f"Expected alembic head 0041_drop_vat_registered; got {head}"
         )
 

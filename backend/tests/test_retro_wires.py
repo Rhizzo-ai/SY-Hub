@@ -335,6 +335,6 @@ class TestPermissionsCatalogue:
             # + trades.create (+2) → 131.
             # Chat 41 operator eyeball (Prompt 2.7-FE-revision) adds
             # suppliers.delete (+1) → 132.
-            assert total == 132
+            assert total == 133
         finally:
             db.close()

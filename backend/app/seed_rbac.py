@@ -211,7 +211,10 @@ PERMISSION_CATALOGUE += _perms_for(
 )
 PERMISSION_CATALOGUE += _perms_for(
     "documents",
-    include=["view", "create", "edit", "delete"],
+    # Chat 45 §R4.2 (Build Pack 2.7-DOCS-BE) — folder + document move
+    # action. Non-sensitive: re-filing existing visible docs/folders
+    # is a structural operation, not a data-disclosure operation.
+    include=["view", "create", "edit", "delete", "move"],
 )
 PERMISSION_CATALOGUE += _perms_for(
     "document_registers",
@@ -318,6 +321,10 @@ ROLE_PERMISSIONS["project_manager"] = {
     "programmes.view", "programmes.edit",
     "programme_tasks.view", "programme_tasks.create", "programme_tasks.edit",
     "documents.view", "documents.create", "documents.edit",
+    # Chat 45 §R4.3 (Build Pack 2.7-DOCS-BE) — PM holds documents.edit
+    # AND supplier_documents.edit → gains documents.move per the union
+    # rule. PM structures folders (create/rename/archive) AND files docs.
+    "documents.move",
     "document_registers.view", "document_registers.edit",
     "certificates.view",
     "cost_codes.view",
@@ -402,6 +409,13 @@ ROLE_PERMISSIONS["finance"] = {
     "supplier_documents.view", "supplier_documents.view_sensitive",
     "supplier_documents.create", "supplier_documents.edit",
     "supplier_documents.archive",
+    # Chat 45 §R4.3 + §R4.3b (Build Pack 2.7-DOCS-BE) — finance holds
+    # supplier_documents.edit → gains documents.move via the union rule;
+    # §R4.3b operator decision broadens finance to also create/rename/
+    # archive folders (documents.create + documents.edit). Finance files
+    # supplier compliance docs every day — folder structuring is part of
+    # the same daily surface.
+    "documents.create", "documents.edit", "documents.move",
     # Chat 34 §R2 (Prompt 2.8a) — subcontracts + variations.
     # Finance holds the approve/issue authority (mirrors finance's
     # `budget_changes.approve` + `pos.approve` mappings); no create/

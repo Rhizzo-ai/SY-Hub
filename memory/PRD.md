@@ -18,6 +18,141 @@ Frontend / actuals / commitments / Xero are out of scope until later prompts.
 
 ## What's been implemented
 
+### Chat 45 — Build Pack 2.7-DOCS-BE · Document Folder Engine (Backend, B79 Part 1 of 2) (2026-02)
+
+Backend-only. Polymorphic logical folder tree (`document_folders`)
+attachable to any owner record via `(owner_type, owner_id)` (D3) —
+suppliers first; projects + subcontracts inherit later for free by
+widening `FOLDER_OWNER_TYPES` + `OWNER_VIEW_PERM` + the
+`ck_document_folders_owner_type` CHECK. No frontend touched; existing
+`DocumentsTab.jsx` keeps working unchanged because the
+`supplier_documents` endpoints stay behaviourally identical.
+
+**Alembic head:** `0042_file_ref_text → 0043_document_folders`.
+**Permissions:** `132 → 133` (+1: `documents.move`). **Roles:** 10.
+
+**Gate 1 — model + migration:**
+- New model `app/models/document_folders.py` (`DocumentFolder` +
+  `FOLDER_OWNER_TYPES = ("supplier",)`). UUID PK with
+  `gen_random_uuid()` server default, tenant FK ON DELETE RESTRICT,
+  polymorphic `(owner_type, owner_id)` with no FK on `owner_id`
+  (cannot FK to multiple tables), self-referential `parent_id` ON
+  DELETE RESTRICT, audit timestamp/user columns, soft-delete via
+  `is_archived`.
+- `app/models/supplier_documents.py` reshaped: `doc_type` + `title`
+  → `Optional[str]`; new `folder_id` FK ON DELETE SET NULL so
+  deleting a folder UN-files docs rather than cascade-deleting.
+- `alembic/versions/0043_document_folders.py` — single revision
+  chaining from `0042_file_ref_text` does all of: (1) creates
+  `document_folders` table + 4 indexes + CHECK + partial unique
+  sibling-name index using
+  `COALESCE(parent_id, '00000000-...-000000000000'::uuid)` so root
+  NULL-parent siblings de-duplicate; (2) drops
+  `ck_supplier_documents_doc_type`, alters `doc_type`/`title` to
+  nullable, adds `folder_id` FK; (3) idempotent DATA STEP — one
+  `Compliance` root folder per supplier with documents + UPDATEs
+  all that supplier's docs (archived included) to point at it,
+  guarded by a "skip if Compliance folder already exists" sub-SELECT.
+  Enum widen `permission_action += 'move'` uses the exact
+  `autocommit_block` idiom from `0020_permission_action_submit.py`.
+  Down/up round-trip clean (best-effort downgrade; FAILS only if
+  NULL doc_type/title rows were created post-upgrade — documented
+  in the migration docstring).
+
+**Gate 2 — RBAC:**
+- `app/models/rbac.py` — `ACTIONS += "move"`.
+- `app/seed_rbac.py` — `documents` resource `_perms_for` extended to
+  `include=["view","create","edit","delete","move"]`. New
+  permission code **`documents.move`** (non-sensitive).
+- Role grants for `.move` (§R4.3 union rule: roles holding
+  `documents.edit` OR `supplier_documents.edit`):
+  - `super_admin` (wildcard), `director` (wildcard minus
+    exclusions), `project_manager` (already holds both edit perms),
+  - **`finance`** — holds `supplier_documents.edit`, gains `.move`
+    (the **§R4.3 distribution-gotcha fix**: had `.move` followed
+    `documents.edit` alone, finance would have lost the ability to
+    file the very docs it edits every day).
+- **§R4.3b (operator broadening):** finance also gains
+  `documents.create` + `documents.edit` (catalogue codes already
+  existed; only role-grant rows are new) so finance can create,
+  rename, and archive folders.
+- Permission catalogue: **132 → 133**; bootstrap
+  `verify.perms result=ok expected=133 actual=133`.
+
+**Gate 3 — service + router:**
+- `app/services/document_folders.py` (new) — mirrors
+  `services/supplier_documents.py` 1:1 (`ValueError` → 422,
+  `LookupError` → 404, `record_audit` AFTER `db.flush()`,
+  tenant-scoped queries). Functions: `create_folder`,
+  `list_folder_tree`, `get_folder`, `get_folder_detail`,
+  `rename_folder`, `move_folder` (loop guard implemented as
+  ancestor walk on the new parent — cheaper than descendant walk),
+  `set_folder_archived` (blocks archive of non-empty folders;
+  blocks unarchive when parent archived), `serialise_folder`. Small
+  extensible `OWNER_VIEW_PERM` map (`"supplier" →
+  "supplier_documents.view"`) so the router resolves the right
+  view perm per the §R3.0 owner-surface read rule. Sibling-name
+  uniqueness enforced by the partial unique index; `IntegrityError`
+  is caught inside a `begin_nested()` savepoint and re-raised as
+  `ValueError`. Audit verbs reused — `Create`, `Update` (with
+  `metadata.moved_from`/`moved_to` for moves), `Archive`, `Restore`
+  (all already in `AUDIT_ACTIONS`).
+- `app/services/supplier_documents.py` — `_validate_doc_type` is
+  now optional; `create_document` accepts optional doc_type +
+  optional title + optional folder_id; new
+  `move_document_to_folder`; `serialise` exposes `folder_id`;
+  `_AUDIT_COLS` includes `folder_id`.
+- `app/routers/document_folders.py` (new) — mounted under
+  `/api/v1/document-folders` via `backend/server.py` (NOT
+  `backend/app/server.py`). Endpoints + gates per §R0.4 + §R3.0:
+  POST create → `documents.create`; GET tree + GET detail →
+  `_owner_view_perm(owner_type) = supplier_documents.view` for
+  supplier-owned folders; PATCH rename → `documents.edit`; POST
+  move → `documents.move`; POST archive/unarchive →
+  `documents.edit`.
+- `app/routers/supplier_documents.py` — Pydantic bodies relaxed
+  (`doc_type` + `title` optional, new optional `folder_id`); new
+  `POST /supplier-documents/{id}/move` gated on `documents.move`.
+- 8 new/extended routes registered (verified in route table):
+  POST/GET tree/GET detail/PATCH/move/archive/unarchive under
+  `/api/v1/document-folders` plus `POST .../supplier-documents/
+  {id}/move`.
+
+**Gate 4 — tests:**
+- `backend/tests/test_document_folders.py` — **30** functions
+  (CRUD 9, move + loop guard 6, archive 6, tree 3, permissions 5,
+  migration / catalogue invariants 1).
+- `backend/tests/test_supplier_documents_folders.py` — **8**
+  (relaxed-create 4, doc move 3, archive-live-doc interaction 1).
+- **Total new test functions: 38** (target ≥36).
+- Baseline-drift literal bumps (chat-15 §3 convention): alembic
+  head sentinel `0041_drop_vat_registered → 0043_document_folders`
+  across `test_subcontracts_migration`,
+  `test_budget_changes_migration`, `test_migration_0025_actuals`,
+  `test_migration_0028_user_preferences`,
+  `test_migration_0040_contact_book`,
+  `test_migration_0041_drop_vat_registered`,
+  `test_sc_valuations_migration`, `test_subcontractors`,
+  `test_bootstrap`. Permission count literal `132 → 133` across
+  `test_permissions_2_{6,7,8a,8b}`, `test_patch_3`,
+  `test_retro_wires`, `test_auth_rbac` (super_admin 132→133,
+  director 128→129). `_FakeRow` stubs in
+  `test_supplier_documents.py` + `test_supplier_document_files.py`
+  extended with `folder_id = None` (matches new serialise read path).
+- **Pytest 2nd-run WARM-DB: EXIT=0, 1376 passed + 3 X (xpassed/
+  xfailed), 0 failed, 0 errors, 1379 collected.**
+
+**Files landed:** see CHANGELOG.md §Chat-45 for the full list.
+**NOT touched:** `docs/SY_Hub_Phase2_Backlog.md` (operator-owned),
+all of `frontend/**/*` (zero changes).
+
+**Backlog surfaced (operator hand-adds):** B79-FE folder-tree UI;
+Role & Permissions Admin screen; external-party folder access
+(portal work 2.9); physical storage path reorg; cascade archive;
+owner-type expansion (project, subcontract).
+
+---
+
 ### Chat 44 — Build Pack 2.7-FE-docfix · Supplier-document upload bugfix + dialog file-attach + desktop drag-drop (Frontend only) (2026-02)
 
 **Stacks on Chat 43's B76 upload UI. Two scheduled gates per the

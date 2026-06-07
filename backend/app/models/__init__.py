@@ -92,6 +92,9 @@ from app.models.cis import (
 from app.models.supplier_documents import (
     SupplierDocument, SUPPLIER_DOC_TYPES,
 )
+from app.models.document_folders import (
+    DocumentFolder, FOLDER_OWNER_TYPES,
+)
 from app.models.number_prefixes import ProjectNumberPrefix, PREFIX_ENTITY_TYPES
 from app.models.purchase_orders import (
     PurchaseOrder, PurchaseOrderLine,

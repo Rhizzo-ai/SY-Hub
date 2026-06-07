@@ -32,7 +32,7 @@ class TestPermissionCount:
             n = c.execute(text(
                 "SELECT count(*) FROM permissions"
             )).scalar()
-        assert n == 132, f"expected 132 permissions, got {n}"
+        assert n == 133, f"expected 133 permissions, got {n}"
 
     def test_new_2_8b_codes_present(self, db_engine):
         expected = {
@@ -56,7 +56,7 @@ class TestPermissionCount:
         # Chat 41 (Prompt 2.7-BE-rev-A): +2 catalogue rows
         # (trades.view, trades.create) → 131. Chat 41 operator
         # eyeball (Prompt 2.7-FE-revision): +1 (suppliers.delete) → 132.
-        assert len(PERMISSION_CATALOGUE) == 132
+        assert len(PERMISSION_CATALOGUE) == 133
 
 
 # ==========================================================================
