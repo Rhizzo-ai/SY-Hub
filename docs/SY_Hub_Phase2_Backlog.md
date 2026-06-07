@@ -738,3 +738,17 @@ path exists today.
   server stays the real validator); (2) optional file-attach in the Add/Edit
   dialog (create-and-upload in one action); (3) desktop drag-and-drop layered
   on top of tap-to-pick. Frontend only, backend frozen.
+
+- **B78** — Document-upload fix-pack (rejection bug + dialog-attach + drag-drop). ← DELIVERED + live-verified Chat 44.
+
+- **B79** — Whole-platform folder/file document-management model (Track 5). Replaces the flat typed-row supplier-docs surface with named folders + files (rename /
+  move / nest). Whole-platform scope (the Track 5 document pattern), suppliers-first staged rollout. Backend: folders table, nesting, permissions, endpoints, data
+  migration of existing supplier docs. Frontend: folder-tree UI. Open sub-question: drop `doc_type` entirely or retain for CIS/compliance categorisation + expiry
+  logic (scan dependencies before deciding); Title likely becomes optional / auto-filled from filename. Operator decision taken Chat 44 — not yet built; needs its
+  own Build Pack.
+
+- **B80** — Subcontract variation API. `SubcontractVariation` model + `subcontract_variations` table exist on main (head 0042) with ZERO endpoints anywhere (no
+  variations router; not folded into subcontracts.py or subcontract_valuations.py). Needed before any variations UI can be built in 2.8-FE. Decision at 2.8-FE
+  drafting: build this backend prompt first, or ship 2.8-FE without variations UI and defer. Found in Chat 44 backend scan.
+
+  
