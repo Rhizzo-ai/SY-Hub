@@ -5,7 +5,7 @@ import os, sys, subprocess, requests, pyotp
 import pytest
 from datetime import date, timedelta
 
-BASE = os.environ.get("REACT_APP_BACKEND_URL", "https://docpack-2-7-fe.preview.emergentagent.com").rstrip("/")
+BASE = os.environ.get("REACT_APP_BACKEND_URL", "https://robust-foundation-2.preview.emergentagent.com").rstrip("/")
 EMAIL = "test-admin@example.test"; PW = "TestUser-Dev-2026!"
 
 
