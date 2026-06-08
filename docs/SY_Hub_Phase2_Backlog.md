@@ -759,3 +759,31 @@ path exists today.
 - External-party folder access (view + upload-into-specific-folders) — with portal 2.9.
 - Folder UI enhancements: multi-select bulk move, zip-download, drag-folder-onto-folder.
   
+### Chat 47 additions (2.8-FE-i closeout)
+
+- **B85** — Subcontract reference-code system. Structured, traceable codes
+  across the platform: editable entity prefix (SYH = SY Homes Ltd, SYC = SY Homes
+  Construction, SYS = SY Homes Shrewsbury, etc.) + project short-code (e.g. HP1 =
+  Hadnall Phase 1) + sequential number. Applies to projects, POs, subcontracts,
+  variations, valuations, bills. Each financial record traceable to entity +
+  project + cost code + bill/receipt. Prefixes must be admin-editable, not
+  hardcoded. DEDICATED design session — touches the whole platform; do NOT
+  bolt on inline. Buildertrend PO screens (operator attachments, Chat 47) are
+  the reference for the richer PO-detail layout this pairs with.
+
+- **B86** — Richer PO detail screen (Buildertrend-style). Current PO surface is
+  thin vs the BT reference (cost codes, work status, performed-by, paid status,
+  files/attachments, variance codes, est. completion, comments). Spec a
+  fuller PO detail/edit screen. Pairs with B85 (codes) — likely same design
+  session.
+
+- **B87** — Subcontract detail inline master-detail layout polish. Live eyeball
+  (Chat 47) showed the list pane and the detail pane visually overlapping
+  (sum column + signed-at bleed across each other). Functional, not blocking —
+  CSS/grid spacing fix so the two panes don't collide. Small frontend polish.
+
+- **Seed fixture note:** `scripts/seed_subcontracts_demo.py` shipped Chat 47 —
+  re-runnable demo Contractor ([DEMO] Avon Groundworks Ltd) + 5 subcontracts
+  across all lifecycle states. Run: `cd /app/backend && /root/.venv/bin/python
+  /app/scripts/seed_subcontracts_demo.py`. Precursor to B72 (full demo dataset).
+  
