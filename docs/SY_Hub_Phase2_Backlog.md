@@ -743,4 +743,19 @@ path exists today.
   variations router; not folded into subcontracts.py or subcontract_valuations.py). Needed before any variations UI can be built in 2.8-FE. Decision at 2.8-FE
   drafting: build this backend prompt first, or ship 2.8-FE without variations UI and defer. Found in Chat 44 backend scan.
 
+## Chat 46 additions (document folders + carried items)
+
+- **B79 — CLOSED.** Document folder engine (-BE) + two-pane folder UI (-FE) shipped and verified live. Flat supplier-docs list retired.
+- **B81 — CLOSED.** FolderNode visual-edits build-crash fix (surgical babel shim, FolderNode-only) + demo seed script (scripts/seed_doc_folders_demo.py).
+
+### Queued (operator wants all three — do NOT forget)
+- **B82 — Platform-wide hard-delete permission.** Today everything is archive-only (correct: data-safety rule). Add a true hard-delete as a permission granted to owner/super-admin ONLY, applied consistently platform-wide. Build this AS PART OF the Role & Permissions Admin screen — not piecemeal per surface. Folders, documents, suppliers, etc. all inherit it from one permission.
+- **B83 — Role & Permissions Admin screen.** Buildertrend-style tick-box UI: admin sets View/Add/Edit/Delete per role + creates new roles, without code changes. Permissions currently live in code (seed_rbac.py); this screen must WRITE role-permission changes to the DB and persist them — that's the real work. Hosts B82's hard-delete permission.
+- **B84 — SharePoint physical folder reorg.** Make the SharePoint storage mirror the app's logical folder tree (Compliance / Insurance / 2024 etc.) so files browsed directly in SharePoint match what's seen in-app. PREREQUISITE: live SharePoint mode must be proven working first (smoke test). Only worth doing if there's a real need to browse SharePoint directly rather than always via the platform.
+
+### Carried (still open)
+- **B72** — Full demo dataset across all modules (the doc-folder seed is a tiny precursor).
+- Mobile-optimised document/folder UX (the desktop view's narrow fallback is a placeholder).
+- External-party folder access (view + upload-into-specific-folders) — with portal 2.9.
+- Folder UI enhancements: multi-select bulk move, zip-download, drag-folder-onto-folder.
   
