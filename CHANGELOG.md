@@ -3131,7 +3131,7 @@ with two new issues. Both fixed in-place; no new Build Pack.
   incompatible with a wildcard CORS_ORIGINS. ... Currently CORS_ORIGINS=''`.
   The CI env block hadn't set `CORS_ORIGINS` — locally it lives in
   `backend/.env`. Added `CORS_ORIGINS:
-  "https://production-contract-1.preview.emergentagent.com"` to the backend
+  "https://financial-hub-256.preview.emergentagent.com"` to the backend
   job env block in `.github/workflows/ci.yml` (value copied verbatim from
   `backend/.env`) plus a 6-line explanatory comment noting that CORS is
   never exercised in CI (pytest speaks server-to-server, no browser

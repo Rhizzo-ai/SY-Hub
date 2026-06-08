@@ -146,3 +146,61 @@ export function nextActionsForSubcontractStatus(status) {
 }
 
 export const SUBCONTRACT_TERMINAL_STATUSES = new Set(['Completed', 'Terminated']);
+
+
+// ─── Subcontract valuations (Chat 48, 2.8-FE-ii §R2.0) ───────────────
+//
+// Permission map verified line-by-line against the live backend
+// (routers/subcontract_valuations.py + routers/payment_notices.py on
+// origin/main, alembic head 0043_document_folders):
+//
+//   POST   /v1/subcontract-valuations              → subcontract_valuations.create
+//   GET    /v1/subcontract-valuations[?…]          → subcontract_valuations.view
+//   GET    /v1/subcontract-valuations/{id}         → subcontract_valuations.view
+//   POST   /v1/subcontract-valuations/{id}/submit  → subcontract_valuations.create   ← shares .create
+//   POST   /v1/subcontract-valuations/{id}/certify → subcontract_valuations.certify  ← certify AND reject
+//   POST   /v1/subcontract-valuations/{id}/reject  → subcontract_valuations.certify  ← certify AND reject
+//
+// Payment notices:
+//   GET    /v1/payment-notices[?…]                 → payment_notices.view
+//   GET    /v1/payment-notices/{id}                → payment_notices.view
+//   POST   /v1/payment-notices/payless             → payment_notices.create
+//
+// Sensitive amounts (`previous_certified_net`, `retention_this_cert`,
+// `cis_rate_pct`, `cis_deduction_this_cert`, `net_payable_this_cert`)
+// gated by `subcontract_valuations.view_sensitive` — the backend returns
+// the keys as `null` to users without it.
+export function canViewValuations(me)       { return hasPerm(me, 'subcontract_valuations.view'); }
+export function canViewValuationSums(me)    { return hasPerm(me, 'subcontract_valuations.view_sensitive'); }
+export function canCreateValuation(me)      { return hasPerm(me, 'subcontract_valuations.create'); }
+// Submit shares .create on the backend (verified routers/subcontract_valuations.py).
+export function canSubmitValuation(me)      { return hasPerm(me, 'subcontract_valuations.create'); }
+// Certify AND reject share .certify on the backend.
+export function canCertifyValuation(me)     { return hasPerm(me, 'subcontract_valuations.certify'); }
+export function canRejectValuation(me)      { return hasPerm(me, 'subcontract_valuations.certify'); }
+
+// Payment notices.
+export function canViewPaymentNotices(me)   { return hasPerm(me, 'payment_notices.view'); }
+export function canCreatePayLess(me)        { return hasPerm(me, 'payment_notices.create'); }
+
+
+// ─── Valuation status → next-actions (Build Pack 2.8-FE-ii §R4.3) ────
+// Source of truth for which lifecycle buttons render on the valuation
+// detail panel. Mirrors `nextActionsForSubcontractStatus` from
+// 2.8-FE-i. Terminal statuses return []. PayLess is NOT a lifecycle
+// action — it's a payment-notice action handled separately by
+// <PaymentNoticesPanel/>.
+export function nextActionsForValuationStatus(status) {
+  switch (status) {
+    case 'Draft':      return ['submit'];
+    case 'Submitted':  return ['certify', 'reject'];
+    case 'Certified':  return [];   // PayLess handled by notices panel
+    case 'Rejected':   return [];
+    default:           return [];
+  }
+}
+
+// Valuations may only be CREATED on a parent subcontract whose status
+// is one of these (backend services/subcontract_valuations.py guard).
+// Drives the visibility of the "New valuation" button.
+export const SUBCONTRACT_STATUSES_ALLOWING_VALUATIONS = new Set(['Active', 'Completed']);
