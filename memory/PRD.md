@@ -18,6 +18,41 @@ Frontend / actuals / commitments / Xero are out of scope until later prompts.
 
 ## What's been implemented
 
+### Chat 47 — Build Pack 2.8-FE-i · Subcontracts surface (Frontend, scope-fenced)
+
+Frontend-only pack. First of the subcontract / commercial screens.
+Lights up the supplier **Contracts** tab with an inline master-detail
+list + selected-detail, create/edit form, and Activate / Complete /
+Terminate lifecycle. Scope is fenced to **subcontracts only** —
+valuations / payment notices / retention / variations are explicitly
+NOT in this pack (later 2.8-FE-ii / 2.8-FE-iii). No placeholders for
+any of them.
+
+**Files (new):**
+- API: `frontend/src/lib/api/subcontracts.js` (7 fns) + `hooks/subcontracts.js` (7 hooks).
+- Capability: `frontend/src/lib/poCapability.js` — 7 helpers + `nextActionsForSubcontractStatus` + `SUBCONTRACT_TERMINAL_STATUSES`.
+- Components: `SubcontractStatusPill`, `SubcontractActionButtons`, `SubcontractFormDialog`, `SubcontractDetail`, `SubcontractsTab` (all under `components/suppliers/`).
+- Mount: `pages/SupplierDetail.jsx` — placeholder removed, `<SubcontractsTab supplierId={s.id} />` mounted under the existing `isContractor` gate.
+
+**Tests:**
+- `lib/api/__tests__/subcontracts.test.js` — 20 wire-level tests.
+- `components/suppliers/__tests__/SubcontractsTab.test.jsx` — 23 integration tests.
+- `pages/__tests__/SupplierDetail.test.jsx` — placeholder test replaced by mounted-tab test.
+
+**Full FE suite 2nd-run: 85 suites / 710 tests.** Delta vs the 83/667 baseline: **+2 suites / +43 tests**.
+
+**Surfaced deviations (operator-confirmed before Gate 1):**
+1. **FLAG 1b — `complete` perm.** Build Pack §R0.3 says `subcontracts.approve`; backend router uses `subcontracts.edit`. The §R2.0 single helper was split; `canCompleteSubcontract = edit OR approve` (matches backend). Test pin: editor-only persona sees Complete on Active. Backlog: correct §R0.3 docs.
+2. **FLAG 2a — `signed_at` on Edit only.** Backend `activate_subcontract` 409s if `signed_at IS NULL`. Signature block (`signed_at` + signed-by-me toggle) lives on Edit only; Create doesn't have it. Activate 409 against unsigned is rewritten to "A signed date is required before this subcontract can be activated. Edit the subcontract to set it." Test pin: friendly-message regex assertion on `toast.error`.
+
+**§R9 backlog (not built):**
+- Backend: add `subcontractor_id` query param to `GET /v1/subcontracts` (currently client-side filter; fine at present scale).
+- Backend Build Pack docs §R0.3: correct `complete` row to `subcontracts.edit`.
+- Future packs: Valuations (2.8-FE-ii), Variations (2.8-FE-iii), Payment notices, Retention movements, Subcontract documents.
+
+Full closing summary in `/app/docs/chat-summaries/chat-47-closing.md`.
+
+
 ### Chat 46 (continued) — Build Pack 2.7-DOCS-FE-fix · B81 — FolderNode build-crash fix + demo seed (2026-02)
 
 Targeted fix-pack. Closes the live dev/preview crash introduced by

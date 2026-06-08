@@ -31,6 +31,13 @@ jest.mock('@/components/suppliers/CISTab', () => () => (
 jest.mock('@/components/suppliers/DocumentFolderView', () => () => (
   <div data-testid="document-folder-view-stub" />
 ));
+// Chat 47 / Build Pack 2.8-FE-i Gate 3 — the Contracts tab now mounts
+// SubcontractsTab. Stub it here; the component's own behaviour is
+// covered exhaustively in
+// components/suppliers/__tests__/SubcontractsTab.test.jsx.
+jest.mock('@/components/suppliers/SubcontractsTab', () => ({ supplierId }) => (
+  <div data-testid="subcontracts-tab-stub" data-supplier-id={supplierId} />
+));
 let mockNavigate = jest.fn();
 
 jest.mock('react-router-dom', () => {
@@ -151,13 +158,18 @@ describe('SupplierDetail — tabs visibility (Chat 41 §R4.2)', () => {
     expect(screen.queryByTestId('supplier-tab-cis')).toBeNull();
   });
 
-  test('Contracts tab shows placeholder content for Contractor', () => {
+  test('Contracts tab mounts SubcontractsTab with this supplier\u2019s id (Chat 47 / Build Pack 2.8-FE-i — placeholder removed)', () => {
     mockCurrentSearch = 'tab=contracts';
     renderDetail(
       { ...BASE_SUPPLIER, supplier_type: 'Contractor' },
       ['suppliers.view']
     );
-    expect(screen.getByTestId('supplier-contracts-placeholder')).toHaveTextContent('2.8-FE');
+    // Placeholder MUST be gone.
+    expect(screen.queryByTestId('supplier-contracts-placeholder')).toBeNull();
+    // Mounted component MUST receive the supplier id (scope-fence input).
+    const mounted = screen.getByTestId('subcontracts-tab-stub');
+    expect(mounted).toBeInTheDocument();
+    expect(mounted.getAttribute('data-supplier-id')).toBe(BASE_SUPPLIER.id);
   });
 
   test.each(['Supplier', 'Consultant', 'Other'])(

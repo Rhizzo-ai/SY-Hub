@@ -11,6 +11,175 @@ Each entry: date, prompt reference (if applicable), change, rationale.
 
 ## Entries
 
+## Chat 47 — Build Pack 2.8-FE-i · Subcontracts surface (Frontend, scope-fenced)
+
+Frontend-only pack. Lights up the supplier **Contracts** tab with the
+first of the subcontract / commercial screens: list + selected-detail
+master/detail layout, create/edit form, and Activate / Complete /
+Terminate lifecycle. Scope is fenced to **subcontracts only** —
+valuations, payment notices, retention movements, and variations are
+later packs (2.8-FE-ii / 2.8-FE-iii). No placeholders for them are
+shipped (Build Pack §R0.1 lockdown).
+
+Pinned operator decisions honoured verbatim:
+- **§R0.1 scope fence.** Subcontracts only. No valuations / notices /
+  retention / variations stubs.
+- **§R4.1 layout.** Inline master-detail inside the existing
+  `SupplierDetail` Contracts tab (mirror of `CISTab` /
+  `DocumentFolderView`) — NOT a new route.
+- **§R4.3 valid-transition-only.** Each status renders ONLY the
+  buttons whose transition the backend would accept:
+  Draft → [Activate, Terminate]; Active → [Complete, Terminate];
+  Completed/Terminated → no buttons (terminal line shown).
+- **§R4.5 409 vs 422.** 409 surfaces server detail distinctly from
+  422; `useActivate/Complete/Terminate` hooks invalidate via
+  `onSettled` (not `onSuccess`) so the displayed status badge
+  resyncs even on a 409 (refetch-to-resync contract).
+- **§R3.1 reuse.** Reuses `SensitiveValue`, `ProjectPicker`,
+  `Dialog/DialogContent/DialogFooter`, `Textarea`, `Button`,
+  `fmtGBP` — no reinvented primitives.
+- **§R7 STOP gates.** Three gates: API+hooks → components → mount.
+  2nd-run counts printed at each.
+
+### Surfaced deviations (Chat-47 flags — agreed with operator BEFORE Gate 1)
+
+**FLAG 1b — `complete` permission gate split.** Build Pack §R0.3 docs
+say `POST /v1/subcontracts/{id}/complete → subcontracts.approve`; the
+actual router on origin/main (`backend/app/routers/subcontracts.py:222`)
+requires `subcontracts.edit`. The single `canTransitionSubcontract`
+helper from §R2.0 was split into three: `canActivateSubcontract` /
+`canTerminateSubcontract` → `subcontracts.approve`,
+**`canCompleteSubcontract` → `subcontracts.edit OR
+subcontracts.approve`** (matches the backend; UI never hides a button
+the backend would accept). Test pin:
+`SubcontractsTab.test.jsx::FLAG 1b — user with subcontracts.edit but
+NOT .approve still sees Complete on Active`.
+
+**FLAG 2a — `signed_at` lives on Edit only; Activate-409 friendly
+message.** Backend `activate_subcontract`
+(`backend/app/services/subcontracts.py:524-526`) returns 409 if
+`signed_at IS NULL`. Build Pack §R4.4 doesn't list `signed_at` /
+`signed_by` as Create fields, so the workflow is: create Draft → edit
+to set `signed_at` (+ optional "I signed it" toggle) → Activate. The
+Activate 409 with `/unsigned/i` body is rewritten by
+`SubcontractActionButtons.jsx::friendlyActivateError` to **"A signed
+date is required before this subcontract can be activated. Edit the
+subcontract to set it."** Test pin:
+`SubcontractsTab.test.jsx::FLAG 2a — Activate against unsigned
+subcontract: 409 is mapped to friendly "signed date required"
+message`.
+
+Both flags were surfaced to the operator before any code was written
+and confirmed (1b → split; 2a → Edit-only + friendly message). No
+silent deviation from any locked decision.
+
+### What shipped — files
+
+API + hooks (Gate 1):
+- `frontend/src/lib/api/subcontracts.js` — 7 fns (list/get/create/
+  update/activate/complete/terminate). Thin axios pass-through —
+  the FormDialog is the trim point, not the wire layer (test pin in
+  `subcontracts.test.js`).
+- `frontend/src/hooks/subcontracts.js` — `scKeys` + 7 hooks.
+  Lifecycle hooks use `onSettled` (not `onSuccess`) so a 409 still
+  resyncs the displayed status.
+- `frontend/src/lib/poCapability.js` — `canViewSubcontracts`,
+  `canViewSubcontractSums`, `canCreateSubcontract`,
+  `canEditSubcontract`, `canActivateSubcontract`,
+  `canCompleteSubcontract` (FLAG 1b split — `edit OR approve`),
+  `canTerminateSubcontract`, `nextActionsForSubcontractStatus`,
+  `SUBCONTRACT_TERMINAL_STATUSES`.
+
+Components (Gate 2):
+- `frontend/src/components/suppliers/SubcontractStatusPill.jsx` —
+  colour-by-status badge mirroring `POStatusPill`.
+- `frontend/src/components/suppliers/SubcontractActionButtons.jsx` —
+  valid-transition-only buttons + three confirm dialogs. FLAG-2a
+  Activate-409 rewrite via `/unsigned/i`. Non-activate 409 path
+  surfaces server detail verbatim.
+- `frontend/src/components/suppliers/SubcontractFormDialog.jsx` —
+  create + edit. Create body NEVER carries `reference` / `status`
+  (backend generates ref; status defaults to Draft; transitions go
+  via action endpoints). Edit body is built from a diff vs original
+  and trimmed to `UPDATE_ALLOWED` (defence-in-depth against
+  accidental `project_id` / `subcontractor_id` / `status` injection
+  under server `extra:"forbid"`). Signature block (`signed_at`,
+  `signed_by-me` checkbox) renders **edit-only** per FLAG 2a.
+  Sensitive contract-sum input is hidden in Edit when the user
+  lacks `subcontracts.view_sensitive` (so a backend-nulled value
+  isn't displayed as an empty input the user might "save").
+- `frontend/src/components/suppliers/SubcontractDetail.jsx` —
+  fields + sensitive-sum gating + Edit + actions. Subscribes via
+  `useSubcontract(id)` so the badge resyncs after mutation
+  invalidation.
+- `frontend/src/components/suppliers/SubcontractsTab.jsx` — inline
+  master-detail orchestrator. Local status filter (not URL-bound —
+  we're inside a tab inside a route already). Client-side filter
+  `subcontractor_id === supplierId` because the backend has no
+  `subcontractor_id` query param — flagged as §R9 backlog for a
+  future backend follow-up; current scale is fine.
+
+Mount (Gate 3):
+- `frontend/src/pages/SupplierDetail.jsx` — placeholder
+  `data-testid="supplier-contracts-placeholder"` removed. The
+  Contracts `<TabsContent/>` now mounts
+  `<SubcontractsTab supplierId={s.id} />`. `isContractor` gate
+  preserved verbatim.
+
+Tests:
+- `frontend/src/lib/api/__tests__/subcontracts.test.js` — 20
+  wire-level tests. Pins: create omits `reference`/`status`; list
+  forwards snake_case params; no `subcontractor_id` filter is sent
+  (backend has no such param); action endpoints POST with `{}`;
+  axios errors propagate with `response.status`/`data.detail`
+  intact; PATCH client is a thin pass-through (trim point is the
+  FormDialog, not the wire layer).
+- `frontend/src/components/suppliers/__tests__/SubcontractsTab.test.jsx`
+  — 23 integration tests covering: list scope-fence (rows for other
+  suppliers never shown), status-filter param wiring, selection,
+  empty/loading/forbidden, sensitive-sum gating (list + detail
+  defence-in-depth), button visibility per status × perms (incl.
+  FLAG-1b editor-only-sees-Complete), terminal-status no-buttons,
+  Activate happy + FLAG-2a 409 friendly message guard,
+  Terminate-409-detail-passthrough, Complete-happy-editor-only,
+  signature-block-edit-only, PATCH-body-trim-to-allowed-set,
+  Create-body-omits-reference/status.
+- `frontend/src/pages/__tests__/SupplierDetail.test.jsx` — the
+  former "shows placeholder" test is now "mounts SubcontractsTab
+  with this supplier's id" (`supplier-contracts-placeholder` MUST
+  be absent; `subcontracts-tab-stub` MUST be present with the
+  correct `data-supplier-id`).
+
+### Gate evidence (printed)
+
+- **Gate 1.** API + hooks + capability helpers + wire tests.
+  `lib/api/__tests__/subcontracts.test.js`: **20 / 20** (2nd run
+  0.533 s).
+- **Gate 2.** Components built; integration test suite created.
+  `components/suppliers/__tests__/SubcontractsTab.test.jsx`:
+  **23 / 23** (2nd run 1.559 s).
+- **Gate 3.** Mounted in `SupplierDetail.jsx`;
+  `pages/__tests__/SupplierDetail.test.jsx` updated:
+  **28 / 28** (placeholder-removed assertion added).
+  Full FE suite **2nd run: 85 suites / 710 tests passing**
+  (16.727 s). Delta vs the 83 / 667 baseline: **+2 suites
+  (subcontracts.test.js, SubcontractsTab.test.jsx) and +43 tests
+  (20 + 23 + 0 net for SupplierDetail — placeholder test
+  replaced 1-for-1 by the mounted-tab test)**.
+
+### §R9 backlog (not built, surfaced for future)
+
+- Backend: add `subcontractor_id` query param to
+  `GET /v1/subcontracts` so the supplier Contracts tab can server-
+  side filter. Currently the tab pulls the visible set and filters
+  client-side — fine at present scale.
+- Backend Build Pack docs §R0.3: the `complete` row should read
+  `subcontracts.edit` (not `subcontracts.approve`) — FLAG 1b ground
+  truth.
+- Future packs: Valuations, Payment notices, Retention movements,
+  Variations (each its own pack, each its own gate ladder).
+
+
 ## Chat 46 (continued) — Build Pack 2.7-DOCS-FE-fix · B81 — FolderNode build-crash fix + demo seed (2026-02)
 
 Targeted fix-pack. Closes a live preview build-crash introduced when

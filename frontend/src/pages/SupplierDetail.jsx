@@ -8,8 +8,12 @@
  *     UTR) iff Contractor.
  *   - CIS (iff supplier_type==='Contractor' && cis.view).
  *   - Documents (iff supplier_documents.view).
- *   - Contracts (iff supplier_type==='Contractor'): placeholder panel —
- *     Subcontracts arrive in 2.8-FE.
+ *   - Contracts (iff supplier_type==='Contractor'): SubcontractsTab —
+ *     inline master-detail list + selected-detail. See Chat 47 /
+ *     Build Pack 2.8-FE-i + CHANGELOG §2.8-FE-i for FLAG 1b
+ *     (Complete perm = edit OR approve, not just approve) and
+ *     FLAG 2a (signed_at lives on Edit only; Activate 409 → friendly
+ *     "signed date is required" message).
  *
  * Drops (rev-A backend stopped serving these):
  *   - Default VAT row + label
@@ -42,6 +46,7 @@ import SensitiveValue from '@/components/po/SensitiveValue';
 import CISStatusBadge from '@/components/suppliers/CISStatusBadge';
 import CISTab from '@/components/suppliers/CISTab';
 import DocumentFolderView from '@/components/suppliers/DocumentFolderView';
+import SubcontractsTab from '@/components/suppliers/SubcontractsTab';
 import {
   labelCisStatus, labelCurrentCisStatus,
 } from '@/lib/cisFormat';
@@ -277,12 +282,7 @@ export default function SupplierDetail() {
 
         {showContractsTab && (
           <TabsContent value="contracts" className="mt-4">
-            <div
-              className="p-6 text-sm text-sy-grey-600 border border-dashed rounded"
-              data-testid="supplier-contracts-placeholder"
-            >
-              Subcontracts arrive in 2.8-FE.
-            </div>
+            <SubcontractsTab supplierId={s.id} />
           </TabsContent>
         )}
       </Tabs>
