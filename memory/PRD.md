@@ -18,6 +18,87 @@ Frontend / actuals / commitments / Xero are out of scope until later prompts.
 
 ## What's been implemented
 
+### Chat 46 (continued) — Build Pack 2.7-DOCS-FE-fix · B81 — FolderNode build-crash fix + demo seed (2026-02)
+
+Targeted fix-pack. Closes the live dev/preview crash introduced by
+Chat 46's recursive `<FolderNode/>` component:
+`RangeError: Maximum call stack size exceeded` inside
+`babel-traverse` whenever the Documents tab loaded. Root cause: the
+upstream `@emergentbase/visual-edits` babel plugin chokes on the
+(correct) recursive JSX. The earlier patch covered Jest only; this
+pack fixes the actual dev preview path.
+
+**Strategy — Option A (surgical):** investigation of
+`node_modules/@emergentbase/visual-edits/dist/` showed the plugin has
+no per-file exclude option but its babel plugin is standard
+`{ name, visitor }` shape, so a babel-plugin-level shim wrapping each
+visitor + short-circuiting on `state.filename === FolderNode.jsx` is
+the right surgical fix. Visual-edits stays active for the rest of
+the app; only `FolderNode.jsx` is excluded. `FolderPicker.jsx` and
+`DocumentFolderView.jsx` are not self-recursive and keep full
+coverage.
+
+**Did NOT change:** `FolderNode.jsx`, `DocumentFolderView.jsx`,
+`FolderPicker.jsx`, `backend/**/*`, `docs/SY_Hub_Phase2_Backlog.md`,
+any test file. The `NODE_ENV=test` exclusion already in
+`craco.config.js` from Chat 46 stays in place
+(defence-in-depth alongside visual-edits's own
+`NODE_ENV=production` short-circuit).
+
+**Gate 1 — dev-server proof (not jest):** truncated logs, cleared
+`node_modules/.cache`, restarted frontend → `Compiled with warnings.`
++ `webpack compiled with 1 warning` (lint-only, pre-existing
+exhaustive-deps notices, identical before+after); **zero "Maximum
+call stack" errors**; `HTTP 200` on `:3000/`. Shim's visitor-skip
+path was instrumented during investigation and confirmed firing on
+every `FolderNode.jsx` compile before debug logs were removed for
+landing.
+
+**Gate 2 — production + test paths:** `NODE_ENV=production yarn build`
+→ `Compiled with warnings.` + EXIT 0; `suppliers-po.cdd57866.chunk.js`
+(the chunk containing `FolderNode`) emitted at 32.91 kB.
+Visual-edits's own `NODE_ENV==='production'` short-circuit means
+the shim isn't even instantiated in prod. `craco test` 2nd-run
+warm: **83 / 83 suites, 667 / 667 tests passing, 0 failures, 1
+snapshot** — exact match with the Chat-46 baseline (no tests added).
+
+**Gate 3 — demo seed:**
+`python scripts/seed_doc_folders_demo.py` ran twice in a row →
+identical `2 suppliers, 6 folders, 4 documents`. Idempotent.
+`[DEMO]`-marker scoped — never touches non-demo data. Lint clean.
+
+Demo dataset (operator-eyeball fodder, all in default tenant):
+- `[DEMO] Northgate Builders Ltd` →
+  `Compliance/` (PL + EL docs), `Insurance/2024/`, `Insurance/2025/`
+  (PI doc), `Contracts/` (empty — for the archive-empty UX test).
+- `[DEMO] Severn Plant Hire` → single `Compliance/` (1 doc) —
+  mirrors the migrated-supplier shape.
+
+**Webpack-cache caveat (one-off after the GitHub save lands):** if
+the preview still crashes after pull, run
+`rm -rf frontend/node_modules/.cache && sudo supervisorctl restart frontend`
+ONCE to evict the stale errored-compilation cache. Documented in
+the closing summary.
+
+**Files landed:** 1 modified (`frontend/craco.config.js`), 1 new
+(`scripts/seed_doc_folders_demo.py`), 3 closing
+(`CHANGELOG.md`, `docs/chat-summaries/chat-46-closing.md` addendum,
+this entry).
+
+**Backlog:** B81 CLOSED. Upstream `@emergentbase/visual-edits`
+recursion bug flagged for revisit if/when the plugin updates and
+the exclusion can be removed. B72 demo-dataset (carried) — this
+script is a precursor scoped to document folders only.
+
+**Operator-only verification step:** click into a `[DEMO]` supplier
+in the Suppliers list, open Documents tab; confirm the two-pane
+folder browser renders, the tree shows `Compliance / Insurance
+(2024, 2025) / Contracts`, file counts match (2 / 0+1 / 0), and
+clicking around the docs works. Then drag a doc → folder, "Move
+to…" → Unfiled, archive an empty folder vs a non-empty one.
+
+---
+
 ### Chat 46 — Build Pack 2.7-DOCS-FE · Document Folder Tree UI (Frontend, B79 Part 2 of 2) (2026-02)
 
 Frontend-only delivery on top of Chat 45's B79-BE folder engine.

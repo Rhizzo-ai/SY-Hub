@@ -130,3 +130,68 @@ After Save to GitHub:
 
 See `CHANGELOG.md` §Chat-46 for the canonical list. 9 new files,
 6 modified, 2 deleted (all confined to `frontend/`).
+
+---
+
+# B81 ADDENDUM (same chat, separate Build Pack `2_7-DOCS-FE-fix`)
+
+## What B81 fixes
+
+The Chat-46 fix to `craco.config.js` excluded visual-edits from Jest
+but kept it active on the dev server. The dev server STILL crashed
+when opening a supplier's Documents tab —
+`RangeError: Maximum call stack size exceeded` inside `FolderNode.jsx`
+during babel-traverse — because the upstream visual-edits babel
+plugin chokes on the (correct) recursive JSX. B81 fixes the dev
+preview path properly.
+
+## Strategy chosen — Option A (surgical)
+
+Investigation of `node_modules/@emergentbase/visual-edits/dist/` showed
+`withVisualEdits()` has no per-file exclude option, but the babel
+plugin it pushes onto `cracoConfig.babel.plugins` is a standard
+`{ name, visitor }` babel plugin. The surgical fix is a
+**babel-plugin-level shim** that wraps visual-edits's plugin and
+short-circuits each visitor when `state.filename` ends in
+`src/components/suppliers/FolderNode.jsx`. Visual-edits stays active
+for the rest of the app; only `FolderNode.jsx` is excluded.
+
+## What this pack did NOT change
+
+- `FolderNode.jsx` source — recursion is correct React; bug is in
+  the third-party tool. Not touched.
+- `DocumentFolderView.jsx`, `FolderPicker.jsx` — not touched.
+- `backend/**/*` — zero edits.
+- `docs/SY_Hub_Phase2_Backlog.md` — not touched.
+- Test files — zero (this pack adds none).
+
+## Gate evidence
+
+- **Gate 1 (dev-server, NOT jest):** truncated logs, cleared
+  `node_modules/.cache`, restarted — `Compiled with warnings.` +
+  `HTTP 200` on `:3000/`, zero "Maximum call stack" errors.
+- **Gate 2 (production + test):** `NODE_ENV=production yarn build`
+  → `Compiled with warnings.` + EXIT 0; `craco test` →
+  **83 / 83 suites, 667 / 667 tests passing, 0 failures** (baseline
+  match — no tests added).
+- **Gate 3 (demo seed):** `python scripts/seed_doc_folders_demo.py`
+  ran twice — identical `2 suppliers / 6 folders / 4 docs`.
+  Idempotent; `[DEMO]`-marker scoped; never touches non-demo data.
+
+## Operator caveat
+
+If the preview still crashes after the GitHub save lands and the
+build re-runs, run ONCE:
+
+```
+rm -rf frontend/node_modules/.cache
+sudo supervisorctl restart frontend
+```
+
+This is a one-off webpack-cache eviction.
+
+## Files landed (B81)
+
+- MODIFIED: `frontend/craco.config.js` (single file).
+- NEW: `scripts/seed_doc_folders_demo.py`.
+- CLOSING: `CHANGELOG.md` §B81 entry, this addendum, `memory/PRD.md`.

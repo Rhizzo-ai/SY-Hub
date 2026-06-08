@@ -11,6 +11,134 @@ Each entry: date, prompt reference (if applicable), change, rationale.
 
 ## Entries
 
+## Chat 46 (continued) — Build Pack 2.7-DOCS-FE-fix · B81 — FolderNode build-crash fix + demo seed (2026-02)
+
+Targeted fix-pack. Closes a live preview build-crash introduced when
+Chat 46 (B79-FE) added the recursive `<FolderNode/>` component:
+opening any supplier's Documents tab made the dev/preview build throw
+`RangeError: Maximum call stack size exceeded` inside babel-traverse.
+**Root cause** — the upstream `@emergentbase/visual-edits` babel
+plugin `element-metadata-plugin` recurses the JSX AST in a way that
+overflows V8's call stack on the (correct) self-recursive
+`<FolderNode/>`. The Chat-46 patch only excluded the plugin from
+`craco test`; the dev server kept `NODE_ENV=development`, so
+`isDevServer` was still true there and the plugin still loaded.
+
+**Fix strategy: Option A (surgical) — confirmed installed plugin
+supports per-file gating via a babel-plugin shim.** Visual-edits
+stays active for the rest of the app; only `FolderNode.jsx` is
+excluded.
+
+### Investigation (R1.1)
+
+- `node_modules/@emergentbase/visual-edits/dist/craco-plugin.js:92-122`:
+  `withVisualEdits(cracoConfig, options)` accepts `enableVisualEdits`
+  and `tailwindCdn` only — **no per-file exclude option**. It pushes
+  the babel plugin onto `cracoConfig.babel.plugins` as a bare
+  function (no descriptor tuple).
+- `node_modules/@emergentbase/visual-edits/dist/babel-plugin/index.js:1982-1990`:
+  `babelMetadataPlugin` returns `{ name: 'element-metadata-plugin',
+  visitor: { JSXElement, JSXOpeningElement } }` — a standard babel
+  plugin signature, so a babel-plugin-level shim that wraps each
+  visitor and short-circuits on `state.filename` is the right tool.
+- `node_modules/@craco/craco/dist/lib/features/webpack/babel.js:30-54`:
+  `addPlugins` concats `cracoConfig.babel.plugins` onto every
+  `babel-loader`'s `options.plugins`, including the
+  `react-refresh/babel.js`-paired rule in dev. Verified live: dumping
+  `webpack-dev-config` via `createWebpackDevConfig` printed
+  `babel-loader: [react-refresh/babel.js, visualEditsExcludingFolderNode]`
+  on the app-source rule.
+
+### Fix applied (R1.2 — `frontend/craco.config.js` only)
+
+- Replaced the visual-edits babel-plugin entry in `webpackConfig.babel.plugins`
+  with a thin shim `visualEditsExcludingFolderNode(api, opts)`. The shim:
+  - calls the real `babelMetadataPlugin(api, opts)` to get back the
+    real `{ name, visitor }`;
+  - wraps every visitor (functions AND `{ enter, exit }` objects)
+    so each one no-ops when `state.filename` matches the excluded
+    regex;
+  - excludes ONE file: `src/components/suppliers/FolderNode.jsx`.
+    `FolderPicker.jsx` flattens its tree via a single `walk()`
+    + `Array.map` (not self-recursive at the JSX level) and
+    `DocumentFolderView.jsx` isn't recursive either; both keep full
+    visual-edits coverage.
+- Fails LOUDLY if visual-edits ever changes its plugin shape
+  (`real.visitor` missing → thrown `Error` at compile-time so a
+  silent regression is impossible).
+
+### Notes on what the bug actually exercised
+
+When investigating, the LIVE dev server kept crashing AFTER my shim
+was in place because **webpack's persistent filesystem cache
+(`node_modules/.cache/webpack`) still had the failed compilation
+output cached**. Clearing the cache (`rm -rf node_modules/.cache`)
+and restarting once made it pick up the new plugin chain. Documented
+inline in the closing summary so the operator knows to clear cache
+ONCE after the GitHub save lands on origin/main (a single
+`rm -rf node_modules/.cache && supervisorctl restart frontend` once).
+
+### Verify gates (printed, in order)
+
+**Gate 1 — dev-server proof (NOT jest).** Truncated supervisor logs,
+cleared webpack cache, restarted frontend:
+- `Compiled with warnings.` + `webpack compiled with 1 warning`
+  (lint-only — pre-existing `react-hooks/exhaustive-deps` notices
+  unrelated to this pack; identical warning list before and after).
+- **Zero "Maximum call stack" errors** in the post-restart log.
+- `HTTP 200` on `:3000/`.
+- The shim's visitor-skip path was instrumented during
+  investigation and confirmed firing 44× per FolderNode compilation
+  before the debug log lines were removed for the final landed
+  version.
+
+**Gate 2 — production + test paths.**
+- `NODE_ENV=production yarn build` → `Compiled with warnings.` +
+  `EXIT=0`. Chunks emitted including
+  `suppliers-po.cdd57866.chunk.js` (the chunk containing
+  `FolderNode`) at 32.91 kB. Visual-edits itself short-circuits on
+  `NODE_ENV === 'production'`, so the shim wasn't even instantiated.
+- `craco test` (2nd-run, warm) → **83 suites passed, 667 tests
+  passed, 0 failures, 0 errors, 1 snapshot** — exact match with the
+  Chat-46 baseline (this pack adds zero tests).
+
+**Gate 3 — sample data seed.**
+- `python scripts/seed_doc_folders_demo.py` 1st run →
+  `2 suppliers, 6 folders, 4 documents`.
+- 2nd run (idempotency) → **identical** `2 / 6 / 4`. No dupes.
+  Lint clean.
+
+### Deviations flagged (none silent)
+
+None. Option A was the locked primary strategy; the installed plugin
+made Option A feasible (a babel-plugin-level shim), so I used it.
+The `FolderNode.jsx` self-recursion was NOT touched. The
+`NODE_ENV=test` exclusion from Chat 46 stays in place (visual-edits
+also bails out itself on test — both checks are present for
+defence-in-depth). Production build path is untouched.
+
+### Files landed
+
+- MODIFIED: `frontend/craco.config.js` (single file; the shim +
+  the doc comment block live here).
+- NEW: `scripts/seed_doc_folders_demo.py` (~225 lines, idempotent,
+  `[DEMO]`-scoped — never touches non-demo data).
+- CLOSING: `CHANGELOG.md` (this entry),
+  `docs/chat-summaries/chat-46-closing.md` (B81 addendum),
+  `memory/PRD.md` (Chat-46-continued entry).
+
+**NOT touched:** `backend/**/*`, `docs/SY_Hub_Phase2_Backlog.md`,
+`FolderNode.jsx`, `DocumentFolderView.jsx`, `FolderPicker.jsx`,
+any test file.
+
+Status: committed, ready for operator to Save to GitHub. After the
+save lands on origin/main: `rm -rf frontend/node_modules/.cache &&
+sudo supervisorctl restart frontend` ONCE to clear the stale
+errored-compilation cache, then live-eyeball-test the folder browser
+on the demo suppliers.
+
+---
+
 ## Chat 46 — Build Pack 2.7-DOCS-FE · Document Folder Tree UI (Frontend, B79 Part 2 of 2) (2026-02)
 
 Frontend-only delivery on top of Chat 45's B79-BE folder engine.
