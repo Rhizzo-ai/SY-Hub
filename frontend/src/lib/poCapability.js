@@ -81,6 +81,36 @@ export function canEditPrefixes(me) {
 }
 
 
+// ─── Subcontracts (Chat 47, Build Pack 2.8-FE-i §R2.0) ───────────────
+//
+// One helper per perm + per action. The action helpers map to the
+// backend's actual perm gates on origin/main, which differ from the
+// Build Pack §R0.3 documentation in one place — see FLAG 1b in the
+// Chat-47 closing notes / CHANGELOG §2.8-FE-i:
+//
+//   POST /v1/subcontracts/{id}/activate   → subcontracts.approve
+//   POST /v1/subcontracts/{id}/complete   → subcontracts.edit  ← Build
+//                                             Pack §R0.3 said `approve`;
+//                                             actual router uses `edit`.
+//   POST /v1/subcontracts/{id}/terminate  → subcontracts.approve
+//
+// `canCompleteSubcontract` therefore accepts `edit OR approve` so the
+// UI doesn't hide a button the backend would accept. A user with only
+// `subcontracts.edit` (a director-tier without approve, say) can still
+// drive a subcontract through Activate→Complete because Activate
+// requires `approve` upstream — in practice the same role usually
+// holds both.
+export function canViewSubcontracts(me)      { return hasPerm(me, 'subcontracts.view'); }
+export function canViewSubcontractSums(me)   { return hasPerm(me, 'subcontracts.view_sensitive'); }
+export function canCreateSubcontract(me)     { return hasPerm(me, 'subcontracts.create'); }
+export function canEditSubcontract(me)       { return hasPerm(me, 'subcontracts.edit'); }
+export function canActivateSubcontract(me)   { return hasPerm(me, 'subcontracts.approve'); }
+export function canCompleteSubcontract(me) {
+  return hasPerm(me, 'subcontracts.edit') || hasPerm(me, 'subcontracts.approve');
+}
+export function canTerminateSubcontract(me)  { return hasPerm(me, 'subcontracts.approve'); }
+
+
 // ─── Status → next-action allow-list ─────────────────────────────────
 // Drives which lifecycle buttons render on PurchaseOrderDetail; keeps
 // the per-status decision in one place rather than spread across components.
@@ -97,3 +127,22 @@ export function nextActionsForStatus(status) {
     default:                       return [];
   }
 }
+
+
+
+// ─── Subcontract status → next-actions (Build Pack §R4.3) ────────────
+// Source of truth for which lifecycle buttons render on the subcontract
+// detail panel. Statuses use the backend's capitalised enum
+// ('Draft' | 'Active' | 'Completed' | 'Terminated'); terminal statuses
+// return [].
+export function nextActionsForSubcontractStatus(status) {
+  switch (status) {
+    case 'Draft':       return ['activate', 'terminate'];
+    case 'Active':      return ['complete', 'terminate'];
+    case 'Completed':   return [];
+    case 'Terminated':  return [];
+    default:            return [];
+  }
+}
+
+export const SUBCONTRACT_TERMINAL_STATUSES = new Set(['Completed', 'Terminated']);
