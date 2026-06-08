@@ -73,28 +73,32 @@ def _admin_user(conn) -> tuple[uuid.UUID, uuid.UUID]:
     return row.id, row.tenant_id
 
 
-def _pick_project(conn, tenant_id: uuid.UUID) -> tuple[uuid.UUID, str]:
-    """Reuse an existing Active project on this tenant.
+def _pick_project(conn) -> tuple[uuid.UUID, str]:
+    """Reuse an existing Active project.
 
     Projects carry a required entity FK + many enum columns, so we do
     NOT fabricate one — we attach the demo subcontracts to a real
     project. Prefer an Active project; fall back to any project.
+
+    NOTE: the `projects` table has NO `tenant_id` column (Pattern α —
+    tenant resolution is via visible-project-id scoping elsewhere), so
+    this picks the first Active project full stop. Fine for a
+    single-tenant-live demo fixture.
     """
     row = conn.execute(text("""
         SELECT id, COALESCE(name, project_code) AS label
           FROM projects
-         WHERE tenant_id = :tid AND status = 'Active'
+         WHERE status = 'Active'
          ORDER BY created_at
          LIMIT 1
-    """), {"tid": tenant_id}).first()
+    """)).first()
     if row is None:
         row = conn.execute(text("""
             SELECT id, COALESCE(name, project_code) AS label
               FROM projects
-             WHERE tenant_id = :tid
              ORDER BY created_at
              LIMIT 1
-        """), {"tid": tenant_id}).first()
+        """)).first()
     if row is None:
         _fail(
             "no project found on this tenant. Create at least one "
@@ -192,7 +196,7 @@ def main() -> int:
     engine = create_engine(DATABASE_URL, future=True)
     with engine.begin() as conn:
         user_id, tenant_id = _admin_user(conn)
-        project_id, project_label = _pick_project(conn, tenant_id)
+        project_id, project_label = _pick_project(conn)
         _wipe_demo(conn, tenant_id)
 
         c_id = _mk_contractor(
