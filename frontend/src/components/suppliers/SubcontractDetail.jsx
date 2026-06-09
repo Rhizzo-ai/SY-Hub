@@ -22,6 +22,7 @@ import SensitiveValue from '@/components/po/SensitiveValue';
 import SubcontractStatusPill from './SubcontractStatusPill';
 import SubcontractActionButtons from './SubcontractActionButtons';
 import SubcontractFormDialog from './SubcontractFormDialog';
+import ValuationsSection from './valuations/ValuationsSection';
 
 
 function Field({ label, value, className = '', testid }) {
@@ -152,6 +153,16 @@ export default function SubcontractDetail({ subcontract, supplierId }) {
       <section className="pt-3 border-t">
         <SubcontractActionButtons subcontract={s} />
       </section>
+
+      {/* ─── Valuations (Chat 48 — Build Pack 2.8-FE-ii) ───────────────
+          Mounted below the lifecycle action block. Self-contained:
+          owns its own list/detail layout (vertical to dodge B87), and
+          gates all of: "New valuation" button (status ∈ {Active,
+          Completed} + canCreateValuation), sensitive-sum visibility on
+          5 fields, lifecycle buttons, dialogs and payment-notices
+          panel. SubcontractDetail does NOT pass any money figures
+          through — ValuationsSection talks to its own hooks. */}
+      <ValuationsSection subcontract={s} />
 
       <SubcontractFormDialog
         open={editOpen}

@@ -48,6 +48,44 @@ jest.mock('../../../hooks/subcontracts', () => ({
   useCompleteSubcontract: jest.fn(),
   useTerminateSubcontract: jest.fn(),
 }));
+// 2.8-FE-ii (Chat 48): SubcontractDetail now mounts <ValuationsSection/>,
+// which calls useValuations / usePaymentNotices via these hook modules.
+// Stub them out so the 2.8-FE-i suite stays focused on subcontract
+// lifecycle (the valuations section has its own integration suite in
+// ValuationsSection.test.jsx). Default returns: empty list, no
+// detail, no-op mutations.
+jest.mock('../../../hooks/subcontractValuations', () => {
+  const noop = () => ({
+    mutate: jest.fn(),
+    mutateAsync: jest.fn().mockResolvedValue({}),
+    isPending: false, isError: false, error: null, reset: jest.fn(),
+  });
+  return {
+    valKeys: { all: ['vals'], list: () => [], detail: () => [] },
+    useValuations: jest.fn(() => ({
+      data: { items: [], total: 0 }, isLoading: false, isError: false,
+    })),
+    useValuation: jest.fn(() => ({ data: null, isLoading: false, isError: false })),
+    useCreateValuation: noop,
+    useSubmitValuation: noop,
+    useCertifyValuation: noop,
+    useRejectValuation: noop,
+  };
+});
+jest.mock('../../../hooks/paymentNotices', () => {
+  const noop = () => ({
+    mutate: jest.fn(),
+    mutateAsync: jest.fn().mockResolvedValue({}),
+    isPending: false, isError: false, error: null, reset: jest.fn(),
+  });
+  return {
+    noticeKeys: { all: ['notices'], list: () => [] },
+    usePaymentNotices: jest.fn(() => ({
+      data: { items: [], total: 0 }, isLoading: false, isError: false,
+    })),
+    useCreatePayLess: noop,
+  };
+});
 jest.mock('sonner', () => ({
   toast: { success: jest.fn(), error: jest.fn(), info: jest.fn() },
 }));
@@ -60,6 +98,20 @@ jest.mock('@/components/ai-capture/ProjectPicker', () => ({
       value={value ?? ''}
       onChange={(e) => onChange(e.target.value)}
     />
+  ),
+}));
+// BudgetLinePicker is reused by CertifyValuationDialog; stub it to
+// avoid pulling in budget hooks in this suite.
+jest.mock('@/components/actuals/BudgetLinePicker', () => ({
+  BudgetLinePicker: ({ value, onChange }) => (
+    <select
+      data-testid="mock-budget-line-picker"
+      value={value ?? ''}
+      onChange={(e) => onChange(e.target.value || null)}
+    >
+      <option value="">— Select —</option>
+      <option value="BL-1">BL-1</option>
+    </select>
   ),
 }));
 
@@ -515,5 +567,72 @@ describe('edit form — signature block + PATCH body trim (§R4.4, FLAG 2a)', ()
     expect(sent.title).toBe('New scope');
     expect(Object.prototype.hasOwnProperty.call(sent, 'reference')).toBe(false);
     expect(Object.prototype.hasOwnProperty.call(sent, 'status')).toBe(false);
+  });
+});
+
+
+// ─── 2.8-FE-ii Gate-3 mount check (Chat 48) ──────────────────────────
+//
+// Verifies that <ValuationsSection/> mounts inside <SubcontractDetail/>
+// when a row is selected. The valuation hooks are stubbed at the file
+// top — this test only asserts the section renders (own integration
+// suite is ValuationsSection.test.jsx).
+
+describe('SubcontractDetail mount — Valuations section (2.8-FE-ii)', () => {
+  // Re-bind the valuation hook impls — clearAllMocks in the parent
+  // beforeEach can wipe the factory-supplied default in some Jest
+  // versions; setting mockReturnValue here keeps this test
+  // self-contained no matter what.
+  const valHooks = require('../../../hooks/subcontractValuations');
+  const noticeHooks = require('../../../hooks/paymentNotices');
+
+  beforeEach(() => {
+    valHooks.useValuations.mockReturnValue({
+      data: { items: [], total: 0 }, isLoading: false, isError: false,
+    });
+    valHooks.useValuation.mockReturnValue({
+      data: null, isLoading: false, isError: false,
+    });
+    noticeHooks.usePaymentNotices.mockReturnValue({
+      data: { items: [], total: 0 }, isLoading: false, isError: false,
+    });
+  });
+
+  test('selecting a subcontract row mounts <ValuationsSection/>', async () => {
+    // Local persona — ME_FULL in this suite pre-dates 2.8-FE-ii and
+    // only carries subcontracts.* perms. Augment with the valuation
+    // and notice perms so canViewValuations / canCreateValuation pass.
+    useAuth.mockReturnValue({
+      me: {
+        ...ME_FULL,
+        permissions: [
+          ...ME_FULL.permissions,
+          'subcontract_valuations.view',
+          'subcontract_valuations.view_sensitive',
+          'subcontract_valuations.create',
+          'subcontract_valuations.certify',
+          'payment_notices.view',
+          'payment_notices.create',
+        ],
+      },
+    });
+    const row = makeSubcontract({
+      id: 'sc-v',
+      reference: 'SC-V-001',
+      title: 'Active SC',
+      status: 'Active',
+    });
+    setListData([row]);
+
+    renderWithProviders(<SubcontractsTab supplierId={SUP_ID} defaultProjectId={PROJ_ID} />);
+
+    fireEvent.click(screen.getByTestId(`subcontracts-row-${row.id}`));
+
+    await screen.findByTestId(`subcontract-detail-${row.id}`);
+    // The mount: the new section, the list inside it, and the "New
+    // valuation" button (Active subcontract + .create perm).
+    expect(screen.getByTestId('valuations-section')).toBeInTheDocument();
+    expect(screen.getByTestId('valuations-list-wrap')).toBeInTheDocument();
+    expect(screen.getByTestId('valuations-section-new-btn')).toBeInTheDocument();
   });
 });
