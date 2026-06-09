@@ -787,3 +787,24 @@ path exists today.
   across all lifecycle states. Run: `cd /app/backend && /root/.venv/bin/python
   /app/scripts/seed_subcontracts_demo.py`. Precursor to B72 (full demo dataset).
   
+### Chat 48 additions (2.8-FE-ii closeout)
+
+- **B88** — Commercial spine: end-to-end flow design + connective tissue.
+  DEDICATED design session (supersedes/absorbs B85 + B86). Operator surfaced
+  the full intended flow Chat 48:
+    Budget (rough % estimate → refined measured BoQ; line items carry
+    figures/qty/rates/%) → group line items/cost codes into procurement
+    PACKAGES (movable, custom groups) → procure a package → award via
+    Purchase Order LINKED to the budget line(s) it covers → Subcontract
+    (formal, signed, retention) for medium/big awards → payment application
+    → Valuation → Payment/PayLess notice → invoice received → AI capture
+    extracts + allocates to the correct PO / budget line / cost code.
+  Goal: every pound traceable estimate→paid. Most pieces exist (budgets, POs,
+  subcontracts, valuations, actuals, AI capture); the GAPS are the connective
+  tissue: budget-line→package grouping, PO↔budget-line linking, the
+  package→procurement step, and the B85 reference-code system threading through
+  all of it.
+  FIRST STEP of the session: read the actual budget / PO / cost-code / package
+  models line-by-line to establish what already exists vs what needs backend
+  work — do NOT assume. This is likely backend + frontend, not frontend-only.
+  B85 (reference codes) and B86 (richer PO detail) fold into this.
