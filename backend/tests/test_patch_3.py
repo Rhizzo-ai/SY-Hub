@@ -88,27 +88,34 @@ class TestPatch3Permissions:
 
 
 class TestPatch3SER10Retired:
-    """Item 4: SER-10 retired, replaced_by_code_id → SER-06."""
+    """Item 4 (historical): SER-10 was retired, replaced by SER-06.
 
-    def test_ser10_retired(self):
+    B88 Pack 1 — Gate 4 (corrected canonical master 2026-06-09):
+    SER-10 is RE-INSTATED as 'Lift installation (passenger, platform,
+    stairlift)' under subgroup 4.05 Services. SER-06 is the canonical
+    'Renewables & EV (solar PV, battery, ASHP, EV charger)'. Both are
+    distinct, active rows in the master file — the retire/replace
+    relationship no longer applies. This test was inverted to assert
+    the post-Gate-4 truth.
+    """
+
+    def test_ser10_active_in_corrected_master(self):
         from app.db import SessionLocal
         from app.models.cost_codes import CostCode
         db = SessionLocal()
         try:
             ser10 = db.scalar(select(CostCode).where(CostCode.code == "SER-10"))
-            ser06 = db.scalar(select(CostCode).where(CostCode.code == "SER-06"))
             assert ser10 is not None
-            assert ser06 is not None
-            assert ser10.status == "Retired"
-            assert ser10.retired_at is not None
-            assert ser10.retired_reason is not None
-            assert "SER-06" in ser10.retired_reason
-            assert ser10.replaced_by_code_id == ser06.id
+            assert ser10.status == "Active", ser10.status
+            assert ser10.replaced_by_code_id is None
+            assert ser10.name == "Lift installation (passenger, platform, stairlift)"
         finally:
             db.close()
 
     def test_ser06_still_active(self):
-        """Item 4 is a one-sided retire; SER-06 stays the canonical row."""
+        """SER-06 stays Active under the corrected master with the
+        canonical name 'Renewables & EV (solar PV, battery, ASHP, EV
+        charger)' (previously 'Lifts & access' on this pod)."""
         from app.db import SessionLocal
         from app.models.cost_codes import CostCode
         db = SessionLocal()
@@ -117,6 +124,7 @@ class TestPatch3SER10Retired:
             assert ser06.status == "Active"
             assert ser06.retired_at is None
             assert ser06.replaced_by_code_id is None
+            assert ser06.name == "Renewables & EV (solar PV, battery, ASHP, EV charger)"
         finally:
             db.close()
 

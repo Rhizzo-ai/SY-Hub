@@ -250,14 +250,14 @@ class TestSeed:
         assert rows["8"] == "Tax"
         assert rows["5"] == "COS"
 
-    def test_canonical_total_is_129(self, db_engine):
+    def test_canonical_total_is_130(self, db_engine):
         with db_engine.connect() as c:
-            # B88 Pack 1 Gate 4 reseeds to a canonical 129-code
-            # structure. Per Build Pack §5.3, live codes whose
-            # (prefix, sequence) is not in the canonical list (e.g.
-            # this pod's ACC-04..08) are NOT deleted — they are
-            # reported as extras and live alongside the 129 canonical
-            # rows. So we scope to canonical sequence ranges only.
+            # B88 Pack 1 Gate 4 (corrected master 2026-06-09) reseeds
+            # to a canonical 130-code structure. The corrected reseed
+            # HARD-DELETES non-canonical rows (ACC-04..08, CTG-06 if
+            # present) when they have no FK references; the previous
+            # "preserve extras" path is gone. So total = canonical
+            # 130, no extras.
             total = c.execute(text("""
                 SELECT COUNT(*) FROM cost_codes WHERE
                   (prefix='ACQ' AND sequence <= 10) OR
@@ -275,17 +275,17 @@ class TestSeed:
                   (prefix='PRL' AND sequence <= 16) OR
                   (prefix='SAL' AND sequence <= 10) OR
                   (prefix='FIN' AND sequence <= 5) OR
-                  (prefix='OHD' AND sequence <= 8) OR
+                  (prefix='OHD' AND sequence <= 9) OR
                   (prefix='ACC' AND sequence <= 3) OR
                   (prefix='CTG' AND sequence <= 5)
             """)).scalar()
-        assert total == 129
+        assert total == 130
 
     def test_per_prefix_counts(self, db_engine):
         expected = {
             "ACQ": 10, "PLN": 9, "DES": 9, "FAC": 5, "SUB": 5, "SUP": 10,
             "INT": 6, "FIT": 5, "SER": 10, "PRE": 1, "EXB": 3, "EXT": 9,
-            "PRL": 16, "SAL": 10, "FIN": 5, "OHD": 8, "ACC": 3, "CTG": 5,
+            "PRL": 16, "SAL": 10, "FIN": 5, "OHD": 9, "ACC": 3, "CTG": 5,
         }
         # As above: count seeded codes only (sequence ≤ expected count).
         with db_engine.connect() as c:
@@ -391,7 +391,7 @@ class TestPermissions:
         r = readonly.get(f"{BASE_URL}/api/cost-codes")
         assert r.status_code == 200
         # At least the 133 seed codes exist; tests may add transient ones.
-        assert len(r.json()) >= 133
+        assert len(r.json()) >= 130
 
     def test_readonly_cannot_create(self, readonly, db_engine):
         with db_engine.connect() as c:
@@ -1002,7 +1002,7 @@ class TestProjectToggle:
         )
         assert r.status_code == 200
         body = r.json()
-        assert body["rows_updated"] == 8  # OHD has 8 codes (parent group "7" Company Overheads)
+        assert body["rows_updated"] == 9  # OHD has 9 codes (parent group "7" Company Overheads)
         rows = admin.get(f"{BASE_URL}/api/projects/{proj['id']}/cost-codes").json()
         for row in rows:
             if row["prefix"] == "OHD":

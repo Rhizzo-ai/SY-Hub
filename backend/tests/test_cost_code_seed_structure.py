@@ -37,6 +37,17 @@ DATABASE_URL = os.environ["DATABASE_URL"]
 # --------------------------------------------------------------------------
 
 PARENT_CODES = ["1", "2", "3", "4", "5", "6", "7", "8", "9"]
+PARENT_NAMES = {
+    "1": "Land & Acquisition",
+    "2": "Planning & Statutory",
+    "3": "Professional Fees",
+    "4": "Construction",
+    "5": "Sales & Marketing",
+    "6": "Finance Costs",
+    "7": "Company Overheads",
+    "8": "Accounting",
+    "9": "Contingency, Risk & Miscellaneous",
+}
 SUBGROUP_CODES = [
     "4.00", "4.01", "4.02", "4.03", "4.04",
     "4.05", "4.06", "4.07", "4.08", "4.09",
@@ -65,9 +76,10 @@ CANONICAL_PER_PREFIX = {
     "FAC": 5, "SUB": 5, "SUP": 10, "INT": 6,
     "FIT": 5, "SER": 10, "PRE": 1, "EXB": 3,
     "EXT": 9, "PRL": 16,
-    "SAL": 10, "FIN": 5, "OHD": 8, "ACC": 3, "CTG": 5,
+    "SAL": 10, "FIN": 5, "OHD": 9, "ACC": 3, "CTG": 5,
 }
-CANONICAL_TOTAL = sum(CANONICAL_PER_PREFIX.values())  # = 129
+CANONICAL_TOTAL = sum(CANONICAL_PER_PREFIX.values())  # = 130
+assert CANONICAL_TOTAL == 130
 
 
 # --------------------------------------------------------------------------
@@ -216,22 +228,29 @@ class TestConstructionSubgroups:
 
 class TestCanonicalCodes:
 
-    def test_canonical_total_is_129(self, db_engine):
-        """All 129 canonical (prefix, sequence) pairs are present
-        in the DB. Extras (e.g. ACC-04..08) are scoped OUT — they're
-        verified separately in TestExtras.
+    def test_canonical_total_is_130(self, db_engine):
+        """All 130 canonical (prefix, sequence) pairs are present in
+        the DB. There are NO extras after the corrected reseed —
+        ACC-04..08 + any CTG-06 are HARD-DELETED if no FK references,
+        else RETIRED (status='Retired'). Either way, the canonical set
+        is exactly 130 rows.
         """
         with db_engine.connect() as c:
             rows = c.execute(text(
                 "SELECT prefix, sequence FROM cost_codes"
+                " WHERE status = 'Active'"
             )).fetchall()
         live = {(r.prefix, r.sequence) for r in rows}
         canonical = {
             (p, s) for p, n in CANONICAL_PER_PREFIX.items() for s in range(1, n + 1)
         }
-        assert len(canonical) == 129
+        assert len(canonical) == 130
         missing = canonical - live
+        extras = live - canonical
         assert missing == set(), f"canonical codes missing from DB: {missing}"
+        assert extras == set(), (
+            f"non-canonical Active rows still in DB: {extras}"
+        )
 
     def test_per_prefix_canonical_counts(self, db_engine):
         """For each canonical prefix, the count of in-range sequences
@@ -289,44 +308,97 @@ class TestCanonicalCodes:
         )
 
 
-class TestSAL10Added:
-    """SAL-10 was missing on this pod's seed (live had SAL=9; canonical
-    wants SAL=10). The seed creates it with the canonical name +
-    BT category — covering Build Pack §5.3 'set name = description
-    from the sheet, buildertrend_category = the BT column'."""
+class TestParentNames:
+    """Parent group names match the operator-corrected canonical master
+    (2026-06-09): Land & Acquisition, Planning & Statutory,
+    Professional Fees, Construction, Sales & Marketing, Finance Costs,
+    Company Overheads, Accounting, Contingency, Risk & Miscellaneous."""
 
-    def test_sal_10_exists(self, db_engine):
+    def test_parent_names_canonical(self, db_engine):
+        with db_engine.connect() as c:
+            rows = c.execute(text("""
+                SELECT code, name FROM cost_code_sections
+                WHERE parent_section_id IS NULL
+            """)).fetchall()
+        names = {r.code: r.name for r in rows}
+        for code, expected in PARENT_NAMES.items():
+            assert names[code] == expected, (
+                f"parent {code}: got {names[code]!r}, expected {expected!r}"
+            )
+
+
+class TestSAL10Canonical:
+    """SAL-10 is part of the corrected master (130 codes). Previous
+    Gate-4 submission invented SAL-10 as 'Reservation Fees' — that was
+    REJECTED. The canonical name is 'Other sales & disposal costs',
+    and SAL-09 takes the slot 'Post-completion holding & maintenance'."""
+
+    def test_sal_09_renamed(self, db_engine):
+        with db_engine.connect() as c:
+            name = c.execute(text(
+                "SELECT name FROM cost_codes WHERE code='SAL-09'"
+            )).scalar()
+        assert name == "Post-completion holding & maintenance", name
+
+    def test_sal_10_canonical(self, db_engine):
         with db_engine.connect() as c:
             row = c.execute(text("""
-                SELECT name, buildertrend_category, status
-                FROM cost_codes WHERE code = 'SAL-10'
+                SELECT name, status FROM cost_codes WHERE code = 'SAL-10'
             """)).first()
-        assert row is not None, "SAL-10 not seeded"
-        assert row.name == "Reservation Fees", row.name
-        assert row.buildertrend_category == "5 Sales & Marketing"
+        assert row is not None, "SAL-10 missing"
+        assert row.name == "Other sales & disposal costs", row.name
         assert row.status == "Active"
 
 
-class TestExtras:
-    """Build Pack §5.3 rule: do NOT delete live codes that aren't in
-    the canonical list — report them as 'extras' and await operator
-    instruction. On this pod the extras are ACC-04..08 (live had
-    ACC=8; canonical wants ACC=3).
-    """
+class TestOHD09Canonical:
+    """OHD-09 is part of the corrected master (DB previously had OHD=8;
+    canonical OHD=9 with the new ninth row 'HR, recruitment & employee
+    welfare')."""
 
-    def test_extras_still_present_not_deleted(self, db_engine):
+    def test_ohd_09_exists(self, db_engine):
+        with db_engine.connect() as c:
+            row = c.execute(text("""
+                SELECT name, status FROM cost_codes WHERE code = 'OHD-09'
+            """)).first()
+        assert row is not None, "OHD-09 missing"
+        assert row.name == "HR, recruitment & employee welfare", row.name
+        assert row.status == "Active"
+
+
+class TestACCNoExtras:
+    """ACC-04..08 were on this pod from a legacy seed. The corrected
+    master has ACC at exactly 3 codes. The seed reconciles by HARD-
+    deleting non-canonical rows that have no FK references — the
+    earlier 'preserve as extras' path is gone. After seed, the DB
+    must contain ONLY ACC-01..03 (not retired stubs)."""
+
+    def test_only_three_acc_codes(self, db_engine):
         with db_engine.connect() as c:
             rows = c.execute(text("""
-                SELECT code FROM cost_codes
-                WHERE prefix = 'ACC' AND sequence > 3
-                ORDER BY code
+                SELECT code FROM cost_codes WHERE prefix='ACC'
+                ORDER BY sequence
             """)).fetchall()
-        codes = [r.code for r in rows]
-        # 5 extras present pre-seed; the seed must NOT have deleted them.
-        # Operator decides their fate in a separate follow-up.
-        assert codes == ["ACC-04", "ACC-05", "ACC-06", "ACC-07", "ACC-08"], (
-            f"extras unexpectedly mutated: {codes}"
+        assert [r.code for r in rows] == ["ACC-01", "ACC-02", "ACC-03"], (
+            [r.code for r in rows]
         )
+
+    def test_acc_01_canonical_name(self, db_engine):
+        with db_engine.connect() as c:
+            name = c.execute(text(
+                "SELECT name FROM cost_codes WHERE code='ACC-01'"
+            )).scalar()
+        assert name == "Accountancy fees (bookkeeping, tax, payroll, CIS, audit)"
+
+
+class TestCTGNoSix:
+    """No CTG-06 row may exist post-seed."""
+
+    def test_ctg_06_absent(self, db_engine):
+        with db_engine.connect() as c:
+            row = c.execute(text(
+                "SELECT id FROM cost_codes WHERE code='CTG-06'"
+            )).scalar()
+        assert row is None, "CTG-06 must NOT exist (canonical CTG is 5 codes)"
 
 
 class TestIdempotency:

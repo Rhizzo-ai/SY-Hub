@@ -18,7 +18,55 @@ Frontend / actuals / commitments / Xero are out of scope until later prompts.
 
 ## Build Pack B88 Pack 1 — Cost-Code Group Hierarchy + Cost-Code Admin
 
-### Gate 4 (2026-02-XX) — canonical reseed + structure tests
+### Gate 4 — RE-SUBMISSION against corrected canonical master (2026-02-XX)
+
+The initial Gate 4 submission was REJECTED — built against a stale
+129-code list with 5 ACC "extras" preserved and an invented SAL-10
+"Reservation Fees". Operator provided the authoritative master
+`BTCostCodes_20260609 (1) (3).xlsx`, which locks in **130 codes**
+under 9 parent groups + 10 Construction subgroups. The seed and
+tests have been rebuilt against that master from scratch.
+
+Key corrections vs the rejected submission:
+* Total = **130 canonical** (no extras). The "§5.3 preserve extras"
+  rule is gone for the canonical prefix-set.
+* SAL-10 canonical name = **"Other sales & disposal costs"** (was
+  invented as "Reservation Fees" — discarded).
+* SAL-09 renamed in-place to **"Post-completion holding &
+  maintenance"** (its slot was taken by what is now SAL-10).
+* **OHD-09 newly seeded** — "HR, recruitment & employee welfare"
+  (previous DB had OHD=8; canonical OHD=9).
+* **ACC-04..08 hard-deleted** — all 5 rows had zero FK references
+  so the seed's `_try_hard_delete_code` succeeded; 0 codes were
+  retired in this submission.
+* Parent group names updated: 1 = "Land & Acquisition",
+  3 = "Professional Fees", 5 = "Sales & Marketing",
+  8 = "Accounting", and 38 cost-code names re-set to the master
+  strings.
+* **SER-10 un-retired** — legacy migration
+  `0016_audit_remediation_patch_3` had retired SER-10 in favour of
+  SER-06; the corrected master has BOTH active. The seed now clears
+  `replaced_by_code_id` / `retired_at` / `retired_reason` on any
+  canonical row that still carries them. `TestPatch3SER10Retired`
+  inverted to assert the post-Gate-4 truth.
+
+Reconciliation semantics implemented (operator instruction):
+* Hard-delete non-canonical rows when no FK reference exists.
+* Retire (status='Retired') if a RESTRICT FK blocks deletion.
+* Names always set to the canonical master value — no preservation
+  of legacy strings.
+* Idempotent: run-2 = 0 changes; row counts identical.
+
+Two warm-DB full pytest runs: **1442 passed, 3 xpassed, 0 failed**
+both runs (~4 min 17 s avg). Net +5 vs rejected submission (+7 new
+structure tests, -2 dropped from the rejected model).
+
+Full report at `/app/test_reports/B88_pack1_gate4_resubmission_report.md`.
+
+**STOPPED at Gate 4** awaiting operator raw-fetch verification
+on `origin/main`.
+
+### Gate 4 (REJECTED — superseded by corrected canonical master)
 
 `backend/scripts/seed_cost_code_structure.py` (idempotent) reconciles
 the live DB against Build Pack §5.1–§5.3:
