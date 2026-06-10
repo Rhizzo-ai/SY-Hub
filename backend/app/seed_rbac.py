@@ -76,7 +76,12 @@ PERMISSION_CATALOGUE += _perms_for(
 )
 PERMISSION_CATALOGUE += _perms_for(
     "cost_codes",
-    include=["view", "admin"],
+    # B88 Pack 1 — split the day-one `cost_codes.admin` superset into
+    # granular create/edit/delete actions. `admin` remains for back-compat
+    # (existing endpoints + role grants still depend on it); the new
+    # granular perms are additive and route the new section CRUD +
+    # code delete + reactivate endpoints (see routers/cost_codes.py).
+    include=["view", "admin", "create", "edit", "delete"],
 )
 PERMISSION_CATALOGUE += _perms_for(
     "appraisals",
@@ -304,6 +309,13 @@ ROLE_PERMISSIONS["director"] = set(ALL_PERMISSION_CODES) - {
     "users.admin", "roles.admin", "audit.admin",
     # Prompt 1.7: system_config.admin is super_admin-only.
     "system_config.admin",
+    # B88 Pack 1 — cost-code DELETE is super_admin-only by operator
+    # decision. Director receives create + edit via the all-minus-
+    # exclusions baseline, but MUST be excluded from delete here so the
+    # all-minus-exclusions math does NOT silently grant it. This is the
+    # counter-intuitive grant in the pack — test_cost_code_sections.py
+    # asserts director gets 403 on DELETE.
+    "cost_codes.delete",
 }
 
 # project_manager
@@ -383,6 +395,11 @@ ROLE_PERMISSIONS["finance"] = {
     "budget_changes.view", "budget_changes.approve", "budget_changes.apply",
     "cash_flow.view", "cash_flow.view_sensitive", "cash_flow.edit",
     "cost_codes.view", "cost_codes.admin",
+    # B88 Pack 1 — finance receives the new granular create + edit perms
+    # alongside its existing `cost_codes.admin` back-compat grant. Finance
+    # is INTENTIONALLY EXCLUDED from `cost_codes.delete` per the operator
+    # decision (day-one default: delete = super_admin only).
+    "cost_codes.create", "cost_codes.edit",
     "xero_connections.view", "xero_connections.admin",
     "xero_bills.view", "xero_invoices.view", "xero_sync.admin", "xero_sync.view",
     "reports.view", "reports.export",
