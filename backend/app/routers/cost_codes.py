@@ -34,9 +34,13 @@ from app.models.user import User
 from app.services.audit import field_diff, record_audit
 from app.services.cost_codes import (
     LOCKED_FIELDS_WHEN_IN_USE, SECTION_LOCKED_FIELDS_WHEN_IN_USE,
+    SECTION_LOCKED_FIELDS_WHEN_HAS_CHILDREN,
     auto_populate_project_cost_codes, can_entity_use_cost_code,
-    detect_replaced_by_cycle, is_cost_code_in_use, is_section_in_use,
+    cost_code_block_reasons, detect_replaced_by_cycle,
+    is_cost_code_in_use, is_section_in_use, reactivate_cost_code,
+    section_block_reasons, section_has_children,
     project_type_enabled_predicate, validate_cost_code_format,
+    validate_section_for_cost_code, validate_section_parent,
     validate_subcategory_format,
 )
 
@@ -55,7 +59,32 @@ class SectionRead(BaseModel):
     display_order: int
     is_direct_cost: bool
     default_p_and_l_category: str
+    # B88 Pack 1 — hierarchy fields. parent_section_id is None for tier-1
+    # parent groups; set for tier-2 subgroups. is_subgroup is a convenience
+    # for the UI so it doesn't have to null-check parent_section_id.
+    parent_section_id: Optional[uuid.UUID] = None
+    allows_subgroups: bool = False
+    is_subgroup: bool = False
     active_code_count: int = 0
+
+
+class SectionTreeRead(SectionRead):
+    """Nested form returned by GET /cost-code-sections?tree=true.
+
+    `subgroups` is populated only on tier-1 parents that have at least
+    one child; never recurses beyond one level (we enforce two tiers).
+    """
+    subgroups: list[SectionRead] = Field(default_factory=list)
+
+
+class SectionCreate(BaseModel):
+    code: str = Field(max_length=30)
+    name: str = Field(max_length=100)
+    display_order: int
+    is_direct_cost: bool = True
+    default_p_and_l_category: str = "COS"
+    parent_section_id: Optional[uuid.UUID] = None
+    allows_subgroups: bool = False
 
 
 class SectionUpdate(BaseModel):
@@ -64,6 +93,10 @@ class SectionUpdate(BaseModel):
     display_order: Optional[int] = None
     is_direct_cost: Optional[bool] = None
     default_p_and_l_category: Optional[str] = None
+    # B88 Pack 1 — operator can re-parent / flip allows_subgroups, subject
+    # to the SECTION_LOCKED_FIELDS_WHEN_HAS_CHILDREN guard in the route.
+    parent_section_id: Optional[uuid.UUID] = None
+    allows_subgroups: Optional[bool] = None
 
 
 class CostCodeRead(BaseModel):
@@ -234,8 +267,25 @@ def _section_to_read(db: Session, s: CostCodeSection) -> SectionRead:
         id=s.id, code=s.code, name=s.name, display_order=s.display_order,
         is_direct_cost=s.is_direct_cost,
         default_p_and_l_category=s.default_p_and_l_category,
+        parent_section_id=s.parent_section_id,
+        allows_subgroups=s.allows_subgroups,
+        is_subgroup=s.parent_section_id is not None,
         active_code_count=cnt,
     )
+
+
+def _section_snapshot(s: CostCodeSection) -> dict:
+    """Audit field-diff snapshot. Includes the new hierarchy columns
+    so re-parenting + allows_subgroups flips appear in the audit log."""
+    return {
+        "code": s.code, "name": s.name, "display_order": s.display_order,
+        "is_direct_cost": s.is_direct_cost,
+        "default_p_and_l_category": s.default_p_and_l_category,
+        "parent_section_id": (
+            str(s.parent_section_id) if s.parent_section_id else None
+        ),
+        "allows_subgroups": s.allows_subgroups,
+    }
 
 
 def _cc_to_read(c: CostCode) -> CostCodeRead:
@@ -278,18 +328,92 @@ def _cc_snapshot(c: CostCode) -> dict:
 
 
 # ==========================================================================
-# Sections
+# Sections (B88 Pack 1 §3.1 — full CRUD + two-tier hierarchy)
 # ==========================================================================
 
-@router.get("/cost-code-sections", response_model=list[SectionRead])
+@router.get("/cost-code-sections", response_model=list[SectionTreeRead])
 def list_sections(
     db: Session = Depends(get_db),
     _=Depends(require_permission("cost_codes.view")),
+    tree: bool = Query(
+        default=False,
+        description="If true, returns tier-1 parents only with their "
+                    "subgroups nested under `subgroups`. If false (default), "
+                    "returns a flat list of ALL sections in display order.",
+    ),
 ):
+    if tree:
+        parents = db.scalars(
+            select(CostCodeSection)
+            .where(CostCodeSection.parent_section_id.is_(None))
+            .order_by(CostCodeSection.display_order)
+        ).all()
+        out: list[SectionTreeRead] = []
+        for p in parents:
+            base = _section_to_read(db, p)
+            children = db.scalars(
+                select(CostCodeSection)
+                .where(CostCodeSection.parent_section_id == p.id)
+                .order_by(CostCodeSection.display_order)
+            ).all()
+            tree_row = SectionTreeRead(
+                **base.model_dump(),
+                subgroups=[_section_to_read(db, c) for c in children],
+            )
+            out.append(tree_row)
+        return out
+
     rows = db.scalars(
         select(CostCodeSection).order_by(CostCodeSection.display_order)
     ).all()
     return [_section_to_read(db, s) for s in rows]
+
+
+@router.post("/cost-code-sections", response_model=SectionRead, status_code=201)
+def create_section(
+    payload: SectionCreate,
+    request: Request,
+    current: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    _=Depends(require_permission("cost_codes.create")),
+):
+    # B88 Pack 1 §3.2 — parent rules.
+    err = validate_section_parent(db, parent_id=payload.parent_section_id)
+    if err is not None:
+        raise HTTPException(422, err)
+    # A subgroup cannot itself host subgroups (forbidden tier-3).
+    if payload.parent_section_id is not None and payload.allows_subgroups:
+        raise HTTPException(
+            422, "A subgroup cannot have allows_subgroups=True (max 2 tiers).",
+        )
+    if payload.default_p_and_l_category not in P_AND_L_CATEGORIES:
+        raise HTTPException(422, "Invalid default_p_and_l_category")
+
+    s = CostCodeSection(
+        code=payload.code, name=payload.name,
+        display_order=payload.display_order,
+        is_direct_cost=payload.is_direct_cost,
+        default_p_and_l_category=payload.default_p_and_l_category,
+        parent_section_id=payload.parent_section_id,
+        allows_subgroups=payload.allows_subgroups,
+    )
+    db.add(s)
+    try:
+        db.flush()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            409, f"Section code '{payload.code}' already exists",
+        )
+    record_audit(
+        db, action="Create", resource_type="cost_code_sections",
+        resource_id=s.id, actor_user_id=current.id,
+        field_changes=field_diff({}, _section_snapshot(s)),
+        request=request,
+    )
+    db.commit()
+    db.refresh(s)
+    return _section_to_read(db, s)
 
 
 @router.patch("/cost-code-sections/{section_id}", response_model=SectionRead)
@@ -299,7 +423,7 @@ def update_section(
     request: Request,
     current: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-    _=Depends(require_permission("cost_codes.admin")),
+    _=Depends(require_permission("cost_codes.edit")),
 ):
     s = db.scalar(select(CostCodeSection).where(CostCodeSection.id == section_id))
     if s is None:
@@ -307,23 +431,56 @@ def update_section(
     changes = payload.model_dump(exclude_unset=True)
     if not changes:
         return _section_to_read(db, s)
+
+    # Field locks tied to active cost-codes attached.
     in_use = is_section_in_use(db, section_id)
     if in_use:
         bad = sorted(set(changes.keys()) & SECTION_LOCKED_FIELDS_WHEN_IN_USE)
         if bad:
             raise HTTPException(409, f"Locked fields cannot change: {bad}")
-    before = {
-        "code": s.code, "name": s.name, "display_order": s.display_order,
-        "is_direct_cost": s.is_direct_cost,
-        "default_p_and_l_category": s.default_p_and_l_category,
-    }
+
+    # Field locks tied to existing subgroup children (B88 §3.2).
+    if section_has_children(db, section_id):
+        bad = sorted(
+            set(changes.keys()) & SECTION_LOCKED_FIELDS_WHEN_HAS_CHILDREN
+        )
+        if bad:
+            raise HTTPException(
+                409,
+                f"Section has subgroup children; cannot change: {bad}. "
+                "Move or delete the subgroups first.",
+            )
+
+    # If parent_section_id is being changed, re-validate the new parent.
+    if "parent_section_id" in changes:
+        err = validate_section_parent(
+            db, parent_id=changes["parent_section_id"], self_id=section_id,
+        )
+        if err is not None:
+            raise HTTPException(422, err)
+        # A row with attached cost codes cannot become a subgroup if its
+        # codes would then violate validate_section_for_cost_code (i.e.
+        # they'd end up under a parent that hosts subgroups). In our
+        # simple model: becoming a subgroup is always safe for the
+        # codes attached (they end up under a subgroup, which is legal).
+        # The check we DO need: if a row is becoming a child, it cannot
+        # itself be a parent of subgroups — caught above.
+
+    # If allows_subgroups is being turned ON, the row must NOT already
+    # have cost codes attached (a parent-that-allows-subgroups cannot
+    # also host raw codes — that breaks validate_section_for_cost_code
+    # for those codes on next edit).
+    if changes.get("allows_subgroups") is True and in_use:
+        raise HTTPException(
+            409,
+            "Cannot enable allows_subgroups: this group already has cost "
+            "codes attached. Move them under a subgroup first.",
+        )
+
+    before = _section_snapshot(s)
     for k, v in changes.items():
         setattr(s, k, v)
-    after = {
-        "code": s.code, "name": s.name, "display_order": s.display_order,
-        "is_direct_cost": s.is_direct_cost,
-        "default_p_and_l_category": s.default_p_and_l_category,
-    }
+    after = _section_snapshot(s)
     diff = field_diff(before, after)
     if diff:
         record_audit(
@@ -334,6 +491,39 @@ def update_section(
     db.commit()
     db.refresh(s)
     return _section_to_read(db, s)
+
+
+@router.delete("/cost-code-sections/{section_id}", status_code=204)
+def delete_section(
+    section_id: uuid.UUID,
+    request: Request,
+    current: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    _=Depends(require_permission("cost_codes.delete")),
+):
+    s = db.scalar(select(CostCodeSection).where(CostCodeSection.id == section_id))
+    if s is None:
+        raise HTTPException(404, "Section not found")
+    reasons = section_block_reasons(db, section_id)
+    if reasons:
+        # Graceful structured 409 — UI shows each blocker line by line.
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "Cannot delete: section is in use.",
+                "blockers": reasons,
+            },
+        )
+    snapshot = _section_snapshot(s)
+    record_audit(
+        db, action="Delete", resource_type="cost_code_sections",
+        resource_id=s.id, actor_user_id=current.id,
+        field_changes=field_diff(snapshot, {}),
+        request=request,
+    )
+    db.delete(s)
+    db.commit()
+    return None
 
 
 # ==========================================================================
@@ -385,7 +575,7 @@ def create_cost_code(
     request: Request,
     current: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-    _=Depends(require_permission("cost_codes.admin")),
+    _=Depends(require_permission("cost_codes.create")),
 ):
     if not validate_cost_code_format(payload.code):
         raise HTTPException(400, "code must match ^[A-Z]{3}-\\d{2}$")
@@ -397,6 +587,11 @@ def create_cost_code(
         CostCodeSection.id == payload.section_id))
     if sec is None:
         raise HTTPException(404, "Section not found")
+    # B88 Pack 1 §3.2 — a code's section_id may not point at a
+    # parent-with-subgroups (would break the two-tier filing rule).
+    err = validate_section_for_cost_code(db, section_id=payload.section_id)
+    if err is not None:
+        raise HTTPException(422, err)
 
     prefix = payload.code[:3]
     seq = int(payload.code[4:])
@@ -445,7 +640,7 @@ def update_cost_code(
     request: Request,
     current: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-    _=Depends(require_permission("cost_codes.admin")),
+    _=Depends(require_permission("cost_codes.edit")),
 ):
     c = db.scalar(select(CostCode).where(CostCode.id == code_id))
     if c is None:
@@ -486,7 +681,7 @@ def retire_cost_code(
     request: Request,
     current: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-    _=Depends(require_permission("cost_codes.admin")),
+    _=Depends(require_permission("cost_codes.edit")),
 ):
     c = db.scalar(select(CostCode).where(CostCode.id == code_id))
     if c is None:
@@ -527,6 +722,83 @@ def retire_cost_code(
     db.commit()
     db.refresh(c)
     return _cc_to_read(c)
+
+
+@router.post("/cost-codes/{code_id}/reactivate", response_model=CostCodeRead)
+def reactivate_cost_code_endpoint(
+    code_id: uuid.UUID,
+    request: Request,
+    current: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    _=Depends(require_permission("cost_codes.edit")),
+):
+    """B88 Pack 1 §3.4 — un-retire mirror of /retire.
+
+    Flips status Retired→Active and clears retired_at, retired_reason,
+    and replaced_by_code_id. Idempotent on already-Active codes (409 —
+    same shape as retire's already-retired check).
+    """
+    c = db.scalar(select(CostCode).where(CostCode.id == code_id))
+    if c is None:
+        raise HTTPException(404, "Cost code not found")
+    if c.status == "Active":
+        raise HTTPException(409, "Cost code is already Active")
+
+    payload = reactivate_cost_code(c)
+    record_audit(
+        db, action="Status_Change", resource_type="cost_codes",
+        resource_id=c.id, actor_user_id=current.id,
+        field_changes=field_diff(payload["before"], payload["after"]),
+        metadata={"kind": "reactivate",
+                  "reactivated_at": payload["reactivated_at"]},
+        request=request,
+    )
+    db.commit()
+    db.refresh(c)
+    return _cc_to_read(c)
+
+
+@router.delete("/cost-codes/{code_id}", status_code=204)
+def delete_cost_code(
+    code_id: uuid.UUID,
+    request: Request,
+    current: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    _=Depends(require_permission("cost_codes.delete")),
+):
+    """B88 Pack 1 §3.3 — hard delete with named-blocker 409.
+
+    Only invoked for codes that "really were never used or were created
+    in error" — the retire flow remains the right choice for any code
+    that has ever posted anywhere. cost_code_block_reasons checks every
+    inbound RESTRICT FK and returns named counts; if any are present the
+    request fails with a structured 409 (`{message, blockers}`) so the
+    UI can list them. CASCADE/SET-NULL inbound FKs (entity-mapping,
+    AI-hint, retire-and-replace pointer) are intentionally not blockers.
+    """
+    c = db.scalar(select(CostCode).where(CostCode.id == code_id))
+    if c is None:
+        raise HTTPException(404, "Cost code not found")
+    reasons = cost_code_block_reasons(db, code_id)
+    if reasons:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "Cannot delete: cost code is in use.",
+                "blockers": reasons,
+            },
+        )
+    snapshot = _cc_snapshot(c)
+    snapshot["code"] = c.code  # preserve the immutable identifier in audit
+    record_audit(
+        db, action="Delete", resource_type="cost_codes",
+        resource_id=c.id, actor_user_id=current.id,
+        field_changes=field_diff(snapshot, {}),
+        request=request,
+    )
+    db.delete(c)
+    db.commit()
+    return None
 
 
 # ==========================================================================
