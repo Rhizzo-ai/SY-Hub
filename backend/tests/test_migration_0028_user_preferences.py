@@ -39,8 +39,8 @@ class TestMigration0028Schema:
         # Chat 41 §R-eyeball-Step2A (Prompt 2.7-FE-revision:
         # 0041_drop_vat_registered).
         # Function name retained per Future_Tasks polish entry.
-        assert head == "0043_document_folders", (
-            f"expected 0041_drop_vat_registered, got {head!r}"
+        assert head == "0044_cost_code_groups", (
+            f"expected 0044_cost_code_groups, got {head!r}"
         )
 
     def test_table_and_partial_unique_indexes_present(self, engine):

@@ -647,7 +647,7 @@ class TestMigrationAndPerms:
             head = c.execute(
                 text("SELECT version_num FROM alembic_version")
             ).scalar()
-            assert head == "0043_document_folders", head
+            assert head == "0044_cost_code_groups", head
 
             # Partial unique index over (tenant, owner, parent-or-zero,
             # name) WHERE is_archived=false → the §R0.5 idempotency

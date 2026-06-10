@@ -32,7 +32,7 @@ class TestPermissionCount:
             n = c.execute(text(
                 "SELECT count(*) FROM permissions"
             )).scalar()
-        assert n == 133, f"expected 133 permissions, got {n}"
+        assert n == 136, f"expected 136 permissions, got {n}"
 
     def test_new_2_8b_codes_present(self, db_engine):
         expected = {
@@ -51,12 +51,14 @@ class TestPermissionCount:
         codes = {r[0] for r in rows}
         assert codes == expected, f"missing: {expected - codes}"
 
-    def test_permission_catalogue_count_in_python_is_129(self):
+    def test_total_permissions_matches_catalogue(self):
         from app.seed_rbac import PERMISSION_CATALOGUE
         # Chat 41 (Prompt 2.7-BE-rev-A): +2 catalogue rows
         # (trades.view, trades.create) → 131. Chat 41 operator
         # eyeball (Prompt 2.7-FE-revision): +1 (suppliers.delete) → 132.
-        assert len(PERMISSION_CATALOGUE) == 133
+        # Chat 45 (Build Pack 2.7-DOCS-BE): +1 (documents.move) → 133.
+        # B88 Pack 1 (Gate 2): +3 (cost_codes.{create,edit,delete}) → 136.
+        assert len(PERMISSION_CATALOGUE) == 136
 
 
 # ==========================================================================

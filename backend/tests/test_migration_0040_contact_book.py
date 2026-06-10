@@ -47,7 +47,7 @@ def test_alembic_head_is_latest_post_0040(engine):
     # project's literal-drift convention.
     with engine.connect() as c:
         head = c.execute(text("SELECT version_num FROM alembic_version")).scalar()
-    assert head == "0043_document_folders", head
+    assert head == "0044_cost_code_groups", head
 
 
 # ---------------------------------------------------------------------------

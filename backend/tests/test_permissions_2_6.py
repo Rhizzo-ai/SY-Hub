@@ -35,10 +35,11 @@ class TestPermissionCount26:
             count = c.execute(text(
                 "SELECT COUNT(*) FROM permissions"
             )).scalar()
-        assert count == 133, (
-            f"Expected 132 permissions (110 baseline + 2 from 2.6 + "
+        assert count == 136, (
+            f"Expected 136 permissions (110 baseline + 2 from 2.6 + "
             f"10 from 2.8a + 7 from 2.8b + 2 from 2.7-BE-rev-A + "
-            f"1 from 2.7-FE-rev eyeball); got {count}"
+            f"1 from 2.7-FE-rev eyeball + 1 from 2.7-DOCS-BE + "
+            f"3 from B88 Pack 1); got {count}"
         )
 
     def test_new_perms_are_seeded(self, engine):

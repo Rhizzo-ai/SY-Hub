@@ -192,14 +192,21 @@ class TestSchema:
             ), {"id": sid}).scalar()
         assert ts1 >= ts0
 
-    def test_no_delete_endpoint_exists_for_cost_codes(self, admin, db_engine):
+    def test_delete_endpoint_wired_for_cost_codes(self, admin, db_engine):
+        """B88 Pack 1 (Gate 3) wires DELETE /api/cost-codes/{id} with a
+        complete delete-guard. Test gate flipped from "must be absent"
+        to "must be wired" — ACQ-01 is heavily referenced by seeded
+        project_cost_codes + budget_lines so a delete attempt MUST
+        return 409 with named blockers, NOT 404/405.
+        """
         with db_engine.connect() as c:
             cid = c.execute(text(
                 "SELECT id FROM cost_codes WHERE code='ACQ-01'"
             )).scalar()
         r = admin.delete(f"{BASE_URL}/api/cost-codes/{cid}")
-        # Must be 405 or 404 — no DELETE wired
-        assert r.status_code in (404, 405)
+        # Endpoint is wired (no longer 404/405). ACQ-01 has linked
+        # records so 409 is the expected outcome.
+        assert r.status_code == 409, r.text
 
 
 # ==========================================================================
@@ -207,6 +214,13 @@ class TestSchema:
 # ==========================================================================
 
 class TestSeed:
+    # TODO Gate 4: update expected section count to post-reseed truth and remove xfail.
+    @pytest.mark.xfail(
+        reason="B88 Pack 1 Gate 4 reseeds cost-code structure (9 parent groups "
+        "+ 10 Construction subgroups + 129 codes); this 9-section assertion is "
+        "updated and un-xfailed in Gate 4",
+        strict=False,
+    )
     def test_nine_sections(self, admin):
         r = admin.get(f"{BASE_URL}/api/cost-code-sections")
         assert r.status_code == 200

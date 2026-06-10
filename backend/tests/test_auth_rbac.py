@@ -161,7 +161,11 @@ class TestAuthMe:
         # Chat 41 (Prompt 2.7-BE-rev-A): +2 (trades.view + trades.create
         # via wildcard) → 131. Chat 41 operator eyeball (Prompt
         # 2.7-FE-revision): +1 (suppliers.delete) → 132.
-        assert len(data["permissions"]) == 133
+        # Chat 45 (Build Pack 2.7-DOCS-BE): +1 (documents.move via
+        # wildcard) → 133.
+        # B88 Pack 1 (Gate 2): +3 (cost_codes.{create,edit,delete} via
+        # wildcard) → 136.
+        assert len(data["permissions"]) == 136
         assert data["email"] == TEST_ADMIN_EMAIL
 
     def test_me_unauthenticated_returns_401(self):
@@ -219,7 +223,9 @@ class TestRoles:
         # 2.7-FE-revision): +1 (suppliers.delete) → 132.
         # Chat 45 (Build Pack 2.7-DOCS-BE): +1 (documents.move
         # via wildcard) → 133.
-        assert role_perms["super_admin"] == 133
+        # B88 Pack 1 (Gate 2): +3 (cost_codes.{create,edit,delete}
+        # via wildcard) → 136.
+        assert role_perms["super_admin"] == 136
         # director count history:
         #   Patch #3 baseline (after losing 4 orphan grants):       77
         #   + 2.2 (appraisals.submit, appraisals.view_financials):  79
@@ -239,7 +245,10 @@ class TestRoles:
         # 2.7-FE-revision): +1 (suppliers.delete via wildcard) → 128.
         # Chat 45 (Build Pack 2.7-DOCS-BE): +1 (documents.move via
         # wildcard, not in director exclusion set) → 129.
-        assert role_perms["director"] == 129
+        # B88 Pack 1 (Gate 2): +2 (cost_codes.create + cost_codes.edit
+        # via wildcard; cost_codes.delete is in the director exclusion
+        # set per operator decision — super_admin-only) → 131.
+        assert role_perms["director"] == 131
         assert role_perms["project_manager"] >= 30
         assert role_perms["finance"] >= 25
         # 1.7: +system_config.view granted to all 10 roles.

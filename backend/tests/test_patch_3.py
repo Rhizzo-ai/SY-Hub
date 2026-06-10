@@ -5,15 +5,19 @@ from sqlalchemy import func, select, text
 
 
 class TestPatch3Permissions:
-    """Items 1-3: six orphan codes must be GONE from the catalogue."""
+    """Items 1-3: orphan codes must be GONE from the catalogue.
+
+    B88 Pack 1 (Gate 2) RE-INTRODUCES cost_codes.{create,edit,delete}
+    as wired permission codes routing the new section CRUD + code
+    delete + reactivate endpoints. Those three codes are removed from
+    this "must-be-absent" list; the remaining 3 (system_config.edit +
+    notifications.{view,edit}) stay as live orphan guards.
+    """
 
     def test_orphan_permissions_removed_from_db(self):
         from app.db import SessionLocal
         from app.models.rbac import Permission
         orphans = [
-            "cost_codes.create",
-            "cost_codes.edit",
-            "cost_codes.delete",
             "system_config.edit",
             "notifications.view",
             "notifications.edit",
@@ -32,13 +36,15 @@ class TestPatch3Permissions:
 
     def test_orphan_permissions_removed_from_catalogue(self):
         """The source-of-truth PERMISSION_CATALOGUE in seed_rbac.py must
-        no longer include the 6 orphan codes — otherwise the next seed
-        run would re-create them."""
+        no longer include the orphan codes — otherwise the next seed
+        run would re-create them.
+
+        B88 Pack 1 (Gate 2): cost_codes.{create,edit,delete} are NOT
+        orphans anymore — they route real endpoints. Only the 3 below
+        remain on the "must-be-absent" list.
+        """
         from app.seed_rbac import PERMISSION_CATALOGUE
         codes = {row[0] for row in PERMISSION_CATALOGUE}
-        assert "cost_codes.create" not in codes
-        assert "cost_codes.edit" not in codes
-        assert "cost_codes.delete" not in codes
         assert "system_config.edit" not in codes
         assert "notifications.view" not in codes
         assert "notifications.edit" not in codes
@@ -75,7 +81,8 @@ class TestPatch3Permissions:
             #   suppliers.delete (+1) → 132.
             # Function name retains "81" — renaming is out of scope (see
             # chat-22 §2 + Future_Tasks polish entry).
-            assert total == 133
+            # B88 Pack 1 (Gate 2): +3 (cost_codes.{create,edit,delete}) → 136.
+            assert total == 136
         finally:
             db.close()
 

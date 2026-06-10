@@ -146,9 +146,24 @@ def spotcheck_project_id(db_engine):
 
 
 @pytest.fixture(scope="module")
-def spotcheck_budget_row(db_engine):
-    """Return the first Active budget present in the DB (any project).
-    Skip cleanly if none exist — G2 and G3 need it for blocker setup."""
+def spotcheck_budget_row(db_engine, spotcheck_project_id):
+    """Return an Active budget + its source appraisal.
+
+    B88 Pack 1 — Gate 3 partial-acceptance fix: previously this skipped
+    when the spotcheck R7 budget seed had not run on the pod, so G2 +
+    G3 never ran in CI. Now the fixture self-seeds a probe appraisal
+    (Approved) + Active budget against the first project if none exist.
+    The seed is idempotent across runs (look up by `name LIKE
+    'DEL-GUARD-PROBE-%'` before inserting) and is cleaned up on module
+    teardown so it does not collide with other test modules that wipe
+    appraisals/budgets in their own setup.
+
+    G2 needs `budget_id`; G3 needs `appraisal_id`. Both tests then
+    create + clean up their own blocker row (budget_line /
+    appraisal_cost_line) inside the assertion.
+    """
+    created_ids = {"appraisal_id": None, "budget_id": None}
+
     with db_engine.connect() as c:
         row = c.execute(text("""
             SELECT id, source_appraisal_id
@@ -156,10 +171,74 @@ def spotcheck_budget_row(db_engine):
             WHERE status = 'Active'
             ORDER BY created_at LIMIT 1
         """)).first()
-        if row is None:
-            pytest.skip("No Active budget — re-run R7 budget seed to enable G2/G3.")
-        return {"budget_id": str(row[0]),
+    if row is not None:
+        yield {"budget_id": str(row[0]),
                 "appraisal_id": str(row[1])}
+        return
+
+    # No Active budget exists — seed one for G2 + G3.
+    with db_engine.begin() as c:
+        admin_uid = c.execute(text(
+            "SELECT id FROM users WHERE email='test-admin@example.test'"
+        )).scalar()
+        assert admin_uid is not None, "test-admin user must exist for seed."
+
+        appraisal_id = str(uuid.uuid4())
+        appraisal_group_id = str(uuid.uuid4())
+        # Bump version_number to avoid colliding with any other
+        # (project_id, 'Base', version_number) row left by sibling
+        # appraisal tests in the same pytest session. is_current is
+        # set to false so we don't trip the "one current Base per
+        # project" trigger either.
+        next_version = c.execute(text("""
+            SELECT COALESCE(MAX(version_number), 0) + 1
+            FROM appraisals
+            WHERE project_id = :p AND scenario = 'Base'
+        """), {"p": spotcheck_project_id}).scalar()
+        c.execute(text("""
+            INSERT INTO appraisals (
+              id, project_id, version_number, name, status,
+              reference_date, appraisal_group_id, is_current,
+              scenario, created_by_user_id
+            ) VALUES (
+              :i, :p, :v, :n, 'Approved',
+              CURRENT_DATE, :g, false,
+              'Base', :u
+            )
+        """), {"i": appraisal_id, "p": spotcheck_project_id,
+                "v": next_version,
+                "n": f"DEL-GUARD-PROBE-{appraisal_id[:8]}",
+                "g": appraisal_group_id, "u": admin_uid})
+
+        budget_id = str(uuid.uuid4())
+        c.execute(text("""
+            INSERT INTO budgets (
+              id, project_id, source_appraisal_id, version_number,
+              version_label, is_current, status, created_by_user_id
+            ) VALUES (
+              :i, :p, :a, :v,
+              'Original', false, 'Active', :u
+            )
+        """), {"i": budget_id, "p": spotcheck_project_id,
+                "a": appraisal_id, "v": next_version, "u": admin_uid})
+
+    created_ids["appraisal_id"] = appraisal_id
+    created_ids["budget_id"] = budget_id
+    yield {"budget_id": budget_id, "appraisal_id": appraisal_id}
+
+    # Module teardown — delete the probe rows so other test modules can
+    # wipe appraisals/budgets without FK collisions.
+    if created_ids["budget_id"] is not None:
+        with db_engine.begin() as c:
+            c.execute(text("DELETE FROM budget_lines WHERE budget_id = :b"),
+                      {"b": created_ids["budget_id"]})
+            c.execute(text("DELETE FROM budgets WHERE id = :b"),
+                      {"b": created_ids["budget_id"]})
+            c.execute(text(
+                "DELETE FROM appraisal_cost_lines WHERE appraisal_id = :a"
+            ), {"a": created_ids["appraisal_id"]})
+            c.execute(text("DELETE FROM appraisals WHERE id = :a"),
+                      {"a": created_ids["appraisal_id"]})
 
 
 # --------------------------------------------------------------------------

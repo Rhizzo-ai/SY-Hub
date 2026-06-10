@@ -38,7 +38,7 @@ def test_alembic_head_is_0041(engine):
         head = c.execute(text(
             "SELECT version_num FROM alembic_version"
         )).scalar()
-    assert head == "0043_document_folders", head
+    assert head == "0044_cost_code_groups", head
 
 
 def test_vat_registered_column_absent_at_head(engine):

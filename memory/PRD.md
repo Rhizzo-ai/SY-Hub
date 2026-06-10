@@ -16,6 +16,44 @@ Frontend / actuals / commitments / Xero are out of scope until later prompts.
   for list-time tenant filtering — see Chat 24 R2).
 - Audit append-only via `audit_log` + `audit_log_no_modify()` trigger.
 
+## Build Pack B88 Pack 1 — Cost-Code Group Hierarchy + Cost-Code Admin
+
+### Gate 3 (2026-02-XX) — partial-acceptance follow-ups
+
+Three required changes against the previously-submitted Gate 3 code
+were completed before re-asking for verification on main:
+
+1. **Un-skipped two delete-guard tests** that previously called
+   `pytest.skip` when the R7 spotcheck budget seed was absent on the
+   pod. The `spotcheck_budget_row` fixture in
+   `tests/test_cost_code_delete_guard.py` now self-seeds a probe
+   Approved appraisal + Active budget (idempotent, with module
+   teardown that deletes the probe rows so other test modules can
+   still wipe appraisals/budgets without FK collisions). G2
+   (`test_delete_blocked_by_budget_line`) and G3
+   (`test_delete_blocked_by_appraisal_cost_line`) now run
+   unconditionally and exercise the real 409 block path. 15/15
+   delete-guard tests green.
+
+2. **Fixed 25 stale baseline tests** — alembic head bumps
+   `0043_document_folders → 0044_cost_code_groups`, permission counts
+   `super_admin 133 → 136` and `director 129 → 131` (delete excluded
+   per operator decision), catalogue size `133 → 136`, retired
+   tests inverted (`test_no_delete_endpoint_exists_for_cost_codes`
+   → `test_delete_endpoint_wired_for_cost_codes`, patch-3 orphan
+   list trimmed to keep the 3 still-orphan codes), function rename
+   `test_permission_catalogue_count_in_python_is_129` →
+   `test_total_permissions_matches_catalogue`. One xfail added on
+   `TestSeed::test_nine_sections` with a TODO pointing at Gate 4.
+
+3. **Full pytest suite ran twice on warm DB**, both runs returning
+   **1421 passed, 3 xfailed, 1 xpassed, 0 failed** (~4 min 43 s).
+
+Gate 3 is now ready for raw-fetch verification on main. **Stop** at
+Gate 3 — do not advance to Gate 4 (`seed_cost_code_structure`) until
+operator clears Gate 3 on origin/main.
+
+
 ## What's been implemented
 
 ### Chat 47 — Build Pack 2.8-FE-i · Subcontracts surface (Frontend, scope-fenced)

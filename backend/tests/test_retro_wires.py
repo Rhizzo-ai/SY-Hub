@@ -335,6 +335,10 @@ class TestPermissionsCatalogue:
             # + trades.create (+2) → 131.
             # Chat 41 operator eyeball (Prompt 2.7-FE-revision) adds
             # suppliers.delete (+1) → 132.
-            assert total == 133
+            # Chat 45 (Build Pack 2.7-DOCS-BE) adds documents.move
+            # (+1) → 133.
+            # B88 Pack 1 (Gate 2) adds cost_codes.{create,edit,delete}
+            # (+3) → 136.
+            assert total == 136
         finally:
             db.close()

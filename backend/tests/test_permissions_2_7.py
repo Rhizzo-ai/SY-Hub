@@ -38,7 +38,7 @@ class TestPermissionCount:
         convention."""
         with engine.connect() as c:
             n = c.execute(text("SELECT count(*) FROM permissions")).scalar()
-        assert n == 133, f"expected 133 permissions, got {n}"
+        assert n == 136, f"expected 136 permissions, got {n}"
 
     def test_eight_new_perm_codes_present(self, engine):
         """Gate 26 (positive form): the 8 new codes exist in the catalogue."""
