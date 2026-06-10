@@ -337,3 +337,15 @@ class TestMigration0025Behaviours:
                 "SELECT COUNT(*) FROM information_schema.columns WHERE table_name='actuals'"
             )).scalar()
         assert after == before
+
+        # B88 Pack 1 Gate 4 — the downgrade-then-upgrade round-trip
+        # walks past `0044_cost_code_groups`, which DROPs +
+        # re-CREATEs `parent_section_id` + `allows_subgroups` on
+        # `cost_code_sections`. The columns return empty (NULL /
+        # default false), so the canonical structure is "flat" with
+        # 19 sections all at tier 1 and no subgroup links. Re-run
+        # the idempotent canonical seed to restore the parent/subgroup
+        # relationships before downstream test modules
+        # (e.g. test_patch_3) load.
+        from scripts.seed_cost_code_structure import run as _reseed
+        _reseed()

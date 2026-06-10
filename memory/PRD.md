@@ -18,6 +18,60 @@ Frontend / actuals / commitments / Xero are out of scope until later prompts.
 
 ## Build Pack B88 Pack 1 — Cost-Code Group Hierarchy + Cost-Code Admin
 
+### Gate 4 (2026-02-XX) — canonical reseed + structure tests
+
+`backend/scripts/seed_cost_code_structure.py` (idempotent) reconciles
+the live DB against Build Pack §5.1–§5.3:
+
+* 9 parent groups recoded slug → numeric (`acquisition→1`, ..., `contingency→9`).
+* 10 Construction subgroups created (`4.00`–`4.09`), the duplicate-4.08
+  spreadsheet collision resolved per operator: 4.06=Prefab/MMC,
+  4.07=Existing Buildings, 4.08=External Works.
+* 129 canonical cost codes re-pointed onto the right (sub)group; SAL-10
+  newly seeded ("Reservation Fees"); ACC-04..08 retained as extras per
+  §5.3 (5 rows kept, not deleted, awaiting operator instruction).
+
+`backend/tests/test_cost_code_seed_structure.py` — 15 tests, all green.
+Covers parent count, allows_subgroups invariants, subgroup naming +
+parentage, the operator-resolved 4.06/4.07/4.08 renumbering, no-collision
+proof, canonical 129 total, per-prefix counts, every-code-canonical
+pointer, no-Construction-orphan check, SAL-10 presence, ACC extras
+preservation, run-twice idempotency, and reconciliation (move a code
+off its canonical subgroup → seed moves it back).
+
+Gate-3 carry-overs landed in this gate: `TestSeed::test_nine_sections`
+un-xfailed and recoded for numeric parent codes; `test_133_total_cost_codes`
+→ canonical 129; `test_per_prefix_counts` SAL=10/ACC=3; `test_filter_by_section`
+rewritten to query Construction's 10 subgroups since codes no longer
+hang directly off the Construction parent; bulk-toggle + audit tests
+updated for numeric `section_code`; cosmetic rename
+`test_total_permissions_is_129` → `test_total_permissions_in_db`.
+
+Migration-round-trip safety: `test_migration_0025_actuals.py`'s
+downgrade-then-upgrade walks past `0044_cost_code_groups`, dropping
++ re-creating `parent_section_id` + `allows_subgroups` and erasing
+the canonical structure. The test now finalises with a re-call of
+`scripts.seed_cost_code_structure.run()` so downstream test modules
+see a healed structure. The seed itself was hardened with a
+`by_code → by_legacy_slug → by_display_order` matcher and a
+re-parent path for orphaned subgroups so the re-call converges
+cleanly from the post-round-trip state.
+
+Two legacy frontend pages (`CostCodesList.jsx`, `ProjectCostCodes.jsx`)
+were patched in this gate (not Gate 5) to keep them alive across the
+slug → numeric rename: `SECTION_HEADER_ORDER` recoded to `["1".."9"]`;
+`showSubgroups` check switched to `code === "4"`; the `grouped`
+look-up now walks `parent_section_id` up to its tier-1 parent so
+Construction codes roll up under "4" for display. Gate 5 will
+replace these screens with a proper Cost-Code Admin screen.
+
+Full pytest suite (warm DB), twice: **1437 passed, 3 xpassed,
+0 failed** both runs (~4 min 23 s avg). Delta from Gate 3 baseline:
++16 net (1437 vs 1421 — +15 new structure tests + 1 un-xfailed test).
+
+**Stop at Gate 4 — do not advance to Gate 5 (frontend admin
+screen) until operator clears Gate 4 on origin/main.**
+
 ### Gate 3 (2026-02-XX) — partial-acceptance follow-ups
 
 Three required changes against the previously-submitted Gate 3 code

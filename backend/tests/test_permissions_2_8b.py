@@ -27,7 +27,7 @@ def db_engine():
 # ==========================================================================
 
 class TestPermissionCount:
-    def test_total_permissions_is_129(self, db_engine):
+    def test_total_permissions_in_db(self, db_engine):
         with db_engine.connect() as c:
             n = c.execute(text(
                 "SELECT count(*) FROM permissions"

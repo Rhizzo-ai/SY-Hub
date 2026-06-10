@@ -8,9 +8,7 @@ import { Button } from "@/components/ui/button";
 import { displayEnum } from "@/lib/format";
 
 const SECTION_HEADER_ORDER = [
-    "acquisition", "planning", "design", "construction",
-    "sales_marketing", "finance", "company_overheads",
-    "accounting", "contingency",
+    "1", "2", "3", "4", "5", "6", "7", "8", "9",
 ];
 
 // Inside Construction section, group by these prefixes for visual nesting.
@@ -65,11 +63,23 @@ export default function CostCodesList() {
 
     const grouped = useMemo(() => {
         const bySection = {};
-        for (const s of sections) bySection[s.code] = { ...s, codes: [] };
+        // Initialise only parent groups (parent_section_id == null);
+        // codes under Construction subgroups roll UP to "4" for the
+        // visual nesting (see CONSTRUCTION_PREFIX_ORDER below).
+        for (const s of sections) {
+            if (!s.parent_section_id) {
+                bySection[s.code] = { ...s, codes: [] };
+            }
+        }
+        const sectionById = Object.fromEntries(sections.map((s) => [s.id, s]));
         for (const c of codes) {
-            const sec = sections.find((s) => s.id === c.section_id);
+            const sec = sectionById[c.section_id];
             if (!sec) continue;
-            bySection[sec.code]?.codes.push(c);
+            // If the code hangs off a subgroup, walk up to its parent.
+            const parent = sec.parent_section_id
+                ? sectionById[sec.parent_section_id]
+                : sec;
+            if (parent) bySection[parent.code]?.codes.push(c);
         }
         return bySection;
     }, [sections, codes]);
@@ -93,8 +103,9 @@ export default function CostCodesList() {
                     </h1>
                     <p className="text-sm text-slate-600 mt-1 max-w-2xl">
                         Global classification for every cost line in the business. 9
-                        sections · 18 prefixes · 133 codes. Used by appraisals,
-                        budgets, actuals, and Xero mapping.
+                        parent groups · 10 Construction subgroups · 18 prefixes ·
+                        129 codes. Used by appraisals, budgets, actuals, and Xero
+                        mapping.
                     </p>
                 </div>
                 <Link to="/cost-codes/sections"
@@ -142,7 +153,7 @@ export default function CostCodesList() {
                         const sec = grouped[sCode];
                         if (!sec) return null;
                         const isOpen = !collapsed[sCode];
-                        const showSubgroups = sec.code === "construction";
+                        const showSubgroups = sec.code === "4";
                         return (
                             <div key={sec.code} data-testid={`section-${sec.code}`}>
                                 <button onClick={() => toggle(sCode)}

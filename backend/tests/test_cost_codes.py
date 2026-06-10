@@ -39,6 +39,20 @@ def db_engine():
     eng.dispose()
 
 
+# B88 Pack 1 Gate 4 — ensure the canonical cost-code structure is in
+# place at the start of this module. The full pytest suite has tests
+# (e.g. test_migration_0025_actuals.py round-trip) that downgrade past
+# `0044_cost_code_groups` and re-upgrade, which DROPs + re-CREATEs the
+# `parent_section_id` + `allows_subgroups` columns — resetting the
+# canonical structure to a "flat" 19 parents with no subgroup links.
+# Re-running the idempotent seed restores it.
+@pytest.fixture(scope="module", autouse=True)
+def _ensure_canonical_seed():
+    from scripts.seed_cost_code_structure import run
+    run()
+    yield
+
+
 @pytest.fixture(scope="module")
 def admin(db_engine):
     return login_with_auto_enroll(None, BASE_URL, "test-admin@example.test", TEST_PASSWORD)
@@ -180,7 +194,7 @@ class TestSchema:
         # Edit a section's name and confirm updated_at advances.
         with db_engine.begin() as c:
             row = c.execute(text(
-                "SELECT id, updated_at FROM cost_code_sections WHERE code='acquisition'"
+                "SELECT id, updated_at FROM cost_code_sections WHERE code='1'"
             )).first()
             sid, ts0 = row
             c.execute(text(
@@ -214,38 +228,36 @@ class TestSchema:
 # ==========================================================================
 
 class TestSeed:
-    # TODO Gate 4: update expected section count to post-reseed truth and remove xfail.
-    @pytest.mark.xfail(
-        reason="B88 Pack 1 Gate 4 reseeds cost-code structure (9 parent groups "
-        "+ 10 Construction subgroups + 129 codes); this 9-section assertion is "
-        "updated and un-xfailed in Gate 4",
-        strict=False,
-    )
     def test_nine_sections(self, admin):
         r = admin.get(f"{BASE_URL}/api/cost-code-sections")
         assert r.status_code == 200
-        codes = [s["code"] for s in r.json()]
-        assert codes == [
-            "acquisition", "planning", "design", "construction",
-            "sales_marketing", "finance", "company_overheads",
-            "accounting", "contingency",
-        ]
+        # B88 Pack 1 Gate 4 reseeds the parent group codes from legacy
+        # slugs (e.g. "acquisition") to canonical numerics ("1".."9").
+        # Construction subgroups (parent_section_id != NULL) are NOT
+        # in this assertion — only the 9 top-level parents are.
+        parent_codes = [s["code"] for s in r.json()
+                        if s.get("parent_section_id") is None]
+        assert parent_codes == ["1", "2", "3", "4", "5",
+                                 "6", "7", "8", "9"], parent_codes
 
     def test_section_p_and_l_categories(self, admin):
         rows = {s["code"]: s["default_p_and_l_category"]
-                for s in admin.get(f"{BASE_URL}/api/cost-code-sections").json()}
-        assert rows["finance"] == "Finance"
-        assert rows["company_overheads"] == "Overhead"
-        assert rows["accounting"] == "Tax"
-        assert rows["sales_marketing"] == "COS"
+                for s in admin.get(f"{BASE_URL}/api/cost-code-sections").json()
+                if s.get("parent_section_id") is None}
+        # B88 Pack 1 Gate 4 — parent group codes are now numeric.
+        assert rows["6"] == "Finance"
+        assert rows["7"] == "Overhead"
+        assert rows["8"] == "Tax"
+        assert rows["5"] == "COS"
 
-    def test_133_total_cost_codes(self, db_engine):
+    def test_canonical_total_is_129(self, db_engine):
         with db_engine.connect() as c:
-            # Count only seeded codes (prefixes from the seed). Other tests
-            # may transiently create test codes (e.g. ACC-50+) which are
-            # cleaned up by their fixtures, but to keep this assertion
-            # deterministic across parallel/transient state we filter to
-            # the seeded sequence ranges.
+            # B88 Pack 1 Gate 4 reseeds to a canonical 129-code
+            # structure. Per Build Pack §5.3, live codes whose
+            # (prefix, sequence) is not in the canonical list (e.g.
+            # this pod's ACC-04..08) are NOT deleted — they are
+            # reported as extras and live alongside the 129 canonical
+            # rows. So we scope to canonical sequence ranges only.
             total = c.execute(text("""
                 SELECT COUNT(*) FROM cost_codes WHERE
                   (prefix='ACQ' AND sequence <= 10) OR
@@ -261,19 +273,19 @@ class TestSeed:
                   (prefix='EXB' AND sequence <= 3) OR
                   (prefix='EXT' AND sequence <= 9) OR
                   (prefix='PRL' AND sequence <= 16) OR
-                  (prefix='SAL' AND sequence <= 9) OR
+                  (prefix='SAL' AND sequence <= 10) OR
                   (prefix='FIN' AND sequence <= 5) OR
                   (prefix='OHD' AND sequence <= 8) OR
-                  (prefix='ACC' AND sequence <= 8) OR
+                  (prefix='ACC' AND sequence <= 3) OR
                   (prefix='CTG' AND sequence <= 5)
             """)).scalar()
-        assert total == 133
+        assert total == 129
 
     def test_per_prefix_counts(self, db_engine):
         expected = {
             "ACQ": 10, "PLN": 9, "DES": 9, "FAC": 5, "SUB": 5, "SUP": 10,
             "INT": 6, "FIT": 5, "SER": 10, "PRE": 1, "EXB": 3, "EXT": 9,
-            "PRL": 16, "SAL": 9, "FIN": 5, "OHD": 8, "ACC": 8, "CTG": 5,
+            "PRL": 16, "SAL": 10, "FIN": 5, "OHD": 8, "ACC": 3, "CTG": 5,
         }
         # As above: count seeded codes only (sequence ≤ expected count).
         with db_engine.connect() as c:
@@ -384,7 +396,7 @@ class TestPermissions:
     def test_readonly_cannot_create(self, readonly, db_engine):
         with db_engine.connect() as c:
             sid = c.execute(text(
-                "SELECT id FROM cost_code_sections WHERE code='accounting'"
+                "SELECT id FROM cost_code_sections WHERE code='8'"
             )).scalar()
         r = readonly.post(f"{BASE_URL}/api/cost-codes", json={
             "code": "ACC-90", "name": "Forbidden", "section_id": str(sid),
@@ -403,7 +415,7 @@ class TestPermissions:
     def test_pm_cannot_admin_codes(self, pm, db_engine):
         with db_engine.connect() as c:
             sid = c.execute(text(
-                "SELECT id FROM cost_code_sections WHERE code='accounting'"
+                "SELECT id FROM cost_code_sections WHERE code='8'"
             )).scalar()
         r = pm.post(f"{BASE_URL}/api/cost-codes", json={
             "code": "ACC-91", "name": "PM forbidden", "section_id": str(sid),
@@ -413,7 +425,7 @@ class TestPermissions:
     def test_finance_can_admin(self, finance, db_engine):
         with db_engine.connect() as c:
             sid = c.execute(text(
-                "SELECT id FROM cost_code_sections WHERE code='accounting'"
+                "SELECT id FROM cost_code_sections WHERE code='8'"
             )).scalar()
         r = finance.post(f"{BASE_URL}/api/cost-codes", json={
             "code": "ACC-92", "name": "Finance can create",
@@ -450,10 +462,10 @@ class TestPermissions:
 
 @pytest.fixture
 def fresh_code(admin, db_engine):
-    """Create a unique cost code in 'accounting' section for mutation tests."""
+    """Create a unique cost code in '8 Accounting' section for mutation tests."""
     with db_engine.connect() as c:
         sid = c.execute(text(
-            "SELECT id FROM cost_code_sections WHERE code='accounting'"
+            "SELECT id FROM cost_code_sections WHERE code='8'"
         )).scalar()
     # Find next free ACC-NN
     used = {r[0] for r in db_engine.connect().execute(text(
@@ -492,13 +504,25 @@ class TestCRUD:
         assert all("active_code_count" in s for s in r.json())
 
     def test_filter_by_section(self, admin, db_engine):
+        """Build Pack §5 — Construction codes live under subgroups
+        4.00..4.09 (not under the parent group "4"). Query each
+        subgroup and union the resulting prefixes to verify the full
+        Construction tree contains exactly the canonical 10 prefixes.
+        """
         with db_engine.connect() as c:
-            sid = c.execute(text(
-                "SELECT id FROM cost_code_sections WHERE code='construction'"
-            )).scalar()
-        r = admin.get(f"{BASE_URL}/api/cost-codes?section_id={sid}")
-        assert r.status_code == 200
-        prefixes = {c["prefix"] for c in r.json()}
+            sub_ids = [str(r[0]) for r in c.execute(text("""
+                SELECT id FROM cost_code_sections
+                WHERE parent_section_id = (
+                    SELECT id FROM cost_code_sections WHERE code='4'
+                )
+            """)).fetchall()]
+        assert len(sub_ids) == 10
+        prefixes = set()
+        for sid in sub_ids:
+            r = admin.get(f"{BASE_URL}/api/cost-codes?section_id={sid}")
+            assert r.status_code == 200
+            for c in r.json():
+                prefixes.add(c["prefix"])
         assert prefixes == {"FAC", "SUB", "SUP", "INT", "FIT", "SER",
                             "PRE", "EXB", "EXT", "PRL"}
 
@@ -604,7 +628,7 @@ class TestCRUD:
     def test_create_bad_code_format(self, admin, db_engine):
         with db_engine.connect() as c:
             sid = c.execute(text(
-                "SELECT id FROM cost_code_sections WHERE code='accounting'"
+                "SELECT id FROM cost_code_sections WHERE code='8'"
             )).scalar()
         r = admin.post(f"{BASE_URL}/api/cost-codes", json={
             "code": "bad-01", "name": "Bad", "section_id": str(sid),
@@ -614,7 +638,7 @@ class TestCRUD:
     def test_create_duplicate(self, admin, db_engine):
         with db_engine.connect() as c:
             sid = c.execute(text(
-                "SELECT id FROM cost_code_sections WHERE code='acquisition'"
+                "SELECT id FROM cost_code_sections WHERE code='1'"
             )).scalar()
         r = admin.post(f"{BASE_URL}/api/cost-codes", json={
             "code": "ACQ-01", "name": "Dup", "section_id": str(sid),
@@ -647,7 +671,7 @@ class TestRetirement:
         # Use ACQ-10 as replacement; create fresh code in ACQ to retire
         with db_engine.connect() as c:
             sid = c.execute(text(
-                "SELECT id FROM cost_code_sections WHERE code='acquisition'"
+                "SELECT id FROM cost_code_sections WHERE code='1'"
             )).scalar()
             replacement_id = c.execute(text(
                 "SELECT id FROM cost_codes WHERE code='ACQ-10'"
@@ -687,7 +711,7 @@ class TestRetirement:
     def test_retire_replacement_must_be_active(self, admin, db_engine):
         with db_engine.connect() as c:
             sid = c.execute(text(
-                "SELECT id FROM cost_code_sections WHERE code='accounting'"
+                "SELECT id FROM cost_code_sections WHERE code='8'"
             )).scalar()
         used = {r[0] for r in db_engine.connect().execute(text(
             "SELECT sequence FROM cost_codes WHERE prefix='ACC'"
@@ -716,7 +740,7 @@ class TestRetirement:
         # Build chain A → B, then try to retire B with replaced_by=A.
         with db_engine.connect() as c:
             sid = c.execute(text(
-                "SELECT id FROM cost_code_sections WHERE code='accounting'"
+                "SELECT id FROM cost_code_sections WHERE code='8'"
             )).scalar()
         used = {r[0] for r in db_engine.connect().execute(text(
             "SELECT sequence FROM cost_codes WHERE prefix='ACC'"
@@ -936,7 +960,7 @@ class TestProjectToggle:
         # since auto-populate already ran), then try to enable.
         with db_engine.connect() as c:
             sid = c.execute(text(
-                "SELECT id FROM cost_code_sections WHERE code='accounting'"
+                "SELECT id FROM cost_code_sections WHERE code='8'"
             )).scalar()
         used = {r[0] for r in db_engine.connect().execute(text(
             "SELECT sequence FROM cost_codes WHERE prefix='ACC'"
@@ -974,11 +998,11 @@ class TestProjectToggle:
                               name=f"Bulk {uuid.uuid4().hex[:6]}")
         r = admin.post(
             f"{BASE_URL}/api/projects/{proj['id']}/cost-codes/bulk-toggle",
-            json={"section_code": "company_overheads", "is_enabled": False},
+            json={"section_code": "7", "is_enabled": False},
         )
         assert r.status_code == 200
         body = r.json()
-        assert body["rows_updated"] == 8  # OHD has 8 codes
+        assert body["rows_updated"] == 8  # OHD has 8 codes (parent group "7" Company Overheads)
         rows = admin.get(f"{BASE_URL}/api/projects/{proj['id']}/cost-codes").json()
         for row in rows:
             if row["prefix"] == "OHD":
@@ -1063,7 +1087,7 @@ class TestAudit:
                               name=f"AuditBT {uuid.uuid4().hex[:6]}")
         admin.post(
             f"{BASE_URL}/api/projects/{proj['id']}/cost-codes/bulk-toggle",
-            json={"section_code": "accounting", "is_enabled": False},
+            json={"section_code": "8", "is_enabled": False},
         )
         with db_engine.connect() as c:
             n = c.execute(text(
@@ -1077,7 +1101,7 @@ class TestAudit:
     def test_section_update_audited(self, admin, db_engine):
         with db_engine.connect() as c:
             sid = c.execute(text(
-                "SELECT id FROM cost_code_sections WHERE code='accounting'"
+                "SELECT id FROM cost_code_sections WHERE code='8'"
             )).scalar()
         admin.patch(f"{BASE_URL}/api/cost-code-sections/{sid}",
                     json={"name": f"Accounting & Financial Services"})

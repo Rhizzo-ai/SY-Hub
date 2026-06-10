@@ -9,9 +9,7 @@ import { displayEnum } from "@/lib/format";
 import { toast } from "sonner";
 
 const SECTION_HEADER_ORDER = [
-    "acquisition", "planning", "design", "construction",
-    "sales_marketing", "finance", "company_overheads",
-    "accounting", "contingency",
+    "1", "2", "3", "4", "5", "6", "7", "8", "9",
 ];
 
 export default function ProjectCostCodes() {
@@ -42,10 +40,17 @@ export default function ProjectCostCodes() {
 
     const grouped = useMemo(() => {
         const out = {};
-        for (const s of sections) out[s.code] = { ...s, rows: [] };
+        for (const s of sections) {
+            if (!s.parent_section_id) out[s.code] = { ...s, rows: [] };
+        }
+        const sectionById = Object.fromEntries(sections.map((s) => [s.id, s]));
         for (const r of rows) {
-            const sec = sections.find((s) => s.id === r.section_id);
-            if (sec) out[sec.code]?.rows.push(r);
+            const sec = sectionById[r.section_id];
+            if (!sec) continue;
+            const parent = sec.parent_section_id
+                ? sectionById[sec.parent_section_id]
+                : sec;
+            if (parent) out[parent.code]?.rows.push(r);
         }
         return out;
     }, [sections, rows]);
