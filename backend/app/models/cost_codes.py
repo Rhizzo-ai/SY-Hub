@@ -39,6 +39,17 @@ class CostCodeSection(Base):
     is_direct_cost = Column(Boolean, nullable=False, default=True)
     default_p_and_l_category = Column(_e(P_AND_L_CATEGORIES, "cost_section_p_and_l"),
                                       nullable=False, default="COS")
+    # B88 Pack 1 — two-tier group hierarchy.
+    # parent_section_id NULL  → this row is a parent group (tier-1).
+    # parent_section_id SET   → this row is a subgroup (tier-2).
+    # Only sections with allows_subgroups=True may receive children;
+    # only Construction (code "4") ships that way.
+    parent_section_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("cost_code_sections.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    allows_subgroups = Column(Boolean, nullable=False, server_default="false")
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
