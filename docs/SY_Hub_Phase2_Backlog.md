@@ -808,3 +808,16 @@ path exists today.
   models line-by-line to establish what already exists vs what needs backend
   work — do NOT assume. This is likely backend + frontend, not frontend-only.
   B85 (reference codes) and B86 (richer PO detail) fold into this.
+
+## Chat 51 additions (B88 Pack 2 design session)
+
+- **B89** — Create a budget from scratch / import from a cost-plan spreadsheet.
+  Today budgets can ONLY be created from an Approved appraisal — blocks
+  onboarding live projects with no in-platform appraisal. Operator-confirmed
+  wanted. Own pack, after the B88 spine.
+- **B90** — Typed group totals: enter a rough group figure early, auto-sum
+  from lines as detail firms up, both directions. Needs a stored rough-total
+  field + reconciliation rules. Deferred from Pack 2 by design.
+- **B91** — Job-Costing grid follow-up: bulk actions (bulk % complete, bulk
+  reassign, bulk delete), filtering (variance band, status, % complete),
+  per-line status pills. Deferred from Pack 2 by design.
