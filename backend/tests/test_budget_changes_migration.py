@@ -37,8 +37,8 @@ class TestSchemaMigration:
             )).scalar()
         finally:
             db.close()
-        assert head == "0044_cost_code_groups", (
-            f"Expected alembic head 0044_cost_code_groups; got {head}"
+        assert head == "0045_construction_scope", (
+            f"Expected alembic head 0045_construction_scope; got {head}"
         )
 
     def test_budget_changes_tables_exist(self, db_engine):

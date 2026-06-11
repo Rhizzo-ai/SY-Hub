@@ -2388,10 +2388,13 @@ class TestSensitiveGating:
         assert rg.status_code == 200, rg.text
         body = rg.json()
         # Non-sensitive present
-        assert "total_budget" in body
         assert "status" in body
-        # Sensitive omitted (not nullified)
+        # B88 Pack 2 §R5 (2026-02) — `total_budget` joined the
+        # full-scope-only header total set. Construction-scope callers
+        # (readonly is Tier 2) get scoped totals only from /budgets/.../grid.
+        # Sensitive (cached) header totals omitted (not nullified).
         for k in (
+            "total_budget",
             "total_actuals", "total_committed_not_invoiced",
             "forecast_final_cost", "variance_vs_budget", "variance_pct",
         ):

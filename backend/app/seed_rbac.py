@@ -324,7 +324,12 @@ ROLE_PERMISSIONS["project_manager"] = {
     "appraisals.view", "appraisals.view_financials",
     "appraisals.create", "appraisals.edit", "appraisals.submit",
     "appraisals.approve",
-    "budgets.view", "budgets.view_sensitive", "budgets.create", "budgets.edit",
+    # B88 Pack 2 (Chat 51, operator decision D3) — project_manager loses
+    # `budgets.view_sensitive`. PM is now a Tier 2 (construction-scope)
+    # caller; full-budget visibility stays with director / finance /
+    # super_admin only. Migration 0045 deletes the existing grant row
+    # because `_seed_role_permissions` is additive-only.
+    "budgets.view", "budgets.create", "budgets.edit",
     "actuals.view", "actuals.create", "actuals.edit",
     "commitments.view", "commitments.create", "commitments.edit",
     "budget_changes.view", "budget_changes.create", "budget_changes.edit",

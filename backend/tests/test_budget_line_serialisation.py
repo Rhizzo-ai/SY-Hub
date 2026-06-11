@@ -47,6 +47,7 @@ class _StubLine:
             forecast_final_cost=Decimal("100.00"),
             variance_value=Decimal("0"),
             variance_pct=Decimal("0"),
+            actuals_this_period=Decimal("0"),
             items=[],
         )
         defaults.update(overrides)

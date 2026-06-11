@@ -16,6 +16,112 @@ Frontend / actuals / commitments / Xero are out of scope until later prompts.
   for list-time tenant filtering — see Chat 24 R2).
 - Audit append-only via `audit_log` + `audit_log_no_modify()` trigger.
 
+## Build Pack B88 Pack 2 — Job-Costing Grid + Two Budget Screens
+
+**STATUS: Gate 1 (Backend) COMPLETE — STOPPED for operator
+verification on origin/main.**
+
+### Gate 1 — Backend (2026-02-XX)
+
+- Alembic head: `0044_cost_code_groups → 0045_construction_scope`.
+- Permission catalogue: **136** (unchanged). Roles: 10 (unchanged).
+- New column `cost_code_sections.included_in_construction_scope`
+  (BOOL NOT NULL DEFAULT false). Migration data step backfills true
+  for code "4" + every section parented to "4"; guarded for fresh DB.
+- Migration data step ALSO deletes the `project_manager → budgets.
+  view_sensitive` grant on EXISTING (warm) DBs — `seed_rbac.
+  _seed_role_permissions` is additive-only so the seed cannot remove
+  rows on already-bootstrapped pods.
+- New service `app/services/cost_code_scope.py` — single source of
+  truth for `caller_scope(perms) → "full" | "construction"`,
+  `construction_section_ids`, `construction_cost_code_ids`,
+  `assert_line_in_scope` (404 mirror for cross-tenant convention),
+  `resolve_request_scope` (`?scope=` clamp).
+- New endpoint `GET /api/v1/budgets/{budget_id}/grid` — grouped
+  Job-Costing tree (group → subgroup → lines) with subtotals rolled
+  up from included lines + `_classify_variance` band derivation +
+  Tier-2 line filter + Tier-1-only provisional sale-price slice.
+- Scope enforcement on EXISTING budget endpoints:
+  - `_serialise_line` — line-level money keys (`actuals_to_date`,
+    `committed_value`, `invoiced_against_commitment`,
+    `committed_not_invoiced`, `actuals_this_period`,
+    `forecast_final_cost`, `variance_value`, `variance_pct`) are now
+    returned to ALL callers on in-scope lines (D4). Allocation key
+    remains full-scope-only.
+  - `_serialise_budget_summary` / `_serialise_budget_detail` accept a
+    `scope` parameter. `total_budget` and every cached header total
+    are full-scope-only — Tier 2 obtains scoped totals exclusively
+    from the new grid endpoint. Lines are filtered to
+    construction-scoped cost codes when `scope == "construction"`.
+  - `PATCH /budget-lines/{id}` and `DELETE /budget-lines/{id}` 404
+    when the line's cost code is out of Tier-2 scope (mirrors
+    cross-tenant convention — existence does not leak).
+  - GET/POST `/budget-lines/{id}/items`, PATCH/DELETE
+    `/budget-line-items/{id}` — same 404 guard via parent line.
+  - `POST /budget-lines/reorder` — 403 for Tier 2 (full-budget
+    enumeration required for a deterministic reorder).
+- `seed_rbac.ROLE_PERMISSIONS["project_manager"]` drops
+  `budgets.view_sensitive` at source.
+- `routers/cost_codes.py` — `SectionRead` / `SectionCreate` /
+  `SectionUpdate` expose the new flag; PATCH gate unchanged
+  (`cost_codes.edit`), audit log carries scope-flip events.
+- `scripts/seed_cost_code_structure.py` — sets the scope flag on
+  INSERT only for code "4" + canonical Construction subgroups;
+  re-runs over existing rows never revert operator scope edits on
+  OTHER sections. Round-trip recovery: when an alembic
+  downgrade-then-upgrade resets the column default back to false on
+  code "4" + canonical subgroups, the seed restores them.
+
+### Test suite (2nd warm run)
+
+**1483 passed · 3 xpassed · 0 failed · 0 errors · 268s.**
+
+Baseline: Pack 1 close = 1449 + 3 xpassed. Delta = **+34**.
+
+- `tests/test_budget_grid.py` (NEW) — 18 tests covering response
+  shape, group/code ordering, subtotal arithmetic, variance
+  classification (incl. +10 % fence-post), empty-group omission,
+  duplicate cost-code-by-subcategory sibling rows, full-scope total
+  consistency with cached header (7-key map), allocation presence,
+  Tier-2 group exclusion, scope clamping + narrowing, orphan
+  exclusion guard, 404/403.
+- `tests/test_budget_scope_enforcement.py` (NEW) — 16 tests covering
+  PM detail / list filtering + `total_budget` omission, write guards
+  (404 on out-of-scope line PATCH/DELETE + item ops), 403 on PM
+  reorder, RBAC revocation, super_admin bypass, section PATCH scope
+  toggle round-trip, migration data step + seed-preserves-toggle.
+- Existing tests updated: `test_budgets.py` — `total_budget` joined
+  sensitive-omit set for Tier 2 callers; `test_budget_line_
+  serialisation.py` — `_StubLine` gains `actuals_this_period`; nine
+  migration-head sentinel files bumped 0044 → 0045;
+  `test_bootstrap.py` head startswith bumped.
+
+### NOT touched (Gate 1 scope-fence)
+
+- `docs/SY_Hub_Phase2_Backlog.md` (operator-owned).
+- All of `frontend/**/*` (Gate 2).
+
+### Operator verification (raw-fetch on main, before Gate 2)
+
+1. `backend/alembic/versions/0045_construction_scope.py` present.
+2. `backend/app/services/cost_code_scope.py` present.
+3. `backend/app/routers/budgets.py` diff: new grid endpoint + scope
+   guards + serialiser branch.
+4. `backend/app/seed_rbac.py` diff: PM line no longer carries
+   `budgets.view_sensitive`.
+5. `backend/scripts/seed_cost_code_structure.py` diff: flag set on
+   INSERT + round-trip recovery for canonical construction sections.
+
+### Gate 2 (NOT BUILT — waits for sign-off)
+
+Two screens, grouped grid, column picker, CSV export, frontend tests.
+
+### Gate 3 (NOT BUILT — closing docs)
+
+CHANGELOG + `docs/chat-summaries/chat-51-closing.md`.
+
+---
+
 ## Build Pack B88 Pack 1 — Cost-Code Group Hierarchy + Cost-Code Admin
 
 **STATUS: COMPLETE.** All 5 gates raw-fetch verified on `origin/main`,

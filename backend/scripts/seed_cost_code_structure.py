@@ -384,7 +384,8 @@ def _reconcile_parent_groups(db, diff: Diff) -> dict[str, str]:
     """
     all_rows = db.execute(text("""
         SELECT id, code, name, display_order, allows_subgroups,
-               is_direct_cost, default_p_and_l_category, parent_section_id
+               is_direct_cost, default_p_and_l_category, parent_section_id,
+               included_in_construction_scope
         FROM cost_code_sections
     """)).fetchall()
     by_code = {r.code: r for r in all_rows}
@@ -403,14 +404,19 @@ def _reconcile_parent_groups(db, diff: Diff) -> dict[str, str]:
                     existing = r
                     break
         if existing is None:
+            # B88 Pack 2 — set construction-scope flag only on insert.
+            # Operator can retoggle via PATCH /cost-code-sections/{id};
+            # the seed re-runs must never revert that edit (§2).
             new_id = db.execute(text("""
                 INSERT INTO cost_code_sections
                   (code, name, display_order, allows_subgroups,
-                   is_direct_cost, default_p_and_l_category)
-                VALUES (:c, :n, :o, :as_, :id_, :pl)
+                   is_direct_cost, default_p_and_l_category,
+                   included_in_construction_scope)
+                VALUES (:c, :n, :o, :as_, :id_, :pl, :scope)
                 RETURNING id
             """), {"c": canon_code, "n": name, "o": order,
-                    "as_": allows_sub, "id_": is_direct, "pl": pl_cat}
+                    "as_": allows_sub, "id_": is_direct, "pl": pl_cat,
+                    "scope": canon_code == "4"}
             ).scalar()
             parent_ids[canon_code] = str(new_id)
             continue
@@ -434,6 +440,15 @@ def _reconcile_parent_groups(db, diff: Diff) -> dict[str, str]:
             diff.parents_pl_category_set.append(
                 f"{canon_code}: {existing.default_p_and_l_category}→{pl_cat}"
             )
+        # B88 Pack 2 — restore the construction-scope flag on section "4"
+        # if an alembic round-trip dropped it back to the default false.
+        # OTHER parents are operator-owned — never touched on re-runs.
+        if canon_code == "4":
+            try:
+                if existing.included_in_construction_scope is False:
+                    changes["included_in_construction_scope"] = True
+            except AttributeError:
+                pass
 
         if changes:
             set_clauses = ", ".join(f"{k} = :{k}" for k in changes)
@@ -456,7 +471,7 @@ def _reconcile_construction_subgroups(
     existing = {
         r.code: r for r in db.execute(text("""
             SELECT id, code, name, display_order, parent_section_id,
-                   allows_subgroups
+                   allows_subgroups, included_in_construction_scope
             FROM cost_code_sections
             WHERE code = ANY(:codes)
         """), {"codes": canonical_codes}).fetchall()
@@ -466,12 +481,16 @@ def _reconcile_construction_subgroups(
     for code, name, order in CONSTRUCTION_SUBGROUPS:
         row = existing.get(code)
         if row is None:
+            # B88 Pack 2 — Construction subgroups (parent = '4') default
+            # to construction-scope=true on insert. Never updated on
+            # subsequent re-runs (§2 — operator owns this flag).
             new_id = db.execute(text("""
                 INSERT INTO cost_code_sections
                   (code, name, display_order, parent_section_id,
                    allows_subgroups, is_direct_cost,
-                   default_p_and_l_category)
-                VALUES (:c, :n, :o, :p, false, true, 'COS')
+                   default_p_and_l_category,
+                   included_in_construction_scope)
+                VALUES (:c, :n, :o, :p, false, true, 'COS', true)
                 RETURNING id
             """), {"c": code, "n": name, "o": order, "p": construction_id}
             ).scalar()
@@ -487,6 +506,16 @@ def _reconcile_construction_subgroups(
                 updates["parent_section_id"] = construction_id
             if bool(row.allows_subgroups):
                 updates["allows_subgroups"] = False
+            # B88 Pack 2 — Construction subgroups are canonical construction
+            # by definition. The §2 rule "seed must not touch scope flag
+            # on re-runs" applies to OTHER sections (operator-owned). For
+            # the construction subgroup set itself we restore the flag if
+            # an alembic round-trip stripped it (column default = false).
+            try:
+                if row.included_in_construction_scope is False:
+                    updates["included_in_construction_scope"] = True
+            except AttributeError:
+                pass
             if updates:
                 set_clauses = ", ".join(f"{k} = :{k}" for k in updates)
                 updates["id"] = row.id

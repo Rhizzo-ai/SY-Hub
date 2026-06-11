@@ -66,6 +66,10 @@ class SectionRead(BaseModel):
     allows_subgroups: bool = False
     is_subgroup: bool = False
     active_code_count: int = 0
+    # B88 Pack 2 — backend-enforced construction scope. Tier 2 callers
+    # (Construction Budget screen) only see lines under sections where
+    # this flag is true.
+    included_in_construction_scope: bool = False
 
 
 class SectionTreeRead(SectionRead):
@@ -85,6 +89,8 @@ class SectionCreate(BaseModel):
     default_p_and_l_category: str = "COS"
     parent_section_id: Optional[uuid.UUID] = None
     allows_subgroups: bool = False
+    # B88 Pack 2 — operator can set construction scope on create.
+    included_in_construction_scope: bool = False
 
 
 class SectionUpdate(BaseModel):
@@ -97,6 +103,9 @@ class SectionUpdate(BaseModel):
     # to the SECTION_LOCKED_FIELDS_WHEN_HAS_CHILDREN guard in the route.
     parent_section_id: Optional[uuid.UUID] = None
     allows_subgroups: Optional[bool] = None
+    # B88 Pack 2 — operator can retoggle construction-scope membership
+    # under the same `cost_codes.edit` gate as the rest of the PATCH.
+    included_in_construction_scope: Optional[bool] = None
 
 
 class CostCodeRead(BaseModel):
@@ -271,6 +280,7 @@ def _section_to_read(db: Session, s: CostCodeSection) -> SectionRead:
         allows_subgroups=s.allows_subgroups,
         is_subgroup=s.parent_section_id is not None,
         active_code_count=cnt,
+        included_in_construction_scope=s.included_in_construction_scope,
     )
 
 
@@ -285,6 +295,7 @@ def _section_snapshot(s: CostCodeSection) -> dict:
             str(s.parent_section_id) if s.parent_section_id else None
         ),
         "allows_subgroups": s.allows_subgroups,
+        "included_in_construction_scope": s.included_in_construction_scope,
     }
 
 
@@ -396,6 +407,7 @@ def create_section(
         default_p_and_l_category=payload.default_p_and_l_category,
         parent_section_id=payload.parent_section_id,
         allows_subgroups=payload.allows_subgroups,
+        included_in_construction_scope=payload.included_in_construction_scope,
     )
     db.add(s)
     try:
