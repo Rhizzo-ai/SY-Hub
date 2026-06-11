@@ -545,7 +545,15 @@ def list_cost_codes(
     if prefix:
         query = query.where(CostCode.prefix == prefix.upper())
     if status:
-        query = query.where(CostCode.status == status)
+        if status.lower() == "all":
+            pass  # no status filter — include both Active and Retired
+        elif status in ("Active", "Retired"):
+            query = query.where(CostCode.status == status)
+        else:
+            raise HTTPException(
+                status_code=422,
+                detail=f"invalid status filter: {status!r}",
+            )
     if q:
         like = f"%{q.lower()}%"
         query = query.where(or_(
