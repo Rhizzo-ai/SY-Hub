@@ -18,6 +18,50 @@ Frontend / actuals / commitments / Xero are out of scope until later prompts.
 
 ## Build Pack B88 Pack 1 — Cost-Code Group Hierarchy + Cost-Code Admin
 
+### Gate 5 (2026-02-XX) — Cost-Code Admin frontend screen
+
+New page `frontend/src/pages/CostCodeAdmin.jsx` at route
+`/cost-codes/admin`. Tree view (parent → subgroup → code), full
+permission-gated CRUD, inline 409 block-reasons, retire / reactivate
+affordances. Brand colours locked: teal `#0F6A7A` primary, orange
+`#FC7827` accent, grey `#CECECE` neutral.
+
+Permission gating reads off the **live** `me.permissions` set via
+`useAuth().hasPerm(code)` (`AuthContext.jsx:168`). Wiring:
+* `+ New group`, `+ Code`, pencil, archive (retire), ↺ (reactivate)
+  → `cost_codes.create` / `cost_codes.edit` — visible to
+  super_admin · director · finance.
+* Trash (delete) → `cost_codes.delete` — visible to
+  **super_admin only**. Director sees a faded `ShieldOff` icon with
+  tooltip "Delete requires super_admin (cost_codes.delete)". Backend
+  defence-in-depth at `routers/cost_codes.py:767`.
+
+409 contract consumed: `{detail: {message, blockers: []}}`. Frontend
+renders blockers inline within the delete modal (NOT a raw toast),
+with an orange accent border and a "Retire instead" affordance that
+opens the retire modal pre-targeted at the same code. Toast fallback
+only fires for non-409 errors.
+
+Tree depth fixed at 2 by design (Build Pack §2.2 rule 3 — no
+three-tier nesting). First build attempt used a recursive
+`<SectionNode>` and crashed CRA's babel-loader chain with
+"Maximum call stack size exceeded"; refactored to two non-recursive
+components (`<ParentSectionNode>` + `<SubgroupNode>`), builds clean.
+
+Legacy pages kept alive intentionally: `CostCodesList.jsx` gets a
+new teal "Open Cost-Code Admin →" link in its header (subhead also
+updated 129 → 130 codes). `ProjectCostCodes.jsx` is a separate
+per-project enrolment surface; not in Gate-5 scope.
+
+Backend regression unchanged: 1442 passed / 0 failed (Gate 4
+double-green still holds — Gate 5 is frontend-only).
+
+Operator will **live-eyeball** as both super_admin and director to
+confirm the delete-gate differs and the 409 panel renders inline.
+
+**Stop at Gate 5 — do not advance to final acceptance until operator
+clicks through both roles live and confirms.**
+
 ### Gate 4 — RE-SUBMISSION against corrected canonical master (2026-02-XX)
 
 The initial Gate 4 submission was REJECTED — built against a stale

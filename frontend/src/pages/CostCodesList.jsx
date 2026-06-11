@@ -104,15 +104,23 @@ export default function CostCodesList() {
                     <p className="text-sm text-slate-600 mt-1 max-w-2xl">
                         Global classification for every cost line in the business. 9
                         parent groups · 10 Construction subgroups · 18 prefixes ·
-                        129 codes. Used by appraisals, budgets, actuals, and Xero
+                        130 codes. Used by appraisals, budgets, actuals, and Xero
                         mapping.
                     </p>
                 </div>
-                <Link to="/cost-codes/sections"
-                      className="text-sm text-slate-600 hover:text-slate-900 underline decoration-dotted"
-                      data-testid="cost-codes-sections-link">
-                    Sections (read-only)
-                </Link>
+                <div className="flex flex-col items-end gap-2">
+                    <Link to="/cost-codes/admin"
+                          className="inline-flex items-center gap-1 text-sm font-medium px-3 py-1.5 rounded-md text-white"
+                          style={{ background: "#0F6A7A" }}
+                          data-testid="open-cost-code-admin-link">
+                        Open Cost-Code Admin →
+                    </Link>
+                    <Link to="/cost-codes/sections"
+                          className="text-xs text-slate-600 hover:text-slate-900 underline decoration-dotted"
+                          data-testid="cost-codes-sections-link">
+                        Sections (read-only)
+                    </Link>
+                </div>
             </header>
 
             <section className="bg-white border border-slate-200 rounded-lg shadow-sm">

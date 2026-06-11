@@ -49,6 +49,7 @@ import ProjectNew from "@/pages/ProjectNew";
 import ProjectDetail from "@/pages/ProjectDetail";
 import ProjectCostCodes from "@/pages/ProjectCostCodes";
 import CostCodesList from "@/pages/CostCodesList";
+import CostCodeAdmin from "@/pages/CostCodeAdmin";
 import CostCodeDetail from "@/pages/CostCodeDetail";
 import CostCodeSections from "@/pages/CostCodeSections";
 import { RolesList, RoleDetail, PermissionsList } from "@/pages/RolesAndPermissions";
@@ -190,6 +191,7 @@ function ShellRoutes() {
                 />
                 <Route path="/appraisals/:id" element={<AppraisalPage />} />
                 <Route path="/cost-codes" element={<CostCodesList />} />
+                <Route path="/cost-codes/admin" element={<CostCodeAdmin />} />
                 <Route path="/cost-codes/sections" element={<CostCodeSections />} />
                 <Route path="/cost-codes/:id" element={<CostCodeDetail />} />
                 <Route path="/users" element={<UsersList />} />
