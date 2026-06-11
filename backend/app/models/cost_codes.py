@@ -50,6 +50,14 @@ class CostCodeSection(Base):
         nullable=True,
     )
     allows_subgroups = Column(Boolean, nullable=False, server_default="false")
+    # B88 Pack 2 — backend-enforced construction-scope filter.
+    # Tier 2 callers (Construction Budget screen) only see lines whose
+    # cost code rolls up to a section row carrying this flag. Migration
+    # 0045 backfills true on code '4' + its subgroups; operators can
+    # retoggle via PATCH /cost-code-sections/{id}.
+    included_in_construction_scope = Column(
+        Boolean, nullable=False, server_default="false",
+    )
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
