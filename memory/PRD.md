@@ -18,10 +18,124 @@ Frontend / actuals / commitments / Xero are out of scope until later prompts.
 
 ## Build Pack B88 Pack 2 — Job-Costing Grid + Two Budget Screens
 
-**STATUS: Gate 1 (Backend) COMPLETE — STOPPED for operator
-verification on origin/main.**
+**STATUS: Gate 2 (Frontend) COMPLETE — STOPPED for operator live
+eyeball per Build Pack §10.**
 
-### Gate 1 — Backend (2026-02-XX)
+### Gate 2 — Frontend (2026-02-XX, after Gate 1 sign-off on origin/main)
+
+**Two screens, served by one component.** Per Build Pack §7.1 the two
+screens (Full Budget / Construction Budget) are routed via the EXISTING
+`BudgetDetail` shell with a `?scope=construction` URL parameter — no
+parallel page files. Backend clamps Tier 2 callers (server is the
+authority on scope). Tier 1 toggles full ↔ construction in-page.
+
+#### Files created
+
+- `src/components/budgets/BudgetJobCostingGrid.jsx` (NEW)
+  - Grouped grid (group → subgroup → lines) with rolled-up subtotals,
+    sticky code+description columns, sticky header row.
+  - Column picker (dropdown, checkbox per optional column) with
+    `localStorage` persistence keyed per scope
+    (`sy-hub.budget-grid.columns.{full|construction}`).
+  - Heat-map: variance £ / variance % cells tinted by
+    `variance_status` (Red/Amber/Green with dark text per a11y).
+  - Tier-1-only derived columns: projected profit (provisional)
+    + projected margin % (provisional), computed client-side from
+    `_allocated_sale_price_provisional` − `forecast_final_cost`.
+  - `requires_attention` → small accent-orange warning icon.
+  - Loading / error / empty states (no virtualisation per §7.2;
+    130-line ceiling).
+- `src/components/budgets/__tests__/BudgetJobCostingGrid.test.jsx` (NEW)
+  - 9 component tests: tree render, collapse-toggle, heat-map class,
+    column picker hides + persists, Tier-1-only columns absent on
+    construction scope, scope badge label, empty state, loading state,
+    projected profit math.
+- `src/pages/__tests__/CostCodeAdmin.csvExport.test.jsx` (NEW)
+  - 2 unit tests: CSV header + BOM + sort + quoting; empty-list
+    graceful path.
+
+#### Files modified
+
+- `src/lib/api/budgets.js` — `+ getBudgetGrid(id, { scope })`.
+- `src/hooks/budgets.js` — `+ useBudgetGrid(budgetId, { scope })`
+  + `budgetsKeys.grid(id, scope)`.
+- `src/lib/budgetCapability.js` — `+ getBudgetScope(me)`
+  + `canSeeFullBudget(me)` (mirrors backend `caller_scope`).
+- `src/pages/projects/BudgetDetail.jsx`
+  - Replaced legacy `BudgetGridV2` with `BudgetJobCostingGrid`.
+  - Added Full / Construction toggle (Tier 1 only) writing
+    `?scope=construction` into the URL.
+  - Header docstring updated to reference B88 Pack 2.
+- `src/pages/CostCodeAdmin.jsx`
+  - Added `Export CSV` button next to `New group`.
+  - Added `exportCostCodesCsv(tree, codes)` helper (UTF-8 BOM,
+    `SY_cost_codes_YYYYMMDD.csv`, sort by group→subgroup→code).
+
+#### Legacy components — left in tree, unreferenced (deprecation
+pending operator decision per §7.1)
+
+- `src/components/budgets/grid/BudgetGridV2.jsx`
+- `src/components/budgets/grid/BudgetGridV2Desktop.jsx`
+- `src/components/budgets/grid/BudgetGridMobileReadOnly.jsx`
+- `src/components/budgets/grid/BudgetGridToolbar.jsx`
+- `src/components/budgets/grid/BudgetGridColumns.jsx`
+- `src/components/budgets/grid/BudgetGridHeaderTiles.jsx`
+- `src/components/budgets/grid/BulkActionsBar.jsx`
+- `src/components/budgets/grid/BulkDeleteConfirmDialog.jsx`
+- `src/components/budgets/grid/ColumnVisibilityMenu.jsx`
+- `src/components/budgets/grid/ManageViewsDialog.jsx`
+- `src/components/budgets/grid/MobileLineDetailDrawer.jsx`
+- `src/components/budgets/grid/SaveViewDialog.jsx`
+- `src/components/budgets/grid/ViewPresetsDropdown.jsx`
+- `src/components/budgets/grid/SORT_KEY_MAP.js`
+- `src/components/budgets/grid/PerLineTransactionDrilldown/*`
+- Their `__tests__/` siblings continue to run (suite intact — kept
+  as a regression net until operator approves a delete).
+
+**Intentionally dropped** (legacy carry-over, NOT rebuilt — flagged
+for Gate 3 CHANGELOG deviations block):
+
+- Drag-to-reorder affordance — ordering is now group/code-driven
+  via cost-code admin; line `display_order` becomes Tier-1 maintenance
+  surface only.
+
+#### Test suite
+
+- `yarn test --watchAll=false`: **90 suites · 783 tests · 0 failed**
+  (11 new tests in this gate).
+
+### Operator live eyeball (Build Pack §10) — pending
+
+Run the 8-step click-through on the preview:
+1. Log in super_admin → Full Budget shows all groups incl. Land.
+2. Toggle Construction view as super_admin → Land/Sales gone, totals
+   shrink.
+3. Log in PM → only Construction Budget reachable; no land figures
+   anywhere; actuals / variance visible on construction lines.
+4. Edit a construction line as PM (existing line editor reused).
+5. Heat-map: force an over-budget line → amber/red tint.
+6. Collapse/expand a group + a construction subgroup.
+7. Column picker: hide a column, reload page, still hidden.
+8. Cost-code admin → Export CSV → opens cleanly in Excel.
+
+### Gate 3 (NOT BUILT — closing docs)
+
+CHANGELOG entry + `docs/chat-summaries/chat-51-closing.md`. Must
+record the two operator-noted deviations:
+1. **D-Pack2-A** — `scripts/seed_cost_code_structure.py` (actually
+   lives at `backend/scripts/seed_cost_code_structure.py`) re-asserts
+   `included_in_construction_scope=true` on canonical Construction
+   subgroups + section "4" after an alembic round-trip wipes the
+   column default. The §2 "seed never touches the flag" rule still
+   applies to ALL OTHER sections; restoration is scoped to the
+   canonical Construction set only.
+2. **D-Pack2-B** — Build Pack referenced `scripts/seed_cost_code_
+   structure.py`; actual path is `backend/scripts/seed_cost_code_
+   structure.py`. No file moved.
+
+Do NOT touch `docs/SY_Hub_Phase2_Backlog.md`.
+
+### Gate 1 — Backend (2026-02-XX) — VERIFIED on origin/main
 
 - Alembic head: `0044_cost_code_groups → 0045_construction_scope`.
 - Permission catalogue: **136** (unchanged). Roles: 10 (unchanged).
