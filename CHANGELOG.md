@@ -11,6 +11,150 @@ Each entry: date, prompt reference (if applicable), change, rationale.
 
 ## Entries
 
+## Chat 50 — Build Pack B88 Pack 1 · Cost-Code Group Hierarchy + Cost-Code Admin
+
+Backend + frontend pack. Adds a two-tier cost-code hierarchy (parent
+groups + Construction subgroups), full master-table CRUD with a
+complete delete guard, retire/reactivate semantics, a permission-gated
+admin screen, and a canonical reseed against the operator's corrected
+master file. Shipped across 5 gates, raw-fetch verified on
+`origin/main` at each gate, plus an in-pack 500 bug caught during live
+eyeball and fixed with regression tests.
+
+### Migrations
+
+- **`0044_cost_code_groups`** — adds `parent_section_id` (uuid, FK to
+  `cost_code_sections.id`, RESTRICT) and `allows_subgroups` (boolean,
+  default false) to `cost_code_sections`. Establishes the two-tier
+  hierarchy: parent groups at tier 1, optional subgroups at tier 2
+  (Construction only). Build Pack §2.2 rule 3 forbids a third tier;
+  the seed and route layer both enforce it.
+
+### RBAC
+
+- **`cost_codes.create`**, **`cost_codes.edit`**, **`cost_codes.delete`**
+  added to the catalogue. Granular re-point of the legacy
+  `cost_codes.admin` per Build Pack §4.3.
+- **super_admin** holds all three.
+- **director** + **finance** get `cost_codes.create` + `cost_codes.edit`.
+  Director is **explicitly excluded** from `cost_codes.delete` — the
+  exclusion lives in the role-grants exclusion set in `seed_rbac.py`,
+  not in the route. Defence in depth at the route via
+  `require_permission("cost_codes.delete")`.
+- Permission catalogue size: **133 → 136**. super_admin role grants
+  `133 → 136`; director role grants `129 → 131`.
+
+### Service + endpoints
+
+- Section CRUD: `POST /api/cost-code-sections` · `PATCH …/{id}` ·
+  `DELETE …/{id}` · `GET …?tree=true` (nested parent → subgroups).
+- Cost-code CRUD: existing `POST /api/cost-codes` · `PATCH …/{id}`
+  retained; new `DELETE /api/cost-codes/{id}` wired with the complete
+  delete guard.
+- **Complete delete guard** — checks every inbound FK (budget_lines,
+  appraisal_cost_lines, PO lines transitively, project_cost_codes,
+  cost_code_subcategories, cost_code_entity_mapping, replaced_by_code_id
+  self-ref). Returns **structured 409** of shape
+  `{detail: {message, blockers: [str, …]}}` — never a bare 500.
+- **Reactivate (un-retire)** — `POST /api/cost-codes/{id}/reactivate`
+  flips a Retired row back to Active and clears `retired_at` /
+  `retired_reason` / `replaced_by_code_id`.
+
+### Canonical reseed
+
+- `backend/scripts/seed_cost_code_structure.py` — idempotent
+  reconciling seed (NOT additive). Sourced from operator's corrected
+  master `BTCostCodes_20260609 (1) (3).xlsx`.
+- Final structure: **9 parent groups · 10 Construction subgroups
+  (4.00–4.09) · 130 codes**. Parent codes carry the master's typed
+  display number ("1 Land & Acquisition" … "9 Contingency …"),
+  subgroups follow the operator-locked numbering with the duplicate-4.08
+  collision resolved (4.06 = Prefab/MMC, 4.07 = Existing Buildings,
+  4.08 = External Works).
+- Reconciliation: hard-deletes non-canonical rows when unreferenced;
+  retires (`status='Retired'`) when blocked by RESTRICT FKs. Names are
+  always set to the master string.
+- Corrections vs the prior 0013 seed:
+  - **ACC → 3** codes (ACC-04..08 hard-deleted on this pod; no FK refs).
+  - **SAL-09** = "Post-completion holding & maintenance"; **SAL-10** =
+    "Other sales & disposal costs" (the rejected first submission's
+    invented "Reservation Fees" was discarded).
+  - **OHD-09** newly seeded — "HR, recruitment & employee welfare"
+    (canonical OHD now = 9 codes).
+  - **SER-10** un-retired from the legacy `0016_audit_remediation_patch_3`
+    state (the corrected master has both SER-06 "Renewables & EV" and
+    SER-10 "Lift installation" as Active distinct codes).
+
+### Frontend
+
+- **New `/cost-codes/admin` screen** (`frontend/src/pages/CostCodeAdmin.jsx`).
+  Tree view (parent → subgroup → code), permission-gated CRUD,
+  retire / reactivate affordances. Display convention "4 Construction" /
+  "4.01 Substructure" / "FAC-01 …" matches the master.
+- Permission gates read off the **live** `me.permissions` set via
+  `useAuth().hasPerm(code)` — no hardcoded role-name checks. A debug
+  badge row (`data-testid="perm-summary"`) prints
+  `create:yes/no · edit:yes/no · delete:yes/no (super_admin only)`
+  for live-eyeball verification.
+- **Inline 409 block-reasons** — the structured 409 payload renders as
+  bulleted blockers within the delete modal (orange `#FC7827` border,
+  soft tint background) and offers a **"Retire instead"** button that
+  closes the delete modal and opens the retire modal pre-targeted at
+  the same code. Toasts only fire for non-409 errors.
+- Brand colours locked per Build Pack §6: teal `#0F6A7A` primary,
+  orange `#FC7827` accent, grey `#CECECE` neutral.
+- Legacy `CostCodesList.jsx` + `ProjectCostCodes.jsx` kept alive
+  (different surfaces: read-only browse and per-project enrolment
+  toggle); list page now headlines a teal "Open Cost-Code Admin →"
+  link.
+
+### Bug fixed in-pack — `GET /api/cost-codes?status=All` was returning 500
+
+The screen calls `?status=All` on mount. The route passed the param
+straight into `WHERE status = 'All'` against the
+`cost_code_status` enum `{Active, Retired}`. Postgres raised
+`InvalidTextRepresentation` → bare 500.
+
+Fix in `routers/cost_codes.py::list_cost_codes`:
+
+```python
+if status:
+    if status.lower() == "all":
+        pass  # no filter — include both Active and Retired
+    elif status in ("Active", "Retired"):
+        query = query.where(CostCode.status == status)
+    else:
+        raise HTTPException(422, f"invalid status filter: {status!r}")
+```
+
+Regression suite — `tests/test_cost_codes_status_filter.py` (7 tests):
+case-insensitive `All`/`all`, exact `Active` / `Retired` filtering,
+invalid status → 422 (NOT 500), omitted-param parity with `All`, and
+composition with `section_id`.
+
+### Final state
+
+- Alembic head: `0044_cost_code_groups`.
+- Permissions catalogue: **136**; super_admin **136**, director **131**.
+- Cost-code data: **9 parent groups · 10 Construction subgroups ·
+  130 codes**.
+- Full backend pytest suite (warm DB): **1449 passed · 3 xpassed · 0
+  failed**, both 2nd-run consecutive runs (~4 min 20 s avg).
+
+### Operator verification
+
+Raw-fetch verified on `origin/main` at each of the 5 gates (DB schema,
+RBAC, service + endpoints, canonical seed, frontend admin). Final live
+eyeball confirmed: tree renders, super_admin sees the trash icon,
+director correctly does NOT (sees the faded `ShieldOff` icon), an
+in-use delete shows the inline block-reasons panel with bulleted FK
+references + the "Retire instead" affordance. The status=All 500 was
+caught during that live eyeball and fixed in-pack before final
+acceptance.
+
+---
+
+
 ## Chat 47 — Build Pack 2.8-FE-i · Subcontracts surface (Frontend, scope-fenced)
 
 Frontend-only pack. Lights up the supplier **Contracts** tab with the

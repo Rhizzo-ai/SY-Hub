@@ -18,6 +18,39 @@ Frontend / actuals / commitments / Xero are out of scope until later prompts.
 
 ## Build Pack B88 Pack 1 — Cost-Code Group Hierarchy + Cost-Code Admin
 
+**STATUS: COMPLETE.** All 5 gates raw-fetch verified on `origin/main`,
+live eyeball passed (tree renders, super_admin sees delete, director
+correctly does NOT, in-use delete shows inline block-reasons + Retire
+instead). Closing docs landed in `CHANGELOG.md` (Chat-50 entry) and
+`docs/chat-summaries/chat-50-closing.md`. Next pack: **B88 Pack 2 —
+Job-Costing grid + two budget screens**.
+
+### Gate 5 follow-up (2026-02-XX) — `?status=All` 500 fix
+
+Caught during live eyeball: `GET /api/cost-codes?status=All` passed
+`'All'` straight into `WHERE status = :s` against the
+`cost_code_status` enum `{Active, Retired}` → Postgres
+`InvalidTextRepresentation` → bare 500. Fix in
+`routers/cost_codes.py::list_cost_codes`:
+
+```python
+if status:
+    if status.lower() == "all":
+        pass
+    elif status in ("Active", "Retired"):
+        query = query.where(CostCode.status == status)
+    else:
+        raise HTTPException(422, f"invalid status filter: {status!r}")
+```
+
+Regression suite `tests/test_cost_codes_status_filter.py` — 7 tests
+covering case-insensitive `All` / `all`, exact `Active` / `Retired`,
+6 bogus values → 422 (not 500), omitted-param parity, composition
+with `section_id`.
+
+Full warm-DB pytest suite (2nd run): **1449 passed · 3 xpassed · 0
+failed**.
+
 ### Gate 5 (2026-02-XX) — Cost-Code Admin frontend screen
 
 New page `frontend/src/pages/CostCodeAdmin.jsx` at route
