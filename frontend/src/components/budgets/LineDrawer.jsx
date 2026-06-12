@@ -323,14 +323,14 @@ export function LineDrawer({ budget, projectId, lineId, focus, onClose }) {
             )}
 
             <div className="space-y-1">
-              <Label>
-                FTC method
-                {!canSensitive && (
-                  <span className="ml-1 text-xs text-slate-500">
-                    (hidden — request elevated access)
-                  </span>
-                )}
-              </Label>
+              <Label>FTC method</Label>
+              {/* B88 Pack 2 (Chat 51, Gate 2 re-eyeball Defect 2):
+                  ftc_method is NOT in the sensitive set — backend has
+                  always returned it to all callers. Removed the stale
+                  `view_sensitive` gate that hid the field behind a
+                  "request elevated access" label. Edit gating remains
+                  via the standard `fieldsDisabled` (budgets.edit +
+                  status + device). */}
               <Controller
                 name="ftc_method"
                 control={form.control}
@@ -338,7 +338,7 @@ export function LineDrawer({ budget, projectId, lineId, focus, onClose }) {
                   <Select
                     value={field.value ?? 'Budget_Remaining'}
                     onValueChange={field.onChange}
-                    disabled={fieldsDisabled || !canSensitive}
+                    disabled={fieldsDisabled}
                   >
                     <SelectTrigger data-testid="line-drawer-ftc-method">
                       <SelectValue />
@@ -355,7 +355,7 @@ export function LineDrawer({ budget, projectId, lineId, focus, onClose }) {
               />
             </div>
 
-            {ftcMethod === 'Manual' && canSensitive && (
+            {ftcMethod === 'Manual' && (
               <div className="space-y-1">
                 <Label htmlFor="line-ftc-value">Manual FTC (£)</Label>
                 <Input
