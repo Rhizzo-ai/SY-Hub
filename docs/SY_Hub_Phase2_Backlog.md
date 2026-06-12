@@ -821,3 +821,25 @@ path exists today.
 - **B91** — Job-Costing grid follow-up: bulk actions (bulk % complete, bulk
   reassign, bulk delete), filtering (variance band, status, % complete),
   per-line status pills. Deferred from Pack 2 by design.
+
+- **B92** — Playwright E2E smoke: Full → Construction tier walkthrough
+  (scope-leak regression guard). Suggested by Emergent at Pack 2 Gate 1.
+- **B93** — Budget line editor rework. The LineDrawer reused in B88 Pack 2 is
+  functional but dated next to the new Job-Costing grid: layout, item entry,
+  inline grid editing all need a design pass. Pair with B91 or the global
+  visual polish pass.
+- **B94** — Client-pricing / income side of the Job-Costing grid
+  (Buildertrend right-hand block): approved price, amount invoiced out,
+  remaining to invoice, revised-vs-approved. For SY = inter-company billing
+  (ConstructionCo → SPV) + any external client work. Needs its own design
+  session — touches entities + Xero. Reference: operator's BT screenshots,
+  Chat 51.
+- **B95** — Audit-log entry on Tier-2 budget grid fetches: "who viewed
+  construction costs, when". One-line backend add, suggested by Emergent at
+  Pack 2 close.
+- **B96** — CI pipeline (GitHub Actions, Chat 21) red on every run for days+.
+  Diagnose (likely missing repo secrets or drift since Chat 21), fix or
+  retire. Good Claude Code task — needs Actions failure logs.
+- B91 addendum: named column-layout presets per user (Emergent suggestion,
+  Pack 2 Gate 2).
+
