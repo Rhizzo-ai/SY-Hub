@@ -15,7 +15,10 @@
  * left in place but unreferenced (operator deprecation decision).
  */
 import { useMemo, useState } from 'react';
-import { useBudgetGrid } from '@/hooks/budgets';
+import { useBudgetGrid, useBudget } from '@/hooks/budgets';
+import { useAuth } from '@/context/AuthContext';
+import { isBudgetEditable } from '@/lib/budgetCapability';
+import { LineDrawer } from '@/components/budgets/LineDrawer';
 import { ChevronRight, ChevronDown, AlertCircle, Columns3 } from 'lucide-react';
 
 const BRAND = { primary: '#0F6A7A', accent: '#FC7827', neutral: '#CECECE' };
@@ -199,7 +202,7 @@ function renderCell(col, source, varianceStatus) {
 // Line + group rows
 // ──────────────────────────────────────────────────────────────────────
 
-function LineRow({ line, columns, costCodeLabel }) {
+function LineRow({ line, columns, costCodeLabel, onLineClick }) {
   const projected = useMemo(() => computeProjected(line), [line]);
   const enriched = {
     ...line,
@@ -207,10 +210,20 @@ function LineRow({ line, columns, costCodeLabel }) {
     _projected_profit: projected.profit,
     _projected_margin_pct: projected.margin,
   };
+  const clickable = !!onLineClick;
   return (
     <tr
-      className="border-b border-slate-100 hover:bg-slate-50"
+      className={`border-b border-slate-100 ${clickable ? 'cursor-pointer hover:bg-sy-teal-50' : 'hover:bg-slate-50'}`}
       data-testid={`budget-grid-line-${line.id}`}
+      onClick={clickable ? () => onLineClick(line.id) : undefined}
+      role={clickable ? 'button' : undefined}
+      tabIndex={clickable ? 0 : undefined}
+      onKeyDown={clickable ? (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onLineClick(line.id);
+        }
+      } : undefined}
     >
       {columns.map((c, i) => {
         const heat = c.heatmap ? heatmapClass(line.variance_status) : '';
@@ -298,9 +311,24 @@ function SubtotalRow({ node, columns, depth, expanded, onToggle, label }) {
 // Top-level grid
 // ──────────────────────────────────────────────────────────────────────
 
-export function BudgetJobCostingGrid({ budgetId, scope }) {
+export function BudgetJobCostingGrid({ budgetId, scope, projectId }) {
   const { data, isLoading, isError, error } = useBudgetGrid(budgetId, { scope });
   const effectiveScope = data?.budget?.scope || scope || 'full';
+
+  // B88 Pack 2 §7.2 — row-click line edit reuses the EXISTING LineDrawer
+  // (not a rebuild). Gating mirrors the legacy grid: caller must hold
+  // `budgets.edit` AND the budget status must be editable. Otherwise
+  // rows are not clickable (consistent with Locked/Closed/Superseded).
+  const { me } = useAuth();
+  const canEdit = !!me?.permissions?.includes('budgets.edit');
+  const budgetStatus = data?.budget?.status;
+  const rowsClickable = canEdit && isBudgetEditable(budgetStatus);
+
+  const [drawerLineId, setDrawerLineId] = useState(null);
+  // Load the full budget detail on demand so LineDrawer has `budget.lines`.
+  const { data: budgetDetail } = useBudget(budgetId, {
+    enabled: !!drawerLineId,
+  });
 
   const availableColumns = useMemo(
     () => ALL_COLUMNS.filter((c) => !(c.tier1Only && effectiveScope !== 'full')),
@@ -407,6 +435,7 @@ export function BudgetJobCostingGrid({ budgetId, scope }) {
                     expanded={expanded}
                     toggle={toggle}
                     columns={columns}
+                    onLineClick={rowsClickable ? setDrawerLineId : null}
                   />
                 );
               })}
@@ -442,11 +471,23 @@ export function BudgetJobCostingGrid({ budgetId, scope }) {
           </table>
         </div>
       )}
+
+      {/* B88 Pack 2 §7.2 — row click reuses the existing LineDrawer.
+          Only mounts when a line is clicked AND budget detail is loaded. */}
+      {drawerLineId && budgetDetail ? (
+        <LineDrawer
+          budget={budgetDetail}
+          projectId={projectId}
+          lineId={drawerLineId}
+          focus={null}
+          onClose={() => setDrawerLineId(null)}
+        />
+      ) : null}
     </div>
   );
 }
 
-function RenderGroup({ group, gKey, gOpen, expanded, toggle, columns }) {
+function RenderGroup({ group, gKey, gOpen, expanded, toggle, columns, onLineClick }) {
   return (
     <>
       <SubtotalRow
@@ -470,6 +511,7 @@ function RenderGroup({ group, gKey, gOpen, expanded, toggle, columns }) {
                 sOpen={sOpen}
                 toggle={toggle}
                 columns={columns}
+                onLineClick={onLineClick}
               />
             );
           })}
@@ -479,6 +521,7 @@ function RenderGroup({ group, gKey, gOpen, expanded, toggle, columns }) {
               line={ln}
               columns={columns}
               costCodeLabel={ln.cost_code?.code}
+              onLineClick={onLineClick}
             />
           ))}
         </>
@@ -487,7 +530,7 @@ function RenderGroup({ group, gKey, gOpen, expanded, toggle, columns }) {
   );
 }
 
-function RenderSubgroup({ subgroup, sKey, sOpen, toggle, columns }) {
+function RenderSubgroup({ subgroup, sKey, sOpen, toggle, columns, onLineClick }) {
   return (
     <>
       <SubtotalRow
@@ -505,6 +548,7 @@ function RenderSubgroup({ subgroup, sKey, sOpen, toggle, columns }) {
               line={ln}
               columns={columns}
               costCodeLabel={ln.cost_code?.code}
+              onLineClick={onLineClick}
             />
           ))
         : null}

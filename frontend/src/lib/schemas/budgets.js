@@ -7,21 +7,29 @@
  * names ('description', 'position', 'unit_cost', 'ffc', 'cost_code_label',
  * 'version'...) that do not exist on the backend. We use the actual names.
  *
- * Sensitive-field handling (D11):
- *   The backend strips sensitive fields from the payload for users
- *   without `budgets.view_sensitive`. We mark every sensitive field
- *   `.nullable().optional()` so Zod accepts both shapes. Render code
- *   shows "—" for omitted fields.
+ *   Sensitive-field handling (D11 / Build Pack §R5):
+ *     The backend strips sensitive fields from the payload depending
+ *     on scope/permission. We mark every potentially-omitted field
+ *     `.nullable().optional()` so Zod accepts both shapes. Render
+ *     code shows "—" for omitted fields.
  *
- * Sensitive field manifest (verified against routers/budgets.py @2026-05-10):
+ *   Sensitive field manifest (verified against routers/budgets.py
+ *   @2026-02 — B88 Pack 2 / Chat 51):
  *
- *   Budget summary  → total_actuals, total_committed_not_invoiced,
- *                     total_forecast_to_complete, forecast_final_cost,
- *                     variance_vs_budget, variance_pct
- *   Budget detail   → all of the above (no extra)
- *   Line summary    → actuals_to_date, committed_value,
- *                     invoiced_against_commitment, committed_not_invoiced,
- *                     forecast_final_cost, variance_value, variance_pct
+ *     Budget summary  → total_budget, total_actuals,
+ *                       total_committed_not_invoiced,
+ *                       total_forecast_to_complete, forecast_final_cost,
+ *                       variance_vs_budget, variance_pct
+ *                       (ALL OMITTED for construction-scope callers)
+ *     Budget detail   → all of the above (no extra)
+ *     Line summary    → actuals_to_date, committed_value,
+ *                       invoiced_against_commitment,
+ *                       committed_not_invoiced, forecast_final_cost,
+ *                       variance_value, variance_pct
+ *                       (line-level money keys: visible to ALL callers
+ *                        on IN-SCOPE lines per D4. Still .optional()
+ *                        because the same schema is also reused for
+ *                        write-response shapes that may omit them.)
  *
  * Decimals come over the wire as strings (Decimal serialised) — we use
  * `z.coerce.number()` to convert. `null` is preserved for missing data.
@@ -137,12 +145,16 @@ const BudgetSummaryBase = z.object({
   version_label: z.string(),
   is_current: z.boolean(),
   status: BudgetStatus,
-  total_budget: moneyRequired,
   summary_refreshed_at: z.string().nullable(),
   created_at: z.string().nullable(),
   updated_at: z.string().nullable(),
 
-  // SENSITIVE
+  // B88 Pack 2 §R5 (Chat 51) — cached header money keys are ALL
+  // full-scope-only now. The backend OMITS the key entirely for
+  // construction-scope callers (Tier 2). All seven are `.optional()`
+  // so the parser accepts both shapes; render code shows "—" when
+  // absent (see fmtMoney / format.js).
+  total_budget: moneyNumber.optional(),
   total_actuals: moneyNumber.optional(),
   total_committed_not_invoiced: moneyNumber.optional(),
   total_forecast_to_complete: moneyNumber.optional(),

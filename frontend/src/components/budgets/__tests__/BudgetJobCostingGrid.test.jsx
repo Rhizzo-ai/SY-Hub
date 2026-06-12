@@ -15,8 +15,23 @@ import { BudgetJobCostingGrid } from '@/components/budgets/BudgetJobCostingGrid'
 
 jest.mock('@/hooks/budgets', () => ({
   useBudgetGrid: jest.fn(),
+  useBudget: jest.fn(() => ({ data: undefined })),
 }));
-import { useBudgetGrid } from '@/hooks/budgets';
+jest.mock('@/context/AuthContext', () => ({
+  useAuth: jest.fn(() => ({
+    me: { permissions: ['budgets.view', 'budgets.edit', 'budgets.view_sensitive'] },
+  })),
+}));
+jest.mock('@/components/budgets/LineDrawer', () => ({
+  LineDrawer: ({ lineId, onClose }) => (
+    <div data-testid="line-drawer-mock">
+      Editing line {lineId}
+      <button onClick={onClose} data-testid="line-drawer-close">close</button>
+    </div>
+  ),
+}));
+import { useBudgetGrid, useBudget } from '@/hooks/budgets';
+import { useAuth } from '@/context/AuthContext';
 
 function wrap(ui) {
   const qc = new QueryClient({
@@ -28,7 +43,8 @@ function wrap(ui) {
 }
 
 function mockResp({ scope = 'full', withSubgroup = true, withLine = true,
-                    varianceStatus = 'Green', tier1Allocations = false } = {}) {
+                    varianceStatus = 'Green', tier1Allocations = false,
+                    status = 'Active' } = {}) {
   const lines = withLine ? [{
     id: 'line-1',
     cost_code_id: 'cc-1',
@@ -76,7 +92,7 @@ function mockResp({ scope = 'full', withSubgroup = true, withLine = true,
   return {
     budget: {
       id: 'b1', project_id: 'p1', version_number: 1, version_label: 'v1',
-      is_current: true, status: 'Active', scope,
+      is_current: true, status, scope,
       totals: {
         current_budget: '1000.00',
         actuals_to_date: '100.00',
@@ -101,6 +117,12 @@ function mockResp({ scope = 'full', withSubgroup = true, withLine = true,
 
 beforeEach(() => {
   useBudgetGrid.mockReset();
+  useBudget.mockReset();
+  useBudget.mockReturnValue({ data: undefined });
+  useAuth.mockReset();
+  useAuth.mockReturnValue({
+    me: { permissions: ['budgets.view', 'budgets.edit', 'budgets.view_sensitive'] },
+  });
   localStorage.clear();
 });
 
@@ -202,5 +224,72 @@ describe('BudgetJobCostingGrid', () => {
     const cell = screen.getByTestId('budget-grid-cell-line-1-_projected_profit');
     // 2500 (alloc) − 1000 (ffc) = £1,500.00
     expect(cell).toHaveTextContent('£1,500.00');
+  });
+
+  // ────────────────────────────────────────────────────────────────────
+  // Gate 2 follow-up — row-click line edit (Bug #2)
+  // ────────────────────────────────────────────────────────────────────
+
+  test('row click opens the line editor when status is Active and user has budgets.edit', () => {
+    useBudgetGrid.mockReturnValue({
+      data: mockResp({ status: 'Active' }), isLoading: false,
+    });
+    useBudget.mockReturnValue({
+      data: {
+        id: 'b1', status: 'Active', project_id: 'p1', is_current: true,
+        version_number: 1, version_label: 'v1', created_by_user_id: 'u1',
+        notes: null, locked_at: null, locked_by_user_id: null,
+        closed_at: null, closed_by_user_id: null,
+        summary_refreshed_at: null, created_at: null, updated_at: null,
+        source_appraisal_id: 'a1',
+        lines: [{ id: 'line-1', cost_code_id: 'cc-1', updated_at: null }],
+      },
+    });
+    wrap(<BudgetJobCostingGrid budgetId="b1" projectId="p1" />);
+    fireEvent.click(screen.getByTestId('budget-grid-line-line-1'));
+    expect(screen.getByTestId('line-drawer-mock')).toBeInTheDocument();
+    expect(screen.getByTestId('line-drawer-mock')).toHaveTextContent('line-1');
+  });
+
+  test('row click opens editor on Draft', () => {
+    useBudgetGrid.mockReturnValue({
+      data: mockResp({ status: 'Draft' }), isLoading: false,
+    });
+    useBudget.mockReturnValue({
+      data: { id: 'b1', status: 'Draft', lines: [{ id: 'line-1' }] },
+    });
+    wrap(<BudgetJobCostingGrid budgetId="b1" projectId="p1" />);
+    fireEvent.click(screen.getByTestId('budget-grid-line-line-1'));
+    expect(screen.getByTestId('line-drawer-mock')).toBeInTheDocument();
+  });
+
+  test('row click does NOT open editor when budget is Locked', () => {
+    useBudgetGrid.mockReturnValue({
+      data: mockResp({ status: 'Locked' }), isLoading: false,
+    });
+    wrap(<BudgetJobCostingGrid budgetId="b1" projectId="p1" />);
+    fireEvent.click(screen.getByTestId('budget-grid-line-line-1'));
+    expect(screen.queryByTestId('line-drawer-mock')).not.toBeInTheDocument();
+  });
+
+  test('row click does NOT open editor when budget is Superseded', () => {
+    useBudgetGrid.mockReturnValue({
+      data: mockResp({ status: 'Superseded' }), isLoading: false,
+    });
+    wrap(<BudgetJobCostingGrid budgetId="b1" projectId="p1" />);
+    fireEvent.click(screen.getByTestId('budget-grid-line-line-1'));
+    expect(screen.queryByTestId('line-drawer-mock')).not.toBeInTheDocument();
+  });
+
+  test('row click does NOT open editor when caller lacks budgets.edit', () => {
+    useAuth.mockReturnValue({
+      me: { permissions: ['budgets.view'] }, // no edit grant
+    });
+    useBudgetGrid.mockReturnValue({
+      data: mockResp({ status: 'Active' }), isLoading: false,
+    });
+    wrap(<BudgetJobCostingGrid budgetId="b1" projectId="p1" />);
+    fireEvent.click(screen.getByTestId('budget-grid-line-line-1'));
+    expect(screen.queryByTestId('line-drawer-mock')).not.toBeInTheDocument();
   });
 });

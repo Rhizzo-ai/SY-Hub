@@ -219,6 +219,7 @@ export default function BudgetDetail() {
               <BudgetJobCostingGrid
                 key={searchParams.get('scope') || 'full'}
                 budgetId={budgetId}
+                projectId={projectId}
                 scope={searchParams.get('scope') || undefined}
               />
             </div>
