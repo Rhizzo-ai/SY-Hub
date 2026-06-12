@@ -13,7 +13,7 @@ from tests.conftest import login_with_auto_enroll, plain_login
 
 BASE_URL = (
     os.environ.get("REACT_APP_BACKEND_URL", "").rstrip("/")
-    or "https://b88-budgets.preview.emergentagent.com"
+    or "https://db-api-check.preview.emergentagent.com"
 )
 
 TEST_PASSWORD = "TestUser-Dev-2026!"
