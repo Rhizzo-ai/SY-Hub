@@ -38,7 +38,7 @@ def test_alembic_head_is_0041(engine):
         head = c.execute(text(
             "SELECT version_num FROM alembic_version"
         )).scalar()
-    assert head == "0045_construction_scope", head
+    assert head == "0046_rbac_operator_overrides", head
 
 
 def test_vat_registered_column_absent_at_head(engine):

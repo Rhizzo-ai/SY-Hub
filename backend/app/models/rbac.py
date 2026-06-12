@@ -152,6 +152,43 @@ role_permissions = Table(
 )
 
 
+# ---------- role_permission_revocations (B83 D1 — operator overrides) ----------
+#
+# Records every operator-removed grant. `app.seed_rbac._seed_role_permissions`
+# stays additive for everything EXCEPT pairs present here, which it must
+# never re-add. Re-granting via the admin batch endpoint deletes the row.
+
+role_permission_revocations = Table(
+    "role_permission_revocations",
+    Base.metadata,
+    Column(
+        "role_id",
+        UUID(as_uuid=True),
+        ForeignKey("roles.id", ondelete="CASCADE"),
+        nullable=False,
+    ),
+    Column(
+        "permission_id",
+        UUID(as_uuid=True),
+        ForeignKey("permissions.id", ondelete="CASCADE"),
+        nullable=False,
+    ),
+    Column(
+        "revoked_by_user_id",
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    ),
+    Column(
+        "revoked_at",
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("now()"),
+    ),
+    PrimaryKeyConstraint("role_id", "permission_id"),
+)
+
+
 # ---------- user_roles ----------
 
 class UserRole(Base, TimestampMixin):

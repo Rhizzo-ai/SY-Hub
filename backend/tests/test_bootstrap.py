@@ -243,7 +243,9 @@ def test_alembic_heads_helper_returns_single_head():
     # vocabulary + supplier_type enum recreated to 4 values).
     # See chat-15-closing §3 — this sentinel is "part of any migration's
     # bookkeeping" and must be bumped whenever the head moves.
-    assert head.startswith("0045_"), f"unexpected head id: {head}"
+    # Bumped by Chat 52 (B83): 0045_ → 0046_ when role_permission_revocations
+    # landed.
+    assert head.startswith("0046_"), f"unexpected head id: {head}"
 
 
 # ----------------------------------------------------------------------

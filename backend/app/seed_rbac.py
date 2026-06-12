@@ -9,7 +9,7 @@ import os
 from datetime import datetime, timezone
 from typing import Iterable
 
-from sqlalchemy import select, insert
+from sqlalchemy import select, insert, inspect as sa_inspect
 from sqlalchemy.orm import Session
 
 from app.db import SessionLocal
@@ -19,6 +19,7 @@ from app.models.rbac import (
     Role,
     UserRole,
     role_permissions,
+    role_permission_revocations,
     ACTIONS,
     RESOURCES,
 )
@@ -580,6 +581,19 @@ def _seed_role_permissions(
     rows = db.execute(select(role_permissions.c.role_id, role_permissions.c.permission_id)).all()
     existing_pairs = {(rid, pid) for (rid, pid) in rows}
 
+    # B83 D1 — operator-revoked pairs take permanent precedence over this
+    # additive seed. Guarded with has_table because the cold-start bootstrap
+    # dance (app.bootstrap.run_migrations_and_seeds) runs this seed once at
+    # rev 0017 — before migration 0046 creates the table.
+    if sa_inspect(db.get_bind()).has_table("role_permission_revocations"):
+        revoked_rows = db.execute(
+            select(role_permission_revocations.c.role_id,
+                   role_permission_revocations.c.permission_id)
+        ).all()
+        revoked_pairs = {(rid, pid) for (rid, pid) in revoked_rows}
+    else:
+        revoked_pairs = set()  # pre-0046 cold-start stage — table not yet migrated (B83)
+
     for role_code, perm_codes in ROLE_PERMISSIONS.items():
         role = roles_by_code[role_code]
         for perm_code in perm_codes:
@@ -590,6 +604,8 @@ def _seed_role_permissions(
             pair = (role.id, perm.id)
             if pair in existing_pairs:
                 continue
+            if pair in revoked_pairs:
+                continue  # operator-revoked — seed must never re-add (B83 D1)
             db.execute(insert(role_permissions).values(role_id=role.id, permission_id=perm.id))
             existing_pairs.add(pair)
 

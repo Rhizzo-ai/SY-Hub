@@ -112,8 +112,8 @@ class TestSchema:
             head = c.execute(text(
                 "SELECT version_num FROM alembic_version"
             )).scalar()
-        assert head == "0045_construction_scope", (
-            f"expected head 0045_construction_scope, got {head!r}"
+        assert head == "0046_rbac_operator_overrides", (
+            f"expected head 0046_rbac_operator_overrides, got {head!r}"
         )
 
     def test_supplier_type_enum_has_four_values(self, engine):
