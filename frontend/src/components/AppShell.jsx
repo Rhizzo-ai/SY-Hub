@@ -23,6 +23,8 @@ const NAV = [
     { label: "Audit Log", to: "/audit", icon: ScrollText, enabled: true, testid: "nav-audit", requires: "audit.view" },
     { label: "Projects", to: "/projects", icon: Layers, enabled: true, testid: "nav-projects", requires: "projects.view" },
     { label: "Cost Codes", to: "/cost-codes", icon: Calculator, enabled: true, testid: "nav-cost-codes", requires: "cost_codes.view" },
+    // B83 (Chat 52) — Role & Permissions admin matrix, beside Cost Codes.
+    { label: "Role Permissions", to: "/admin/roles", icon: KeyRound, enabled: true, testid: "nav-role-permissions", requires: "roles.view" },
     { label: "Payments", to: "/payments", icon: Receipt, enabled: true, testid: "nav-payments", requires: "actuals.view" },
     // Chat 41 §R7.1 — single "Suppliers" entry; the separate
     // "Subcontractors" link (?type=Subcontractor) was removed when the

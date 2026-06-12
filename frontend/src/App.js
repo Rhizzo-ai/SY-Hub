@@ -53,6 +53,7 @@ import CostCodeAdmin from "@/pages/CostCodeAdmin";
 import CostCodeDetail from "@/pages/CostCodeDetail";
 import CostCodeSections from "@/pages/CostCodeSections";
 import { RolesList, RoleDetail, PermissionsList } from "@/pages/RolesAndPermissions";
+import RolePermissionsAdmin from "@/pages/admin/RolePermissionsAdmin";
 import ProfileSecurity from "@/pages/ProfileSecurity";
 import ProfileSessions from "@/pages/ProfileSessions";
 import AdminUserSessions from "@/pages/AdminUserSessions";
@@ -202,6 +203,7 @@ function ShellRoutes() {
                 <Route path="/users/:id" element={<UserDetail />} />
                 <Route path="/roles" element={<RolesList />} />
                 <Route path="/roles/:id" element={<RoleDetail />} />
+                <Route path="/admin/roles" element={<RolePermissionsAdmin />} />
                 <Route path="/permissions" element={<PermissionsList />} />
                 <Route path="/profile" element={<Navigate to="/profile/security" replace />} />
                 <Route path="/profile/security" element={<ProfileSecurity />} />

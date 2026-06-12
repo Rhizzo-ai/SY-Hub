@@ -11,6 +11,121 @@ Each entry: date, prompt reference (if applicable), change, rationale.
 
 ## Entries
 
+## Chat 52 — Build Pack B83 · Role & Permissions Admin
+
+Backend + frontend pack. Adds the platform's Role & Permissions
+administration surface: a Buildertrend-style role × permission matrix
+with draft + batch save, custom-role lifecycle, and — the structural
+heart of the pack — a new `role_permission_revocations` table that gives
+operator grant-removals **permanent precedence over the additive RBAC
+seed**: `python -m app.bootstrap` re-seeds can never re-add a pair the
+operator removed. Highest-caution surface in the codebase; every guard
+below is backend-enforced. Two gates, both operator-verified file-by-file
+on `origin/main`.
+
+### Locked operator decisions (Chat 52 D-table)
+
+| # | Decision |
+|---|----------|
+| D1 | Seed-precedence model = revocations table. `_seed_role_permissions` stays additive for everything EXCEPT pairs in `role_permission_revocations`, which it must never re-add. |
+| D2 | Mutation authority = `roles.admin` only (super_admin exclusively today; director explicitly excluded). Reads stay on `roles.view`. |
+| D3 | `super_admin` role fully locked — always holds every permission; batch endpoint rejects any change targeting it (403); UI column ticked + disabled. |
+| D4 | Scope v1 = grants matrix + role lifecycle. User↔role assignment stays on the user admin surface. |
+| D5 (amended) | Custom-role default grants = every permission where `is_sensitive = false` AND `action` NOT IN (`delete`, `admin`, `void`) — the action exclusions catch destructive powers (e.g. `cost_codes.delete`) not flagged sensitive in the catalogue. |
+| D6 | System roles undeletable; name/description/code immutable. Custom roles renameable; deletable only at zero `user_roles` rows (ANY status blocks — mirrors FK RESTRICT). |
+| D7 | Audit mandatory on every mutation — one `Permission_Change` row per role per batch save; `Create`/`Update`/`Delete` for lifecycle. No off-switch. |
+| D8 | Sensitive-permission consequence warnings in the UI save-summary (frontend confirm; backend stays permissive bar D3/D6 hard guards). |
+| D9 | Draft + batch-save UX — local diff, review modal, ONE transactional save. No per-click saves. |
+| D10 | Hover/tap description tooltips on every permission row, from `permissions.description`. |
+
+### Migrations
+
+- **`0046_rbac_operator_overrides`** — creates `role_permission_revocations`
+  (`role_id` FK CASCADE, `permission_id` FK CASCADE, `revoked_by_user_id`
+  FK SET NULL nullable, `revoked_at` timestamptz default now(), PK
+  `(role_id, permission_id)`). No data step, no enum changes. Down drops
+  the table.
+
+### Backend
+
+- **Seed precedence** (`seed_rbac._seed_role_permissions`) — loads revoked
+  pairs and skips them in the insert loop. **Deviation (operator-approved
+  at pre-flight):** the revocations query is wrapped in an inspector
+  `has_table` guard because the cold-start bootstrap dance runs this seed
+  once at rev 0017 — before 0046 exists. Guard is semantically identical
+  on the warm path (a cold DB holds zero revocations). Cold-start proven
+  in-container: full drop/recreate + bootstrap → `seed_rbac_pre result=ok`,
+  `alembic=0046`, perms=136, roles=10.
+- **`POST /api/roles/permissions-batch`** (`roles.admin`) — transactional
+  all-or-nothing across the entire request. Validation pass first (404
+  unknown role / 403 super_admin / 422 unknown codes listing every code /
+  422 add∩remove overlap / 422 duplicate role_ids / max 50 changes).
+  Remove = delete grant + upsert revocation (stamps acting user, refreshes
+  `revoked_at`); removing an ungranted code is idempotent and STILL writes
+  the revocation (pre-empts a future seed grant). Add = insert grant +
+  delete revocation (re-granting heals the override). One audit row per
+  role. Response `{"updated": [RoleDetail…]}` for one-round-trip
+  reconciliation.
+- **`POST /api/roles`** (201) — slugified immutable code (collision → 409,
+  no auto-suffix), priority default 40, amended-D5 default grants inserted
+  atomically (89 of 136 permissions at ship time).
+- **`PATCH /api/roles/{id}`** — custom roles only (system → 409
+  "System role metadata is locked"); `field_diff` audit.
+- **`DELETE /api/roles/{id}`** — system → 409; ANY `user_roles` row → 409
+  with count; grants + revocations cascade via FK; audit Delete.
+- Route-declaration convention locked: static paths (`/permissions-batch`,
+  create) declared BEFORE dynamic `/{role_id}` routes; regression test
+  pins the batch path against future shadowing.
+- Read endpoints untouched — `RoleDetail`/`RoleOut`/`PermissionOut` shapes
+  byte-compatible (regression-tested). Permissions stay at **136**; roles
+  stay at **10**. No new caching (effective permissions remain per-request).
+
+### Frontend
+
+- **`/admin/roles`** — `pages/admin/RolePermissionsAdmin.jsx` + nav entry
+  "Role Permissions" beside Cost Codes (gated `roles.view`). Components
+  under `components/admin/`; API client `lib/api/roles.js` (paths are
+  `/api/roles…` — NOT `/v1`; pinned by URL-contract tests).
+- Matrix: 136 rows grouped by resource (collapsible), columns by priority;
+  sticky header row AND sticky permission column; super_admin column
+  ticked/disabled/grey-locked with lock tooltip; orange sensitive dots;
+  hover `title` tooltips + tap-to-expand inline descriptions; bespoke
+  consequence lines for the 11 highest-impact permissions, generic line
+  for other sensitive rows.
+- Draft + pending bar + review modal (adds green / removes red / sensitive
+  adds orange with consequence; zero-permission roles need an explicit
+  checkbox confirm) → ONE batch save. On ANY error: toast + inline alert,
+  **draft fully preserved** — no silent `onError` anywhere on the surface.
+- Role lifecycle: New-role dialog (D5 copy), custom-column kebab →
+  Rename / Delete (409 guard text shown verbatim); system columns have no
+  kebab. `roles.view` renders read-only; mutation affordances require
+  `roles.admin`.
+- Footnote (known accepted behaviour, do not "fix"): **custom roles do NOT
+  automatically receive permissions added by future builds** — the seed's
+  `ROLE_PERMISSIONS` dict only references the 10 system role codes. The
+  matrix carries this note verbatim for the operator.
+
+### Tests
+
+- `backend/tests/test_role_permissions_admin.py` — 34 functions exactly as
+  §R5 names them (seed precedence ×4 incl. double-seed survival; batch
+  ×14 incl. transactional all-or-nothing + immediate-effect-on-next-request;
+  create ×7; delete ×4; patch + contract regressions ×5).
+- Frontend: `pages/__tests__/RolePermissionsAdmin.test.jsx` (15) +
+  `lib/api/__tests__/roles.test.js` (8 URL contracts).
+- Head-sentinel tests bumped 0045 → 0046 (their own docstrings mark them
+  "bumped as part of any migration's bookkeeping").
+- Gate 1 (warm 2nd run): **1517 passed · 3 pre-existing xpassed · 0 failed**
+  (junit 1520/0/0). Gate 2 backend (single run per operator efficiency
+  amendment — zero backend changes in the gate): green. Frontend suite:
+  **825 passed / 96 suites / 0 failed**.
+
+### Counts after this pack
+
+`alembic head = 0046_rbac_operator_overrides` · permissions **136
+(unchanged)** · roles **10** (plus any operator-created custom roles).
+
+
 ## Chat 51 — Build Pack B88 Pack 2 · Job-Costing Grid + Two Budget Screens
 
 <!-- Gate 3 / post-merge re-publish (origin/main showed chat-51-closing.md

@@ -64,3 +64,13 @@ For the LD2 self-approval test, raise a BCR > £10k as `test-pm`, then
 log in as a SECOND user (the only currently MFA-clean second user is
 the seeded super-admin or — once MFA-enrolled — director/finance).
 For day-one smoke, the single-user happy path is via `test-pm`.
+
+## B83 (Chat 52) notes
+
+- Role Permissions admin surface: `/admin/roles` (nav "Role Permissions").
+  Mutations need `roles.admin` (super_admin only); reads need `roles.view`.
+- `test-admin` / `test-director` MFA was reset to un-enrolled at Gate 2
+  close — first UI login will run TOTP enrolment (super_admin/director are
+  MFA-enforced roles).
+- `test-pm` remains plain-login (no MFA) — use it to demo permission
+  revocation effects live.
