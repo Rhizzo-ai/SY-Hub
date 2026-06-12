@@ -13,6 +13,10 @@ Each entry: date, prompt reference (if applicable), change, rationale.
 
 ## Chat 51 — Build Pack B88 Pack 2 · Job-Costing Grid + Two Budget Screens
 
+<!-- Gate 3 / post-merge re-publish (origin/main showed chat-51-closing.md
+     present but this CHANGELOG entry missing on raw-fetch verification;
+     re-touched so the next Save to GitHub diff carries it explicitly). -->
+
 Backend + frontend pack. Adds the Buildertrend-class grouped Job-Costing
 grid as the new centrepiece of the budget surface, served as TWO
 permission-tiered screens (Full Budget for `budgets.view_sensitive`
