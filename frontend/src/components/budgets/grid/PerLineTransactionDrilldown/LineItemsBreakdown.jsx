@@ -15,6 +15,7 @@
  */
 import { useState } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
+import { toast } from 'sonner';
 import { Input } from '@/components/ui/input';
 import {
   useCreateLineItem, usePatchLineItem, useDeleteLineItem,
@@ -121,10 +122,28 @@ export function LineItemsBreakdown({ line, budget, canEdit, initialFocus }) {
   const createMut = useCreateLineItem(line.id, budget.id);
 
   function addItem() {
+    // B88 Pack 2 (Chat 51, Gate 2 re-eyeball round 3 — Defect):
+    //   - `display_order` was being sent in the body, but the backend
+    //     `CreateBudgetLineItemRequest` is `extra="forbid"` (pydantic
+    //     v2) so the POST returned 422 every time. The
+    //     `line_svc.create_item` already assigns `display_order` as the
+    //     next available slot — the client value was redundant AND
+    //     blocking.
+    //   - The mutation's onError was previously absent, so the 422 was
+    //     silently swallowed and the click looked dead. Surfaced via
+    //     `sonner` toast so future regressions on this path fail loudly.
     createMut.mutate({
       description: 'New item',
       amount: '0',
-      display_order: items.length,
+    }, {
+      onError: (err) => {
+        const detail = err?.response?.data?.detail
+          || err?.message
+          || 'Failed to add item.';
+        toast.error(
+          typeof detail === 'string' ? detail : 'Failed to add item.',
+        );
+      },
     });
   }
 

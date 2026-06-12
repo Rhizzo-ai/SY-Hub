@@ -29,6 +29,7 @@ export const budgetsKeys = {
   all:     ['budgets'],
   list:    (projectId, params) => ['budgets', { projectId }, params ?? {}],
   detail:  (budgetId) => ['budget', budgetId],
+  grid:    (budgetId, scope) => ['budget-grid', budgetId, scope ?? 'auto'],
   items:   (lineId) => ['budget-line-items', lineId],
 };
 
@@ -49,6 +50,16 @@ export function useBudget(budgetId, { enabled = true } = {}) {
   return useQuery({
     queryKey: budgetsKeys.detail(budgetId),
     queryFn: ({ signal }) => budgetsApi.getBudget(budgetId, { signal }),
+    enabled: enabled && !!budgetId,
+  });
+}
+
+// B88 Pack 2 — Job-Costing grid (grouped tree + Tier 2 server-side scope).
+export function useBudgetGrid(budgetId, { scope, enabled = true } = {}) {
+  return useQuery({
+    queryKey: budgetsKeys.grid(budgetId, scope),
+    queryFn: ({ signal }) =>
+      budgetsApi.getBudgetGrid(budgetId, { signal, scope }),
     enabled: enabled && !!budgetId,
   });
 }

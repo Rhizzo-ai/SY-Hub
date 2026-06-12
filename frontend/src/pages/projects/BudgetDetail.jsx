@@ -1,19 +1,27 @@
 /**
- * BudgetDetail — Prompt 2.4B-i §R5.7 + Chat 23 §R3 (BudgetGridV2)
- * + Prompt 2.6-FE §R1 (BCR Changes + Change Log tabs).
+ * BudgetDetail — Prompt 2.4B-i §R5.7 + Chat 23 §R3 + Chat 51 §R7
+ * (B88 Pack 2 Job-Costing grid) + Prompt 2.6-FE §R1 (BCR Changes +
+ * Change Log tabs).
  *
  * Shell for the per-budget detail page. Renders:
  *   - breadcrumb + header (BudgetHeader)
  *   - SensitiveBanner when user lacks budgets.view_sensitive
  *   - Tabbed body:
- *       lines       — BudgetGridV2 (default)
- *       changes     — <BudgetChangeQueue/> (Surface A per-budget queue)
- *       change-log  — <BudgetChangeLogPanel/> (Surface E read-only log)
+ *       lines       — BudgetJobCostingGrid (B88 Pack 2)
+ *                     Two screens served by the SAME component:
+ *                       * Full Budget — Tier 1 default
+ *                       * Construction Budget — Tier 2 default,
+ *                         Tier 1 preview via ?scope=construction
+ *                     Backend clamps the scope; Tier 2 callers cannot
+ *                     widen via the URL.
+ *                     The legacy flat grid (BudgetGridV2 +
+ *                     BudgetGridV2Desktop + BudgetGridMobileReadOnly)
+ *                     is left in the tree, unreferenced; operator
+ *                     deprecation decision pending.
+ *       changes     — <BudgetChangeQueue/>
+ *       change-log  — <BudgetChangeLogPanel/>
  *
- * Tab state is URL-driven via ?tab=. Mirrors the
- * PurchaseOrderList ?tab=approvals precedent. Legacy `?line=` /
- * `?drilldown=` deep-links are rewritten to `?expanded=` on mount.
- *
+ * Tab state is URL-driven via ?tab=. Scope is URL-driven via ?scope=.
  * Hooks-first ordering preserved (Rules of Hooks).
  */
 import { useEffect } from 'react';
@@ -22,8 +30,9 @@ import { useAuth } from '@/context/AuthContext';
 import { useBudget } from '@/hooks/budgets';
 import { BudgetHeader } from '@/components/budgets/BudgetHeader';
 import { SensitiveBanner } from '@/components/budgets/SensitiveBanner';
-import { BudgetGridV2 } from '@/components/budgets/grid/BudgetGridV2';
+import { BudgetJobCostingGrid } from '@/components/budgets/BudgetJobCostingGrid';
 import { canViewBCR } from '@/lib/budgetChangeCapability';
+import { getBudgetScope } from '@/lib/budgetCapability';
 import BudgetChangeQueue
   from '@/components/budgetChanges/BudgetChangeQueue';
 import BudgetChangeLogPanel
@@ -166,7 +175,53 @@ export default function BudgetDetail() {
             </div>
           ) : (
             <div data-testid="budget-detail-tab-body-lines">
-              <BudgetGridV2 budget={budget} projectId={projectId} />
+              {/* B88 Pack 2 (Chat 51) — Job-Costing grouped grid.
+                  ?scope=construction lets a Tier-1 user preview the
+                  Construction Budget; backend clamps Tier 2 callers. */}
+              <div className="mb-3 flex items-center gap-2">
+                {getBudgetScope(me) === 'full' ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const next = new URLSearchParams(searchParams);
+                        next.delete('scope');
+                        setSearchParams(next, { replace: true });
+                      }}
+                      className={`rounded-md border px-3 py-1 text-sm ${
+                        searchParams.get('scope') !== 'construction'
+                          ? 'border-sy-teal-600 bg-sy-teal-50 text-sy-teal-800 font-semibold'
+                          : 'border-slate-300 text-slate-600 hover:bg-slate-50'
+                      }`}
+                      data-testid="budget-scope-toggle-full"
+                    >
+                      Full Budget
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const next = new URLSearchParams(searchParams);
+                        next.set('scope', 'construction');
+                        setSearchParams(next, { replace: true });
+                      }}
+                      className={`rounded-md border px-3 py-1 text-sm ${
+                        searchParams.get('scope') === 'construction'
+                          ? 'border-sy-teal-600 bg-sy-teal-50 text-sy-teal-800 font-semibold'
+                          : 'border-slate-300 text-slate-600 hover:bg-slate-50'
+                      }`}
+                      data-testid="budget-scope-toggle-construction"
+                    >
+                      Construction Budget
+                    </button>
+                  </>
+                ) : null}
+              </div>
+              <BudgetJobCostingGrid
+                key={searchParams.get('scope') || 'full'}
+                budgetId={budgetId}
+                projectId={projectId}
+                scope={searchParams.get('scope') || undefined}
+              />
             </div>
           )}
         </>

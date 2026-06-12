@@ -83,3 +83,16 @@ export function isLineCreatable(status) {
 export function isCostCodeMutable(status) {
   return status === 'Draft';
 }
+
+// B88 Pack 2 — Tier 1 (Full) vs Tier 2 (Construction) scope.
+// Mirrors backend `cost_code_scope.caller_scope`. Super-admin gets full
+// by RBAC wildcard so `permissions.includes` works for them too.
+export function getBudgetScope(me) {
+  if (!me || !Array.isArray(me.permissions)) return 'construction';
+  return me.permissions.includes('budgets.view_sensitive')
+    ? 'full' : 'construction';
+}
+
+export function canSeeFullBudget(me) {
+  return getBudgetScope(me) === 'full';
+}

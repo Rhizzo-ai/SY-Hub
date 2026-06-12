@@ -58,6 +58,21 @@ export async function getBudget(budgetId, { signal } = {}) {
 }
 
 // ──────────────────────────────────────────────────────────────────────
+// Endpoint 2b — Job-Costing grid (B88 Pack 2 §4).
+// `scope` may only narrow the caller's entitled scope: full → construction
+// is honoured, construction → full is silently clamped by the backend.
+// Returns the grouped tree directly; no schema parse (shape is large +
+// the backend is the source of truth for column / sub-total semantics).
+// ──────────────────────────────────────────────────────────────────────
+export async function getBudgetGrid(budgetId, { signal, scope } = {}) {
+  const params = scope ? { scope } : undefined;
+  const { data } = await api.get(`/v1/budgets/${budgetId}/grid`, {
+    signal, params,
+  });
+  return data;
+}
+
+// ──────────────────────────────────────────────────────────────────────
 // Endpoint 3 — create budget from approved appraisal
 // ──────────────────────────────────────────────────────────────────────
 export async function createBudgetFromAppraisal(projectId, body) {

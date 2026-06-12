@@ -741,6 +741,72 @@ function ParentSectionNode({
 
 
 // ============================================================================
+// B88 Pack 2 §7.3 / D8 — CSV export helper
+// ============================================================================
+function csvCell(v) {
+    if (v == null) return "";
+    const s = String(v);
+    if (/[",\n\r]/.test(s)) {
+        return `"${s.replace(/"/g, '""')}"`;
+    }
+    return s;
+}
+
+export function exportCostCodesCsv(tree, codes) {
+    // Build a code-id → (group_code, group_name, subgroup_code, subgroup_name)
+    // map by walking the tree.
+    const sectionLookup = new Map();
+    for (const sec of tree) {
+        for (const sub of sec.subgroups || []) {
+            sectionLookup.set(sub.id, {
+                group_code: sec.code, group_name: sec.name,
+                subgroup_code: sub.code, subgroup_name: sub.name,
+            });
+        }
+        sectionLookup.set(sec.id, {
+            group_code: sec.code, group_name: sec.name,
+            subgroup_code: "", subgroup_name: "",
+        });
+    }
+
+    const header = [
+        "group_code", "group_name", "subgroup_code", "subgroup_name",
+        "code", "name", "status", "nrm_reference", "xero_nominal_code",
+    ];
+    const rows = [header.join(",")];
+    // Sort codes by group/subgroup/code for a deterministic file.
+    const sortedCodes = [...codes].sort((a, b) => {
+        const sa = sectionLookup.get(a.section_id) || {};
+        const sb = sectionLookup.get(b.section_id) || {};
+        return (
+            String(sa.group_code || "").localeCompare(String(sb.group_code || ""))
+            || String(sa.subgroup_code || "").localeCompare(String(sb.subgroup_code || ""))
+            || String(a.code).localeCompare(String(b.code))
+        );
+    });
+    for (const c of sortedCodes) {
+        const s = sectionLookup.get(c.section_id) || {};
+        rows.push([
+            s.group_code, s.group_name, s.subgroup_code, s.subgroup_name,
+            c.code, c.name, c.status,
+            c.nrm_reference, c.xero_nominal_code,
+        ].map(csvCell).join(","));
+    }
+    const csv = "\uFEFF" + rows.join("\r\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    const yyyymmdd = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+    a.href = url;
+    a.download = `SY_cost_codes_${yyyymmdd}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
+
+
+// ============================================================================
 // MAIN PAGE
 // ============================================================================
 export default function CostCodeAdmin() {
@@ -870,6 +936,19 @@ export default function CostCodeAdmin() {
                         New group
                     </Button>
                 )}
+                {/* B88 Pack 2 §7.3 / D8 — client-side CSV export.
+                    No new backend endpoint; builds from the already-
+                    fetched tree. UTF-8 BOM so Excel opens it cleanly. */}
+                <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => exportCostCodesCsv(tree, codes)}
+                    data-testid="export-csv-btn"
+                    className="ml-2"
+                    style={{ borderColor: BRAND.primary, color: BRAND.primary }}
+                >
+                    Export CSV
+                </Button>
             </div>
 
             {/* Tree */}

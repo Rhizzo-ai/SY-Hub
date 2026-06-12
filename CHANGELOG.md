@@ -11,6 +11,264 @@ Each entry: date, prompt reference (if applicable), change, rationale.
 
 ## Entries
 
+## Chat 51 — Build Pack B88 Pack 2 · Job-Costing Grid + Two Budget Screens
+
+Backend + frontend pack. Adds the Buildertrend-class grouped Job-Costing
+grid as the new centrepiece of the budget surface, served as TWO
+permission-tiered screens (Full Budget for `budgets.view_sensitive`
+holders, Construction Budget for everyone else with `budgets.view`)
+with the construction scope **backend-enforced** — Tier 2 callers
+never receive non-construction lines, totals, or any derived figure
+that includes them, on ANY budgets endpoint, read or write. Project
+managers drop to Tier 2. Shipped across 3 gates, raw-fetch verified
+on `origin/main`, plus four eyeball iterations to clear long-tail
+defects (one Pack-2-introduced, three pre-existing legacy bugs
+surfaced by the new flow).
+
+### Migrations
+
+- **`0045_construction_scope`** — adds
+  `cost_code_sections.included_in_construction_scope` (boolean,
+  NOT NULL, server_default false). Data step backfills `true` for
+  code "4" + every section whose `parent_section_id` resolves to "4"
+  (guarded for fresh DBs — UPDATE affects 0 rows, never errors).
+  Second data step **deletes** the
+  `project_manager → budgets.view_sensitive` grant row from
+  `role_permissions` — `seed_rbac._seed_role_permissions` is
+  additive-only so the data step is required to drop the row on
+  already-bootstrapped pods. Down migration drops the column +
+  re-grants PM `budgets.view_sensitive`.
+
+### RBAC
+
+- **`project_manager`** loses `budgets.view_sensitive` at source in
+  `seed_rbac.ROLE_PERMISSIONS` AND on every existing pod via the
+  migration data step above. director / finance / super_admin
+  retain it.
+- Permission catalogue size unchanged: **136**. Role count
+  unchanged: **10**. PM is now a Tier 2 (construction-scope) caller.
+
+### Service + endpoints
+
+- `GET /api/v1/budgets/{budget_id}/grid` (NEW) — grouped Job-Costing
+  tree (group → subgroup → lines) with subtotals rolled up from
+  included lines + variance band classification re-using
+  `budget_svc._classify_variance` + Tier-1-only
+  `_allocated_sale_price_provisional` slice. `?scope=full|construction`
+  may only narrow the caller's entitled scope (full → construction is
+  honoured for Tier-1 preview; construction → full is silently
+  clamped). Empty groups omitted. Orphan lines bucket into a synthetic
+  "Unassigned" node in full scope, excluded in construction scope.
+  ≤8 queries per request (no N+1).
+- `app/services/cost_code_scope.py` (NEW) — single source of truth
+  for `caller_scope(perms) → "full" | "construction"`,
+  `construction_section_ids`, `construction_cost_code_ids`,
+  `assert_line_in_scope(db, perms, line)` (404 — mirrors cross-tenant
+  convention; existence never leaks), and `resolve_request_scope` (the
+  `?scope=` clamp).
+- **Scope enforcement on EXISTING endpoints** (the leak fix):
+  - `_serialise_line` — line-level money keys (`actuals_to_date`,
+    `committed_value`, `invoiced_against_commitment`,
+    `committed_not_invoiced`, `actuals_this_period`,
+    `forecast_final_cost`, `variance_value`, `variance_pct`) promoted
+    out of the `include_sensitive` gate — visible to ALL callers on
+    in-scope lines (D4). `_allocated_sale_price_provisional` stays
+    full-scope-only.
+  - `_serialise_budget_summary` / `_serialise_budget_detail` — ALL
+    seven cached header money keys (`total_budget`, `total_actuals`,
+    `total_committed_not_invoiced`, `total_forecast_to_complete`,
+    `forecast_final_cost`, `variance_vs_budget`, `variance_pct`) are
+    now full-scope-only. Tier 2 obtains scoped totals exclusively
+    from the grid endpoint. Detail responses additionally filter
+    `lines` to construction-scoped cost codes when scope is
+    construction.
+  - `PATCH /budget-lines/{id}`, `DELETE /budget-lines/{id}`,
+    `GET|POST /budget-lines/{id}/items`,
+    `PATCH|DELETE /budget-line-items/{id}` — return **404** when the
+    target line is out of Tier-2 scope (mirrors cross-tenant — existence
+    must not leak). Shared guard helper
+    `scope_svc.assert_line_in_scope`.
+  - `POST /budget-lines/reorder` — returns **403** for Tier 2
+    ("full-budget access required to reorder budget lines"); reorder
+    requires enumerating every line id which Tier 2 cannot.
+  - `routers/cost_codes.py` — `SectionRead` / `SectionCreate` /
+    `SectionUpdate` expose `included_in_construction_scope`; PATCH
+    gate unchanged (`cost_codes.edit`); audit log captures
+    scope-flip events.
+- `scripts/seed_cost_code_structure.py` — sets the scope flag on
+  INSERT only for code "4" + canonical Construction subgroups
+  (4.00–4.09). Re-runs over existing rows never revert operator
+  scope edits on OTHER sections. Round-trip recovery: when an
+  alembic downgrade-then-upgrade resets the column default back to
+  false on code "4" + canonical subgroups, the seed restores them
+  (deviation D-Pack2-A — see below).
+
+### Frontend
+
+- **Two screens, one shell.** Existing `BudgetDetail` page hosts the
+  new grouped grid + a Full / Construction toggle that writes
+  `?scope=construction` into the URL. Tier 1 sees both toggles;
+  Tier 2 sees only Construction (backend clamps; URL-widen attempts
+  silently fail closed). Legacy flat `BudgetGridV2` replaced.
+- `src/components/budgets/BudgetJobCostingGrid.jsx` (NEW) —
+  grouped grid (group → subgroup → lines) with rolled-up subtotals,
+  sticky code+description columns, sticky header row, variance
+  heat-map (Red/Amber/Green tinted cells with dark text per a11y),
+  collapse/expand at group + subgroup level, column picker with
+  `localStorage` persistence keyed per scope
+  (`sy-hub.budget-grid.columns.{full|construction}`), Tier-1-only
+  computed columns (projected profit / margin %), row-click line
+  edit gated on `budgets.edit` + `isBudgetEditable(status)` that
+  mounts the EXISTING `LineDrawer` (not rebuilt).
+- `src/lib/api/budgets.js::getBudgetGrid(id, { scope })` +
+  `src/hooks/budgets.js::useBudgetGrid` +
+  `src/lib/budgetCapability.js::getBudgetScope(me)` /
+  `canSeeFullBudget(me)`.
+- **CSV export** on the cost-code admin screen — Export CSV button
+  + `exportCostCodesCsv(tree, codes)` helper. Client-side only (no
+  new backend endpoint), UTF-8 BOM so Excel opens cleanly,
+  `SY_cost_codes_YYYYMMDD.csv` filename, columns
+  `group_code,group_name,subgroup_code,subgroup_name,code,name,status,nrm_reference,xero_nominal_code`,
+  sorted by group → subgroup → code.
+
+### Tests
+
+- Backend, new file `backend/tests/test_budget_grid.py` — **18 tests**:
+  response shape, group/code display-order, subtotal arithmetic
+  (Decimal-exact), `_classify_variance` band derivation
+  (fence-post +10% = Red), empty-group omission, duplicate
+  cost-code-by-subcategory sibling rows, full-scope cached-header
+  consistency (7-key map), Tier-1-only allocations present,
+  Tier-2 group exclusion, Tier-2 line money keys still emitted,
+  Tier-2 totals recomputed from in-scope lines only, no allocations
+  in Tier 2, scope narrowing + clamping, orphan exclusion, 404 on
+  unknown / cross-tenant, 403 without `budgets.view`, fence-post on
+  classify_variance.
+- Backend, new file `backend/tests/test_budget_scope_enforcement.py`
+  — **16 tests**: PM detail filters lines + omits `total_budget`,
+  PM list omits `total_budget` (director list retains it), PM PATCH
+  out-of-scope line → 404, PM DELETE out-of-scope line → 404, PM
+  GET/POST items on out-of-scope line → 404, PM reorder → 403,
+  director PATCH out-of-scope line → 200, RBAC revocation on warm
+  DB, director/finance still hold view_sensitive, super_admin
+  bypass, section PATCH retoggles scope (line moves in/out of PM
+  grid), migration data step backfilled section "4" + subgroups,
+  seed re-run preserves operator scope toggle.
+- Backend baseline updates: `test_budgets.py::test_readonly_misses_sensitive_keys`
+  joined `total_budget` to the omit set; `test_budget_line_serialisation.py`
+  added `actuals_this_period` to `_StubLine`; nine migration head
+  sentinel files bumped `0044 → 0045`; `test_bootstrap.py` head
+  prefix bumped.
+- **Backend warm-DB suite**: **1483 passed · 3 xpassed · 0 failed**
+  (delta vs Pack 1 close = +34).
+- Frontend, new files / suites:
+  - `src/components/budgets/__tests__/BudgetJobCostingGrid.test.jsx`
+    — **14 tests** (9 base + 5 row-click gating across Active /
+    Draft / Locked / Superseded / no-edit-perm).
+  - `src/pages/__tests__/CostCodeAdmin.csvExport.test.jsx` — 2
+    tests (header+BOM+sort+quoting; empty-list graceful).
+  - `src/lib/schemas/__tests__/budgets.tier2.test.js` (NEW, Gate-2
+    follow-up) — 5 tests locking the Tier 2 payload shape
+    (all 7 cached header money keys optional).
+  - `src/components/budgets/__tests__/CostCodePicker.test.jsx`
+    (NEW, Gate-2 follow-up) — 3 tests pinning the canonical
+    field-name reads (cost_code_id / is_enabled / name).
+  - `src/components/budgets/__tests__/LineDrawer.ftcMethodGate.test.jsx`
+    (NEW, Gate-2 follow-up) — 2 tests asserting `ftc_method`
+    visible regardless of `view_sensitive`.
+  - `src/components/budgets/grid/PerLineTransactionDrilldown/__tests__/LineItemsBreakdown.addItem.test.jsx`
+    (NEW, Gate-2 follow-up) — 4 tests pinning the cleaned
+    `+ Add item` payload + the error-toast path.
+- **Frontend suite**: **94 suites · 802 tests · 0 failed**
+  (delta vs Pack 1 close = +29).
+
+### Deviations from Build Pack
+
+- **D-Pack2-A** — Seed re-asserts
+  `included_in_construction_scope=true` on the canonical
+  Construction subgroups (4.00–4.09) and on section "4" after an
+  alembic round-trip wipes the column default. The Build Pack §2
+  rule "seed must never touch the flag on re-runs" applies UNCHANGED
+  to every OTHER section (operator-owned); this restoration is
+  scoped strictly to the canonical Construction set. Needed because
+  the `test_migration_0025_actuals` downgrade-then-upgrade test
+  resets the column default back to false on existing sections
+  before the seed re-parents them. Pinned by
+  `test_budget_scope_enforcement::TestSectionScopeToggle` and
+  `TestSeedPreservesScopeToggle`.
+- **D-Pack2-B** — Seed script lives at
+  `backend/scripts/seed_cost_code_structure.py`. Build Pack §2
+  referenced `scripts/seed_cost_code_structure.py`. No file moved
+  — Pack 1 already established the `backend/scripts/` path.
+- **D-Pack2-C** — Drag-to-reorder dropped from the new grouped
+  grid. Ordering is now group/code-driven via the cost-code admin
+  screen; line `display_order` becomes a Tier-1 admin concern only.
+  Reordering as PM returns 403 by design; reordering as super_admin
+  remains via the existing
+  `POST /api/v1/budget-lines/reorder` endpoint.
+- **D-Pack2-D** — Sandbox demo seeder lives at
+  `backend/scripts/seed_b88_pack2_demo.py` (idempotent;
+  NOT a migration; NOT run by `bootstrap.py`; NOT a test fixture).
+  Created during Gate 2 to support the operator's §10 live
+  eyeball; moved from `/tmp` after the first round so it survives
+  pod recycles. Re-run by hand to restore the canonical demo state
+  after any operator-driven state mutation (e.g. New Version).
+- **D-Pack2-E** — Pre-existing `CostCodePicker` field-name bug
+  fixed under Gate 2 follow-up: the legacy picker read
+  `c.id` / `c.enabled` / `c.label`, but the live
+  `ProjectCostCodeRead` payload returns
+  `cost_code_id` / `is_enabled` / `name`. The picker's trigger
+  rendered blank on every line edit since inception, and selecting
+  an option pushed the wrong id (the `project_cost_codes` mapping
+  row id, NOT the FK target). Fixed to canonical field names;
+  pinned by `CostCodePicker.test.jsx`.
+- **D-Pack2-F** — Pre-existing `LineDrawer` stale gate removed
+  under Gate 2 follow-up: `ftc_method` and the Manual FTC value
+  input were gated behind `view_sensitive` with a stale "request
+  elevated access" label. Per Build Pack §R5 / D4, `ftc_method` is
+  NOT in the sensitive set — backend `_serialise_line` has always
+  returned it to all callers. Gate removed; standard
+  `fieldsDisabled` (budgets.edit + status + desktop) retained.
+  Pinned by `LineDrawer.ftcMethodGate.test.jsx`. The `notes` field
+  remains `view_sensitive`-gated — operator did not flag it; left
+  intentionally untouched per "functional fixes only / B93 covers
+  editor rework".
+- **D-Pack2-G** — Pre-existing `LineItemsBreakdown.addItem`
+  payload bug fixed under Gate 2 follow-up: the body sent
+  `display_order` against `CreateBudgetLineItemRequest` which is
+  `extra="forbid"`, so the POST returned 422 every click. The
+  mutation had no `onError` handler so the failure was silently
+  swallowed. Fix: drop `display_order` (backend
+  `line_svc.create_item` auto-assigns the next slot), and surface
+  failures via `sonner` toast so silent regressions on this path
+  fail loudly going forward. Pinned by
+  `LineItemsBreakdown.addItem.test.jsx`.
+
+### Gate cadence
+
+- **Gate 1 (backend)** — landed in one pass: migration + scope
+  service + grid endpoint + scope enforcement on all 15 existing
+  endpoints + PM revocation. Warm-DB suite green on the first
+  attempt (1483 passed); operator verified on origin/main before
+  Gate 2.
+- **Gate 2 (frontend)** — landed in one pass for the screens + grid +
+  column picker + CSV export. Took **four eyeball iterations** to
+  clear long-tail defects:
+  - Round 1: Tier 2 schema drift (`total_budget` required) — fixed
+    + Tier-2 shape test added.
+  - Round 1: row-click line edit not wired — fixed + 5
+    status-gated tests added.
+  - Round 2: legacy `CostCodePicker` field-name bug — fixed.
+  - Round 2: legacy `LineDrawer` FTC method stale gate — fixed.
+  - Round 3 (after pod recycle): "+ Add item" silently 422-ing
+    on `display_order` extra-forbidden — fixed + error toast +
+    4 tests.
+- **Gate 3 (docs)** — this CHANGELOG entry +
+  `docs/chat-summaries/chat-51-closing.md`.
+
+`docs/SY_Hub_Phase2_Backlog.md` untouched per non-negotiable.
+
+
 ## Chat 50 — Build Pack B88 Pack 1 · Cost-Code Group Hierarchy + Cost-Code Admin
 
 Backend + frontend pack. Adds a two-tier cost-code hierarchy (parent
