@@ -43,8 +43,10 @@ When this fails — troubleshooting
        permission_action enum value is missing because alembic isn't really
        at head, or PERMISSION_CATALOGUE was changed without re-seeding.
 - "Verify failed: cause=role_count_mismatch"
-    -> roles row count != len(ROLE_CATALOGUE). seed_rbac partially failed,
-       or a role was deleted manually.
+    -> SYSTEM roles row count (is_system_role = true) != len(ROLE_CATALOGUE).
+       seed_rbac partially failed, or a system role was deleted manually.
+       Operator-created custom roles (B83, is_system_role = false) are
+       intentionally excluded from this invariant.
 - "Verify failed: cause=super_admin_user_missing"
     -> No User row exists for BOOTSTRAP_ADMIN_EMAIL. seed_rbac was skipped
        or BOOTSTRAP_ADMIN_EMAIL was changed without re-seeding.
@@ -949,15 +951,18 @@ def verify_invariants(ctx: BootstrapContext) -> dict:
                 )
             )
 
-            # 3. roles count
+            # 3. roles count — SYSTEM roles only (B83-A). Custom roles
+            # created via the Role Permissions admin are first-class and
+            # must never trip this invariant; the catalogue only governs
+            # the seeded system set.
             roles_actual = c.execute(
-                text("SELECT count(*) FROM roles")
+                text("SELECT count(*) FROM roles WHERE is_system_role = true")
             ).scalar() or 0
             roles_expected = len(ROLE_CATALOGUE)
             if roles_actual != roles_expected:
                 _verify_fail(
                     ctx, t0, "role_count_mismatch",
-                    f"expected {roles_expected} roles, found {roles_actual}",
+                    f"expected {roles_expected} system roles, found {roles_actual}",
                 )
             summary["roles"] = roles_actual
             log.info(

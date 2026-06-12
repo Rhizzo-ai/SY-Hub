@@ -303,6 +303,76 @@ def test_verify_invariants_role_count_mismatch(monkeypatch):
     assert excinfo.value.cause == "role_count_mismatch"
 
 
+def test_verify_passes_with_custom_role_present():
+    """B83-A — the role-count invariant only counts SYSTEM roles.
+
+    Operator-created custom roles (is_system_role = false, via
+    POST /api/roles) are first-class citizens after B83; their presence
+    must never fail bootstrap verify, otherwise the first pod recycle
+    after creating one would refuse to start the backend
+    (role_count_mismatch, exit 6).
+    """
+    import uuid as _uuid
+    url = _live_database_url()
+    eng = create_engine(url, poolclass=NullPool)
+    role_id = str(_uuid.uuid4())
+    try:
+        with eng.begin() as c:
+            c.execute(text(
+                "INSERT INTO roles (id, code, name, description, "
+                "is_system_role, priority, created_at, updated_at) VALUES "
+                "(:i, 'b83a_verify_probe', 'B83-A Verify Probe', "
+                "'custom role must not trip bootstrap verify', false, 40, "
+                "now(), now())"
+            ), {"i": role_id})
+        ctx = _make_live_ctx()
+        summary = B.verify_invariants(ctx)  # must NOT raise
+        import app.seed_rbac as rbac
+        assert summary["roles"] == len(rbac.ROLE_CATALOGUE), (
+            "verify must report the SYSTEM role count, excluding custom roles"
+        )
+    finally:
+        with eng.begin() as c:
+            c.execute(text(
+                "DELETE FROM roles WHERE id = :i AND is_system_role = false"
+            ), {"i": role_id})
+        eng.dispose()
+
+
+def test_verify_fails_when_system_role_missing():
+    """B83-A — the tightened invariant still catches REAL seed damage:
+    deleting a system role must fail verify with role_count_mismatch.
+
+    Picks a system role with zero user_roles rows (FK RESTRICT would block
+    the delete otherwise); restores it via seed_rbac() afterwards — the
+    additive seed re-creates the role and its grants.
+    """
+    url = _live_database_url()
+    eng = create_engine(url, poolclass=NullPool)
+    try:
+        with eng.begin() as c:
+            row = c.execute(text(
+                "SELECT r.id, r.code FROM roles r "
+                "WHERE r.is_system_role = true "
+                "  AND NOT EXISTS (SELECT 1 FROM user_roles ur "
+                "                  WHERE ur.role_id = r.id) "
+                "ORDER BY r.code LIMIT 1"
+            )).first()
+            assert row is not None, (
+                "precondition: need one unassigned system role to delete"
+            )
+            c.execute(text("DELETE FROM roles WHERE id = :i"), {"i": row[0]})
+        ctx = _make_live_ctx()
+        with pytest.raises(B.BootstrapError) as excinfo:
+            B.verify_invariants(ctx)
+        assert excinfo.value.cause == "role_count_mismatch"
+    finally:
+        # Restore the seeded system role + its grants.
+        from app.seed_rbac import seed_rbac
+        seed_rbac()
+        eng.dispose()
+
+
 def test_verify_invariants_role_perm_unknown_code(monkeypatch):
     import app.seed_rbac as rbac
     spiked = {k: set(v) for k, v in rbac.ROLE_PERMISSIONS.items()}
