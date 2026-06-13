@@ -4,7 +4,7 @@ import os, sys, json, subprocess, requests, pyotp
 from datetime import date, timedelta
 from urllib.parse import urlparse
 
-BASE = os.environ.get("REACT_APP_BACKEND_URL", "https://db-api-check.preview.emergentagent.com").rstrip("/")
+BASE = os.environ.get("REACT_APP_BACKEND_URL", "https://vault-core-8.preview.emergentagent.com").rstrip("/")
 EMAIL = "test-admin@example.test"; PW = "TestUser-Dev-2026!"
 
 def fresh_login():
