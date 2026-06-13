@@ -2,7 +2,7 @@ import React from "react";
 import { NavLink, Link, useNavigate } from "react-router-dom";
 import {
     Building2, Users, Layers, Calculator, LineChart, Wallet,
-    CalendarDays, FileText, ShieldCheck, Landmark, Link2, LogOut, KeyRound, Laptop, User as UserIcon, ShieldAlert, ChevronDown, ScrollText, Settings, Percent, Receipt, Bot, Truck,
+    CalendarDays, FileText, ShieldCheck, Landmark, Link2, LogOut, KeyRound, Laptop, User as UserIcon, ShieldAlert, ChevronDown, ScrollText, Settings, Percent, Receipt, Bot, Truck, Package,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import NotificationBell from "@/components/NotificationBell";
@@ -25,6 +25,8 @@ const NAV = [
     { label: "Cost Codes", to: "/cost-codes", icon: Calculator, enabled: true, testid: "nav-cost-codes", requires: "cost_codes.view" },
     // B83 (Chat 52) — Role & Permissions admin matrix, beside Cost Codes.
     { label: "Role Permissions", to: "/admin/roles", icon: KeyRound, enabled: true, testid: "nav-role-permissions", requires: "roles.view" },
+    // B88 Pack 3 (Chat 53) — Packages (tendering spine).
+    { label: "Packages", to: "/admin/packages", icon: Package, enabled: true, testid: "nav-packages", requires: "packages.view" },
     { label: "Payments", to: "/payments", icon: Receipt, enabled: true, testid: "nav-payments", requires: "actuals.view" },
     // Chat 41 §R7.1 — single "Suppliers" entry; the separate
     // "Subcontractors" link (?type=Subcontractor) was removed when the

@@ -11,6 +11,71 @@ Each entry: date, prompt reference (if applicable), change, rationale.
 
 ## Entries
 
+## Chat 53 — Build Pack B88 Pack 3 · Packages (the tendering spine)
+
+Backend + frontend pack. Introduces the **tendering spine**: a sixth
+batch of tables (`packages`, `package_lines`, `package_bids`,
+`package_bid_lines`, `package_awards`, `package_award_lines`) and a
+single-transaction award engine that strikes winning bids directly
+into the existing PO + Subcontract pipelines under a **double guard**
+(header Σ ≤ total + £0.01 tolerance + per-line quantity bucket).
+Money math is server-authoritative everywhere; client nets are display
+only.
+
+### Locked operator decisions (Chat 53 D-table)
+
+| # | Decision |
+|---|----------|
+| LD-P1 | Two kinds: `labour` → Subcontract, `materials` → PO. |
+| LD-P2 | Package status enum: `draft → out_to_tender → partially_awarded → awarded`; `cancelled` from any non-terminal. |
+| LD-P3 | Header Σ-guard: Σ(active awards' net) ≤ package.total_net + £0.01. |
+| LD-P4 | Bidders compete on **rate**, not measurement — quantity inherits from package_line; client nets are never trusted. |
+| LD-P5 | Fast-track awards allowed (`source_bid_id=null`) — same guards apply. |
+| LD-P6 | Bidder kind/type coherence: labour requires `Contractor`; materials accepts `Supplier` or `Contractor`. |
+
+### Gate 1 — Backend (head `0047_packages`)
+- 6 tables + 4 PG enums + `permission_action.'award'` + `permission_resource.'packages'`.
+- Award engine: ONE DB transaction, package row `FOR UPDATE`, both
+  guards enforced server-side; downstream PO/SC created via the
+  existing `create_po` / `create_subcontract` services on the same
+  session; atomic rollback proven by T-AW-9 (concurrency) and T-AW-10
+  (multi-spec post-create failure).
+- D4 — Postgres does not allow `DEFERRABLE` on `CHECK` constraints, so
+  the service creates the downstream PO/SC FIRST and INSERTs the
+  `package_awards` row with the downstream id already populated. CK
+  `ck_package_awards_one_downstream` satisfied at row-insert time.
+- D1 — Both `ALTER TYPE … ADD VALUE IF NOT EXISTS` for `'award'` and
+  `'packages'` in an `autocommit_block` (precedents 0020 + 0026).
+- RBAC seed +6 perms → head **142**. Director excludes `packages.delete`
+  via the all-minus-exclusions baseline; PM gets `view/view_sensitive/
+  create/edit` (no `award`); finance gets `view/view_sensitive/award`
+  (no `create`); read-only roles get `view` only.
+- 57 tests (21 service + 36 API), both cold + warm green.
+- Live HTTP transcript proves the £95,000 commitment chain end-to-end
+  from a package award → PO submit → approve → issue → budget line
+  `committed_value` / `committed_not_invoiced`.
+
+### Gate 2 — Frontend (`/admin/packages`)
+- `lib/api/packages.js` — thin axios layer over the 18 award-engine
+  endpoints (`/v1/packages/...`, `/v1/bids/...`, `/v1/awards/...`).
+- `pages/admin/PackagesList.jsx` — table + status/kind filters + New
+  package dialog.
+- `pages/admin/PackageDetail.jsx` — 3-tab detail (Lines / Bids / Award)
+  with sensitive-pricing redaction and the **live-eyeball Σ summary**:
+  Package total → Already awarded → This award preview → Total after.
+  The award submit is disabled (greyed) AND a red inline alert appears
+  the moment `Total after > package.total_net + £0.01` — server still
+  enforces, client visual block is the eyeball.
+- Every mutation handler surfaces server `detail` via `sonner.toast` +
+  inline. No silent onError anywhere on these pages.
+- Routes wired in `App.js`, "Packages" nav added to `AppShell.jsx`
+  beside "Cost Codes" (gated on `packages.view`).
+- 9 new test IDs covering: list / detail / new dialog / line picker /
+  invite bidder / enter bid (with live preview) / award form (with
+  per-spec line inputs and Σ-block) / cancel award.
+
+
+
 ## Chat 52 — Build Pack B83 · Role & Permissions Admin
 
 Backend + frontend pack. Adds the platform's Role & Permissions

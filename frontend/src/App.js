@@ -54,6 +54,9 @@ import CostCodeDetail from "@/pages/CostCodeDetail";
 import CostCodeSections from "@/pages/CostCodeSections";
 import { RolesList, RoleDetail, PermissionsList } from "@/pages/RolesAndPermissions";
 import RolePermissionsAdmin from "@/pages/admin/RolePermissionsAdmin";
+// B88 Pack 3 (Chat 53) — Packages (tendering spine).
+import PackagesList from "@/pages/admin/PackagesList";
+import PackageDetail from "@/pages/admin/PackageDetail";
 import ProfileSecurity from "@/pages/ProfileSecurity";
 import ProfileSessions from "@/pages/ProfileSessions";
 import AdminUserSessions from "@/pages/AdminUserSessions";
@@ -204,6 +207,9 @@ function ShellRoutes() {
                 <Route path="/roles" element={<RolesList />} />
                 <Route path="/roles/:id" element={<RoleDetail />} />
                 <Route path="/admin/roles" element={<RolePermissionsAdmin />} />
+                {/* B88 Pack 3 (Chat 53) — Packages (tendering spine). */}
+                <Route path="/admin/packages" element={<PackagesList />} />
+                <Route path="/admin/packages/:id" element={<PackageDetail />} />
                 <Route path="/permissions" element={<PermissionsList />} />
                 <Route path="/profile" element={<Navigate to="/profile/security" replace />} />
                 <Route path="/profile/security" element={<ProfileSecurity />} />

@@ -18,8 +18,9 @@ Frontend / actuals / commitments / Xero are out of scope until later prompts.
 
 ## Build Pack B88 Pack 3 — Packages (the tendering spine)
 
-**STATUS: Gate 1 (Backend) COMPLETE — STOPPED for operator authorisation per
-Build Pack §8. Gate 2 (Frontend `/admin/packages`) NOT STARTED.**
+**STATUS: Gate 1 (Backend) CLEARED on origin/main. Gate 2 (Frontend
+`/admin/packages` + docs) PROPOSED FOR EYEBALL — awaiting operator
+verification.**
 
 ### Gate 1 — Backend (2026-02 cold + warm green, live proofs green)
 
