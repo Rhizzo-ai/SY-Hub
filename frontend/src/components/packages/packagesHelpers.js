@@ -23,6 +23,7 @@ export function fmtMoney(v) {
 
 /** Decimal helper for client display only — server is authoritative. */
 export function multiplyMoney(qty, rate) {
+  if (qty == null || rate == null) return null;
   const q = Number(qty);
   const r = Number(rate);
   if (!Number.isFinite(q) || !Number.isFinite(r)) return null;
