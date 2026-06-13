@@ -107,6 +107,14 @@ from app.models.po_approvals import (
 from app.models.po_receipts import (
     PurchaseOrderReceipt, PurchaseOrderReceiptLine, PurchaseOrderReceiptPhoto,
 )
+# B88 Pack 3 — Packages (the tendering spine).
+from app.models.packages import (
+    Package, PackageLine, PackageBid, PackageBidLine,
+    PackageAward, PackageAwardLine,
+    PACKAGE_KINDS, PACKAGE_STATUSES, PACKAGE_BID_STATUSES,
+    PACKAGE_AWARD_STATUSES,
+    TERMINAL_PACKAGE_STATUSES, LINES_FROZEN_STATUSES,
+)
 
 __all__ = [
     "Tenant",

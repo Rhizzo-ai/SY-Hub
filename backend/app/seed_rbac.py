@@ -203,6 +203,14 @@ PERMISSION_CATALOGUE += _perms_for(
     include=["view", "create", "release"],
     sensitive={"release"},
 )
+# B88 Pack 3 (Chat 53) — Packages (the tendering spine).
+# sensitive: view_sensitive (bid pricing), award (money-authorising),
+# delete (destructive).
+PERMISSION_CATALOGUE += _perms_for(
+    "packages",
+    include=["view", "view_sensitive", "create", "edit", "award", "delete"],
+    sensitive={"view_sensitive", "award", "delete"},
+)
 PERMISSION_CATALOGUE += _perms_for(
     "cash_flow",
     include=["view", "view_sensitive", "edit"],
@@ -317,6 +325,12 @@ ROLE_PERMISSIONS["director"] = set(ALL_PERMISSION_CODES) - {
     # counter-intuitive grant in the pack — test_cost_code_sections.py
     # asserts director gets 403 on DELETE.
     "cost_codes.delete",
+    # B88 Pack 3 (Chat 53) — Packages delete is super_admin-only by
+    # operator decision. Director gets view/view_sensitive/create/edit/
+    # award via the all-minus-exclusions baseline (correct — director
+    # is an authorising persona). DELETE must be excluded here so the
+    # all-minus-exclusions math does NOT silently grant it.
+    "packages.delete",
 }
 
 # project_manager
@@ -387,6 +401,12 @@ ROLE_PERMISSIONS["project_manager"] = {
     "subcontract_valuations.view_sensitive",
     "subcontract_valuations.create",
     "payment_notices.view",
+    # B88 Pack 3 (Chat 53) — Packages. PM creates and edits, does NOT
+    # hold the money-authorising award act (mirrors pos.create/edit
+    # without pos.approve; subcontracts.create/edit without
+    # subcontracts.approve).
+    "packages.view", "packages.view_sensitive",
+    "packages.create", "packages.edit",
 }
 
 # finance
@@ -458,6 +478,12 @@ ROLE_PERMISSIONS["finance"] = {
     "payment_notices.view",
     "payment_notices.create",
     "payment_notices.release",
+    # B88 Pack 3 (Chat 53) — Packages. Finance holds the money-
+    # authorising award act (mirrors pos.approve, subcontracts.approve,
+    # budget_changes.approve). Finance deliberately lacks create/edit
+    # — PM raises and edits the package surface.
+    "packages.view", "packages.view_sensitive",
+    "packages.award",
 }
 
 # site_manager
@@ -488,6 +514,9 @@ ROLE_PERMISSIONS["site_manager"] = {
     # Chat 35 §R2 (Prompt 2.8b) — read-only valuations + notices view.
     "subcontract_valuations.view",
     "payment_notices.view",
+    # B88 Pack 3 (Chat 53) — read-only packages view (NO view_sensitive
+    # → bid pricing redacted). Mirrors site_manager's `pos.view` access.
+    "packages.view",
 }
 
 # sales
@@ -521,6 +550,9 @@ ROLE_PERMISSIONS["read_only"] = {
     # Chat 35 §R2 (Prompt 2.8b) — read-only valuations + notices.
     "subcontract_valuations.view",
     "payment_notices.view",
+    # B88 Pack 3 (Chat 53) — read-only packages (NO view_sensitive →
+    # bid pricing redacted).
+    "packages.view",
 }
 
 # investor_read_only

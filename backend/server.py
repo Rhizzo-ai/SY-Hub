@@ -63,6 +63,7 @@ from app.routers.subcontracts import router as subcontracts_router  # noqa: E402
 from app.routers.subcontract_variations import router as subcontract_variations_router  # noqa: E402
 from app.routers.subcontract_valuations import router as subcontract_valuations_router  # noqa: E402
 from app.routers.payment_notices import router as payment_notices_router  # noqa: E402
+from app.routers.packages import router as packages_router  # noqa: E402
 from app.seed import seed  # noqa: E402
 from app.seed_rbac import seed_rbac  # noqa: E402
 from app.seed_system_config import (  # noqa: E402
@@ -186,6 +187,8 @@ v1_router.include_router(subcontract_variations_router)
 # Chat 35 §R4 (Prompt 2.8b) — valuations + payment notices (+ retention release).
 v1_router.include_router(subcontract_valuations_router)
 v1_router.include_router(payment_notices_router)
+# B88 Pack 3 (Chat 53) — Packages (tendering spine).
+v1_router.include_router(packages_router)
 api_router.include_router(v1_router)
 
 app.include_router(api_router)

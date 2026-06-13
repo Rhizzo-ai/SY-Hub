@@ -51,6 +51,8 @@ RESOURCES = (
     "payment_notices",
     # Chat 41 §R2 (Prompt 2.7-BE-rev-A) — trades managed vocabulary.
     "trades",
+    # B88 Pack 3 (Chat 53) — Packages (tendering spine).
+    "packages",
 )
 
 ACTIONS = (
@@ -80,6 +82,10 @@ ACTIONS = (
     # Chat 45 §R4.1 (Build Pack 2.7-DOCS-BE) — folder + document move.
     # Cross-surface action: gates folder move + supplier-document move.
     "move",
+    # B88 Pack 3 (Chat 53) — Package award (money-authorising act for
+    # the tendering spine: striking a winning bid into a downstream
+    # PO/SC under the Σ-guard).
+    "award",
 )
 
 ENTITY_SCOPES = ("All", "Specific")

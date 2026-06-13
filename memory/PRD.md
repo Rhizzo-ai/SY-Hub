@@ -16,7 +16,92 @@ Frontend / actuals / commitments / Xero are out of scope until later prompts.
   for list-time tenant filtering — see Chat 24 R2).
 - Audit append-only via `audit_log` + `audit_log_no_modify()` trigger.
 
-## Build Pack B88 Pack 2 — Job-Costing Grid + Two Budget Screens
+## Build Pack B88 Pack 3 — Packages (the tendering spine)
+
+**STATUS: Gate 1 (Backend) COMPLETE — STOPPED for operator authorisation per
+Build Pack §8. Gate 2 (Frontend `/admin/packages`) NOT STARTED.**
+
+### Gate 1 — Backend (2026-02 cold + warm green, live proofs green)
+
+Six new tables + four new PG enums + `permission_action.'award'` +
+`permission_resource.'packages'` introduced by migration
+`0047_packages.py` (head). Award engine in `services.packages` is a single
+DB transaction holding the package row `FOR UPDATE` across the whole call,
+with two server-side guards:
+
+- Header Σ-guard: Σ(active awarded_net) ≤ package.total_net + £0.01
+- Per-line quantity guard: Σ(award_line.quantity) ≤ package_line.quantity
+
+Server computes every `net = round(qty × rate, 2)`. Client-supplied nets
+are rejected by schema. Downstream creates delegate to `create_po`
+(materials) or `create_subcontract` (labour) on the same session; an
+exception anywhere in the call rolls the whole thing back (no orphan PO,
+no orphan award row — T-AW-9 + T-AW-10 explicit).
+
+#### Files created
+- `alembic/versions/0047_packages.py`
+- `app/models/packages.py`
+- `app/schemas/packages.py`
+- `app/services/packages.py` (award engine = the crux)
+- `app/routers/packages.py` (13 paths / 18 method×path combos under `/api/v1`)
+- `tests/_packages_common.py` (test helpers)
+- `tests/test_packages_service.py` (21 tests — migration, model, RBAC seed,
+  CRUD, tender flow)
+- `tests/test_packages.py` (36 tests — award engine, atomicity, concurrency,
+  permissions, sensitive redaction, reconciliation end-to-end)
+- `scripts/b88_pack3_gate1_proofs.py` (live HTTP transcript)
+
+#### Files modified
+- `app/models/__init__.py` (export new models)
+- `app/models/rbac.py` (`packages` added to RESOURCES; `award` added to ACTIONS)
+- `app/seed_rbac.py` (packages permission block + per-role grants;
+  `packages.delete` added to director exclusion set)
+- `server.py` (mount packages_router on v1_router)
+
+#### Permissions math (head 142, exactly as Build Pack §6 demanded)
+
+| Resource.Action | super_admin | director | project_manager | finance | site_manager | read_only |
+|---|---|---|---|---|---|---|
+| packages.view | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| packages.view_sensitive | ✓ | ✓ | ✓ | ✓ | – | – |
+| packages.create | ✓ | ✓ | ✓ | – | – | – |
+| packages.edit | ✓ | ✓ | ✓ | – | – | – |
+| packages.award | ✓ | ✓ | – | ✓ | – | – |
+| packages.delete | ✓ | – | – | – | – | – |
+
+#### Test outcome
+- Cold pass: **57/57 green** (≥55 target).
+- Warm pass: **57/57 green** — authoritative.
+- Live HTTP proofs: 6/6 green; budget commitment chain ends with
+  `committed_value = committed_not_invoiced = £95,000` on the referenced
+  budget line after the PO reaches `issued`.
+
+#### Notable named tests
+- T-AW-9 (`test_TAW_9_concurrency_lost_update_guard`) — two concurrent
+  award calls hitting the same package serialise under the `FOR UPDATE`
+  lock; exactly one returns 200, the other 422.
+- T-AW-10 (`test_TAW_10_atomic_rollback_on_downstream_failure`) +
+  T-AW-10b — multi-spec call where the second spec fails after the first
+  has done its work rolls back the whole call: zero new POs, zero new
+  award rows, `awarded_net` unchanged.
+
+#### Discrepancies flagged + fixed during Gate 1 pre-flight
+- D1: `permission_action` PG enum lacked `'award'` AND `permission_resource`
+  lacked `'packages'`. Both extended via `ALTER TYPE ... ADD VALUE IF NOT
+  EXISTS` inside `autocommit_block` in 0047 (precedents 0020 + 0026).
+- D2: cost_codes seed count is 133 (Opener stated 130). Not a Pack 3
+  surface — flagged only.
+- D3: `create_po` derives net internally; award engine passes
+  `unit_rate` + `quantity`, omits `net_amount`.
+- D4: `ck_package_awards_one_downstream` CHECK constraint cannot be
+  `DEFERRABLE` in Postgres. Service therefore creates the downstream
+  PO/SC FIRST, then INSERTs the award row with the downstream id
+  already populated — CK satisfied at row-insert time.
+- D5: Re-use `audit_action='Approve'` for `package.award` (money-
+  authorising) and `Status_Change` for tender/cancel transitions; the
+  specific semantic lives in `metadata.event`.
+
+
 
 **STATUS: Gate 2 (Frontend) COMPLETE — STOPPED for operator live
 eyeball per Build Pack §10.**
