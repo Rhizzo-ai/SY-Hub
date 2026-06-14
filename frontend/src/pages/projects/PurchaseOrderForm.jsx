@@ -30,6 +30,12 @@ export default function PurchaseOrderForm() {
 
   const [supplierId, setSupplierId] = useState('');
   const [budgetId, setBudgetId] = useState('');
+  // Pack 3.5 §7.1 — "One front door": chooser between a simple
+  // standalone PO and one linked to an existing package. The package
+  // path adds an optional package_id field; server validates same-tenant
+  // + same-project + UUID-coerce.
+  const [createMode, setCreateMode] = useState('simple');
+  const [packageId, setPackageId] = useState('');
   const [issueDate, setIssueDate] = useState('');
   const [lines, setLines] = useState([blankLine()]);
   const [error, setError] = useState(null);
@@ -70,6 +76,11 @@ export default function PurchaseOrderForm() {
         vat_rate: Number(l.vat_rate ?? 20),
       })),
     };
+    // Pack 3.5 §7.1 — attach the package_id only when the user
+    // explicitly chose the "From a package" path AND provided one.
+    if (createMode === 'package' && packageId.trim()) {
+      payload.package_id = packageId.trim();
+    }
     try {
       const po = await create.mutateAsync(payload);
       navigate(`/projects/${projectId}/purchase-orders/${po.id}`);
@@ -81,6 +92,57 @@ export default function PurchaseOrderForm() {
   return (
     <form onSubmit={onSubmit} className="p-6 space-y-4" data-testid="po-form">
       <h1 className="text-xl font-semibold">New purchase order</h1>
+
+      {/* Pack 3.5 §7.1 — "One front door" chooser. */}
+      <fieldset
+        className="rounded border border-slate-200 bg-slate-50 px-4 py-3"
+        data-testid="po-form-create-mode"
+      >
+        <legend className="px-1 text-xs font-medium uppercase tracking-wide text-slate-600">
+          How are you creating this PO?
+        </legend>
+        <div className="mt-1 flex flex-wrap gap-4 text-sm">
+          <label className="flex items-center gap-1.5">
+            <input
+              type="radio"
+              name="po-create-mode"
+              value="simple"
+              checked={createMode === 'simple'}
+              onChange={() => { setCreateMode('simple'); setPackageId(''); }}
+              data-testid="po-form-mode-simple"
+            />
+            Simple order (standalone PO)
+          </label>
+          <label className="flex items-center gap-1.5">
+            <input
+              type="radio"
+              name="po-create-mode"
+              value="package"
+              checked={createMode === 'package'}
+              onChange={() => setCreateMode('package')}
+              data-testid="po-form-mode-package"
+            />
+            From a Package (link by package id)
+          </label>
+        </div>
+        {createMode === 'package' && (
+          <label className="mt-2 block max-w-md text-sm">
+            <span className="text-xs text-slate-600">Package id</span>
+            <input
+              type="text"
+              className="w-full px-2 py-1 border rounded text-sm font-mono"
+              value={packageId}
+              onChange={(e) => setPackageId(e.target.value)}
+              placeholder="Paste the package UUID"
+              data-testid="po-form-package-id"
+            />
+            <span className="mt-1 block text-xs text-slate-500">
+              Server enforces same tenant + same project + valid UUID; a
+              mismatch returns 422 pre-write.
+            </span>
+          </label>
+        )}
+      </fieldset>
 
       <div className="grid grid-cols-2 gap-3 max-w-2xl">
         <label className="block text-sm">

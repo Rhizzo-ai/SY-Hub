@@ -79,6 +79,27 @@ export default function PurchaseOrderDetail() {
         </div>
       </section>
 
+      {/* Pack 3.5 §7.2 — bidirectional package link. Show the back-pointer
+          when the PO was awarded from a package; show nothing on a
+          standalone "simple" PO. */}
+      {po.package_id && (
+        <section
+          className="rounded border border-sy-teal-200 bg-sy-teal-50 px-3 py-2 text-sm"
+          data-testid="po-detail-package-link"
+        >
+          <span className="text-xs uppercase tracking-wide text-sy-grey-700 mr-2">
+            From package
+          </span>
+          <Link
+            to={`/admin/packages/${po.package_id}`}
+            className="font-mono text-sy-teal-700 hover:underline"
+            data-testid="po-detail-package-link-anchor"
+          >
+            {po.package_reference || po.package_id}
+          </Link>
+        </section>
+      )}
+
       <nav className="flex gap-2 border-b" data-testid="po-detail-tabs">
         {TABS.map((t) => (
           <button

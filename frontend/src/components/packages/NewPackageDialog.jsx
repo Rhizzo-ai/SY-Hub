@@ -4,10 +4,11 @@
  *
  * Backend contract:
  *   POST /v1/projects/{project_id}/packages
- *     { budget_id, title, kind: 'labour'|'materials', description? }
+ *     { budget_id, title, kind: 'materials'|'subcontract'|'consultant',
+ *       description? }                                       // Pack 3.5
  *
  * Validations (server-authoritative, mirrored here for UX):
- *   - title required, kind ∈ {labour, materials}, budget_id non-terminal.
+ *   - title required, kind ∈ {materials, subcontract, consultant}.
  *   - Server rejects against a terminal (Closed) budget → surfaced.
  */
 import React, { useEffect, useState } from 'react';
@@ -213,7 +214,9 @@ export default function NewPackageDialog({
             <legend className="block text-xs font-medium text-slate-600">
               Kind
             </legend>
-            <div className="mt-1 flex gap-3">
+            {/* Pack 3.5 §6.1 — 3 kinds: materials → PO,
+                subcontract → SC, consultant → PO (CIS-clean). */}
+            <div className="mt-1 flex flex-wrap gap-3">
               <label className="flex items-center gap-1.5 text-sm">
                 <input
                   type="radio"
@@ -229,12 +232,23 @@ export default function NewPackageDialog({
                 <input
                   type="radio"
                   name="kind"
-                  value="labour"
-                  checked={kind === 'labour'}
-                  onChange={() => setKind('labour')}
-                  data-testid="new-package-kind-labour"
+                  value="subcontract"
+                  checked={kind === 'subcontract'}
+                  onChange={() => setKind('subcontract')}
+                  data-testid="new-package-kind-subcontract"
                 />
-                Labour (Subcontract)
+                Subcontract
+              </label>
+              <label className="flex items-center gap-1.5 text-sm">
+                <input
+                  type="radio"
+                  name="kind"
+                  value="consultant"
+                  checked={kind === 'consultant'}
+                  onChange={() => setKind('consultant')}
+                  data-testid="new-package-kind-consultant"
+                />
+                Consultant (PO)
               </label>
             </div>
           </fieldset>

@@ -1440,12 +1440,24 @@ _PACKAGE_LINE_SENSITIVE = frozenset({
 })
 
 
-def _ser_package_line(pl: PackageLine, *, include_sensitive: bool) -> dict[str, Any]:
+def _ser_package_line(
+    pl: PackageLine,
+    *,
+    include_sensitive: bool,
+    cost_code_names: Optional[dict[str, str]] = None,
+) -> dict[str, Any]:
     out: dict[str, Any] = {
         "id": str(pl.id),
         "package_id": str(pl.package_id),
         "budget_line_id": str(pl.budget_line_id),
         "cost_code": pl.cost_code,
+        # Pack 3.5 §5.1 — human-readable name for grouping headers
+        # (e.g. "4.02 — Substructure"). Resolved per-package via a
+        # single batched query in `serialise_package`; falls back to
+        # None when `db` is not threaded through.
+        "cost_code_name": (
+            (cost_code_names or {}).get(pl.cost_code)
+        ),
         "line_number": int(pl.line_number),
         "description": pl.description,
         "quantity": str(pl.quantity),
@@ -1558,7 +1570,23 @@ def _ser_award(award: PackageAward, *, include_sensitive: bool) -> dict[str, Any
 
 def serialise_package(
     p: Package, *, with_sensitive: bool,
+    db: Optional[Session] = None,
 ) -> dict[str, Any]:
+    # Pack 3.5 §5.1 — resolve cost_code → name in ONE batched query
+    # against the package's distinct codes, so the grouped UI gets a
+    # human label for the header (e.g. "4.02 — Substructure"). When
+    # db is not threaded, fall back silently (cost_code_name = None).
+    cost_code_names: dict[str, str] = {}
+    if db is not None and p.lines:
+        from app.models.cost_codes import CostCode
+        codes = sorted({pl.cost_code for pl in p.lines if pl.cost_code})
+        if codes:
+            rows = db.execute(
+                select(CostCode.code, CostCode.name).where(
+                    CostCode.code.in_(codes)
+                )
+            ).all()
+            cost_code_names = {code: name for code, name in rows}
     out: dict[str, Any] = {
         "id": str(p.id),
         "tenant_id": str(p.tenant_id),
@@ -1592,7 +1620,10 @@ def serialise_package(
         for k in _HEADER_SENSITIVE:
             out[k] = None
     out["lines"] = [
-        _ser_package_line(pl, include_sensitive=with_sensitive)
+        _ser_package_line(
+            pl, include_sensitive=with_sensitive,
+            cost_code_names=cost_code_names,
+        )
         for pl in sorted(p.lines, key=lambda x: x.line_number)
     ]
     out["bids"] = [

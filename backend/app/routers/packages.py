@@ -68,9 +68,12 @@ def _map(exc: Exception) -> HTTPException:
     return HTTPException(status_code=500, detail=str(exc))
 
 
-def _serialise_with_perms(p, *, perms: UserPermissions) -> dict[str, Any]:
+def _serialise_with_perms(
+    p, *, perms: UserPermissions, db=None,
+) -> dict[str, Any]:
     return svc.serialise_package(
         p, with_sensitive=perms.has("packages.view_sensitive"),
+        db=db,
     )
 
 
@@ -103,7 +106,7 @@ def create_package(
         raise _map(exc)
     db.commit()
     p = svc.get_package(db, p.id, user=current, perms=perms)
-    return _serialise_with_perms(p, perms=perms)
+    return _serialise_with_perms(p, perms=perms, db=db)
 
 
 @router.get("/projects/{project_id}/packages")
@@ -125,7 +128,7 @@ def list_packages_for_project(
         )
     except (PackageNotFoundError, ValueError) as exc:
         raise _map(exc)
-    items = [_serialise_with_perms(r, perms=perms) for r in rows]
+    items = [_serialise_with_perms(r, perms=perms, db=db) for r in rows]
     return {"items": items, "total": len(items)}
 
 
@@ -147,7 +150,7 @@ def list_packages_global(
         )
     except (PackageNotFoundError, ValueError) as exc:
         raise _map(exc)
-    items = [_serialise_with_perms(r, perms=perms) for r in rows]
+    items = [_serialise_with_perms(r, perms=perms, db=db) for r in rows]
     return {"items": items, "total": len(items)}
 
 
@@ -162,7 +165,7 @@ def get_package(
         p = svc.get_package(db, package_id, user=current, perms=perms)
     except PackageNotFoundError as exc:
         raise _map(exc)
-    return _serialise_with_perms(p, perms=perms)
+    return _serialise_with_perms(p, perms=perms, db=db)
 
 
 @router.patch("/packages/{package_id}")
@@ -184,7 +187,7 @@ def patch_package(
         raise _map(exc)
     db.commit()
     p = svc.get_package(db, p.id, user=current, perms=perms)
-    return _serialise_with_perms(p, perms=perms)
+    return _serialise_with_perms(p, perms=perms, db=db)
 
 
 @router.delete("/packages/{package_id}", status_code=204)
@@ -232,7 +235,7 @@ def add_line(
         raise _map(exc)
     db.commit()
     p = svc.get_package(db, package_id, user=current, perms=perms)
-    return _serialise_with_perms(p, perms=perms)
+    return _serialise_with_perms(p, perms=perms, db=db)
 
 
 @router.patch("/packages/{package_id}/lines/{line_id}")
@@ -254,7 +257,7 @@ def patch_line(
         raise _map(exc)
     db.commit()
     p = svc.get_package(db, package_id, user=current, perms=perms)
-    return _serialise_with_perms(p, perms=perms)
+    return _serialise_with_perms(p, perms=perms, db=db)
 
 
 @router.delete("/packages/{package_id}/lines/{line_id}", status_code=204)
@@ -294,7 +297,7 @@ def send_to_tender_endpoint(
         raise _map(exc)
     db.commit()
     p = svc.get_package(db, package_id, user=current, perms=perms)
-    return _serialise_with_perms(p, perms=perms)
+    return _serialise_with_perms(p, perms=perms, db=db)
 
 
 @router.post("/packages/{package_id}/cancel")
@@ -316,7 +319,7 @@ def cancel_package_endpoint(
         raise _map(exc)
     db.commit()
     p = svc.get_package(db, package_id, user=current, perms=perms)
-    return _serialise_with_perms(p, perms=perms)
+    return _serialise_with_perms(p, perms=perms, db=db)
 
 
 # ---------------------------------------------------------------------------
@@ -341,7 +344,7 @@ def invite_bidder_endpoint(
         raise _map(exc)
     db.commit()
     p = svc.get_package(db, package_id, user=current, perms=perms)
-    return _serialise_with_perms(p, perms=perms)
+    return _serialise_with_perms(p, perms=perms, db=db)
 
 
 @router.get("/packages/{package_id}/bids")
@@ -391,7 +394,7 @@ def enter_bid_endpoint(
         raise _map(exc)
     db.commit()
     p = svc.get_package(db, bid.package_id, user=current, perms=perms)
-    return _serialise_with_perms(p, perms=perms)
+    return _serialise_with_perms(p, perms=perms, db=db)
 
 
 @router.post("/bids/{bid_id}/decline")
@@ -409,7 +412,7 @@ def decline_bid_endpoint(
         raise _map(exc)
     db.commit()
     p = svc.get_package(db, bid.package_id, user=current, perms=perms)
-    return _serialise_with_perms(p, perms=perms)
+    return _serialise_with_perms(p, perms=perms, db=db)
 
 
 @router.post("/bids/{bid_id}/withdraw")
@@ -427,7 +430,7 @@ def withdraw_bid_endpoint(
         raise _map(exc)
     db.commit()
     p = svc.get_package(db, bid.package_id, user=current, perms=perms)
-    return _serialise_with_perms(p, perms=perms)
+    return _serialise_with_perms(p, perms=perms, db=db)
 
 
 # ---------------------------------------------------------------------------
@@ -474,7 +477,7 @@ def award_endpoint(
         raise _map(exc)
     db.commit()
     p = svc.get_package(db, package_id, user=current, perms=perms)
-    return _serialise_with_perms(p, perms=perms)
+    return _serialise_with_perms(p, perms=perms, db=db)
 
 
 @router.post("/awards/{award_id}/cancel")
@@ -495,4 +498,4 @@ def cancel_award_endpoint(
         raise _map(exc)
     db.commit()
     p = svc.get_package(db, award.package_id, user=current, perms=perms)
-    return _serialise_with_perms(p, perms=perms)
+    return _serialise_with_perms(p, perms=perms, db=db)

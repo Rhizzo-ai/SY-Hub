@@ -37,6 +37,7 @@ import {
   fmtMoney, statusPillProps, bidPillProps, multiplyMoney, sumMoney,
   exceedsTotal, errorMessage,
 } from '@/components/packages/packagesHelpers';
+import { groupPackageLinesByCostCode } from '@/components/packages/packageLineGroup';
 
 const TEAL = '#0F6A7A';
 const ORANGE = '#FC7827';
@@ -493,46 +494,85 @@ function LinesTab({ pkg, canEdit, canViewSensitive, onChanged }) {
                 </td>
               </tr>
             )}
-            {(pkg.lines || []).map((ln) => (
-              <tr
-                key={ln.id}
-                className="border-t border-slate-100"
-                data-testid={`package-line-row-${ln.line_number}`}
-              >
-                <td className="px-4 py-2 text-slate-500">
-                  {ln.line_number}
-                </td>
-                <td className="px-4 py-2 font-mono text-xs text-slate-700">
-                  {ln.cost_code}
-                </td>
-                <td className="px-4 py-2 text-slate-800">
-                  {ln.description}
-                </td>
-                <td className="px-4 py-2 text-right tabular-nums">
-                  {ln.quantity}
-                </td>
-                <td className="px-4 py-2 text-slate-600">
-                  {ln.unit || '\u2014'}
-                </td>
-                <td className="px-4 py-2 text-right tabular-nums">
-                  {fmtMoney(ln.budgeted_unit_rate)}
-                </td>
-                <td className="px-4 py-2 text-right tabular-nums font-medium">
-                  {fmtMoney(ln.budgeted_net_amount)}
-                </td>
-                {canEdit && (
-                  <td className="px-4 py-2 text-right">
-                    <button
-                      type="button"
-                      onClick={() => onRemoveLine(ln.id)}
-                      data-testid={`package-line-remove-${ln.line_number}`}
-                      className="rounded p-1 text-rose-600 hover:bg-rose-50"
-                    >
-                      <Trash2 size={14} />
-                    </button>
+            {/* Pack 3.5 §5.2 — group by cost_code, dotted-code sort,
+                per-group net subtotal row. */}
+            {groupPackageLinesByCostCode(pkg.lines || []).map((g) => (
+              <React.Fragment key={`grp-${g.code}`}>
+                <tr
+                  className="bg-slate-100/80 border-t border-slate-200"
+                  data-testid={`package-line-group-header-${g.code}`}
+                >
+                  <td
+                    colSpan={canEdit ? 8 : 7}
+                    className="px-4 py-2 font-semibold text-slate-800"
+                  >
+                    <span className="font-mono text-xs text-slate-600 mr-2">
+                      {g.code}
+                    </span>
+                    {g.name || (
+                      <span className="italic text-slate-500">
+                        (no cost-code name)
+                      </span>
+                    )}
                   </td>
-                )}
-              </tr>
+                </tr>
+                {g.lines.map((ln) => (
+                  <tr
+                    key={ln.id}
+                    className="border-t border-slate-100"
+                    data-testid={`package-line-row-${ln.line_number}`}
+                  >
+                    <td className="px-4 py-2 text-slate-500">
+                      {ln.line_number}
+                    </td>
+                    <td className="px-4 py-2 font-mono text-xs text-slate-700">
+                      {ln.cost_code}
+                    </td>
+                    <td className="px-4 py-2 text-slate-800">
+                      {ln.description}
+                    </td>
+                    <td className="px-4 py-2 text-right tabular-nums">
+                      {ln.quantity}
+                    </td>
+                    <td className="px-4 py-2 text-slate-600">
+                      {ln.unit || '\u2014'}
+                    </td>
+                    <td className="px-4 py-2 text-right tabular-nums">
+                      {fmtMoney(ln.budgeted_unit_rate)}
+                    </td>
+                    <td className="px-4 py-2 text-right tabular-nums font-medium">
+                      {fmtMoney(ln.budgeted_net_amount)}
+                    </td>
+                    {canEdit && (
+                      <td className="px-4 py-2 text-right">
+                        <button
+                          type="button"
+                          onClick={() => onRemoveLine(ln.id)}
+                          data-testid={`package-line-remove-${ln.line_number}`}
+                          className="rounded p-1 text-rose-600 hover:bg-rose-50"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </td>
+                    )}
+                  </tr>
+                ))}
+                <tr
+                  className="bg-slate-50 border-t border-slate-200"
+                  data-testid={`package-line-group-subtotal-${g.code}`}
+                >
+                  <td
+                    colSpan={canEdit ? 6 : 5}
+                    className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wide text-slate-500"
+                  >
+                    Subtotal {g.code}
+                  </td>
+                  <td className="px-4 py-2 text-right tabular-nums font-semibold text-slate-900">
+                    {fmtMoney(g.subtotalNet)}
+                  </td>
+                  {canEdit && <td />}
+                </tr>
+              </React.Fragment>
             ))}
           </tbody>
         </table>
@@ -789,11 +829,18 @@ function InviteBidderDialog({ pkg, onClose, onInvited }) {
   useEffect(() => {
     listSuppliers({ params: { limit: 200 } })
       .then((data) => {
-        // Filter by kind for the picker (server still enforces).
+        // Pack 3.5 §6.3 — kind-aware bidder filter (server is the
+        // ultimate authority — `_supplier_kind_guard` will 422 anything
+        // we let through; this just keeps the UI honest).
         const items = (data?.items || data || []).filter((s) => {
-          if (pkg.kind === 'labour') return s.supplier_type === 'Contractor';
+          if (pkg.kind === 'subcontract') {
+            return s.supplier_type === 'Contractor';
+          }
           if (pkg.kind === 'materials') {
             return ['Supplier', 'Contractor'].includes(s.supplier_type);
+          }
+          if (pkg.kind === 'consultant') {
+            return s.supplier_type === 'Consultant';
           }
           return false;
         });

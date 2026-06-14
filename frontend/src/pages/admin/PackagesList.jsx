@@ -143,8 +143,10 @@ export default function PackagesList() {
             className="rounded border border-slate-300 px-2 py-1 text-sm"
           >
             <option value="">All</option>
+            {/* Pack 3.5 §6.2 — 3 kinds vocab. */}
             <option value="materials">Materials</option>
-            <option value="labour">Labour</option>
+            <option value="subcontract">Subcontract</option>
+            <option value="consultant">Consultant</option>
           </select>
         </label>
       </div>
