@@ -909,4 +909,22 @@ Locked decisions (build from these, design fully code-grounded in Chat 54):
   display-only (NO stored group ref — derive from line.cost_code). Mirror the
   grid's `groupLinesByCategory` PATTERN, but note package lines store
   `cost_code` as a STRING (e.g. "4.02"), not `cost_code_id` — so the grid
-  helper
+  helper can't be reused verbatim; needs a string-keyed variant.
+- **Cost-code TITLES** shown with the number ("4.02 — Groundworks") on the
+  package lines screen. Budget-grid + everywhere-else title sweep = separate
+  backlog item (B103 below).
+- **Backlog noted, not built in 3.5:** optional consultant-spend flag on POs if
+  reporting ever needs to filter consultant vs materials spend (B104 below).
+
+- **B103** — Cost-code titles everywhere. Show "code — title" (e.g.
+  "4.02 — Groundworks") wherever a cost code is displayed — budget grid,
+  drilldowns, anywhere a bare code appears. Pack 3.5 does the packages screen
+  only; this is the tidy sweep for the rest, done deliberately (the budget grid
+  is high-traffic/high-test — change it in its own small pass, not bundled).
+
+- **B104** — Consultant-spend reporting flag on POs (optional). A PO created
+  from a `consultant` package is just a PO with lines — it carries no label
+  marking it as a professional fee vs a materials order. If/when reporting
+  needs to filter consultant spend directly (rather than tracing back through
+  the originating package), add a flag/source marker on the PO. Defer until
+  reporting asks for it.
