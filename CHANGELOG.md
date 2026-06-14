@@ -10,6 +10,84 @@ Each entry: date, prompt reference (if applicable), change, rationale.
 
 ## Entries
 
+## Chat 55 — Build Pack B88 Pack 3.5 · Packages → 3-value kind vocabulary
+
+Backend + frontend pack. Splits `package.kind` from a 2-value vocab
+(`labour`, `materials`) into the live 3-value set
+(`materials`, `subcontract`, `consultant`), threads a bidirectional
+`package_id` link onto both downstream `purchase_orders` and
+`subcontracts`, and surfaces it across the UI (grouped lines with
+dotted-code subtotals, 3-kind radios + filter, kind-aware invite
+picker, "one front door" PO chooser, and back-pointer display).
+
+### Migration
+
+- **`0048_package_kind_3value_links`** — additively extends the
+  PG enum (`subcontract`, `consultant`) inside an `autocommit_block`,
+  data-migrates `labour → subcontract`, swaps the named CHECK
+  `ck_packages_kind_values` to the live 3-value set, adds nullable
+  `package_id` UUID + FK (`ON DELETE SET NULL`) + index on both
+  `purchase_orders` and `subcontracts`. `labour` stays as an orphaned
+  enum member (Postgres cannot drop enum values — precedent
+  0020 / 0047).
+
+### Build-Pack corrections (called out in gate STOPs)
+
+- **D1 — Revision id length.** Build Pack target id
+  `0048_package_kind_3value_and_links` (34 chars) exceeds
+  `alembic_version.version_num` (`varchar(32)`). Shortened to
+  `0048_package_kind_3value_links` (29 chars). Same semantics.
+- **D2 — CHECK-vs-UPDATE ordering.** Build Pack §1.1 listed the
+  upgrade steps as enum-add → UPDATE → DROP+RECREATE CHECK, but at
+  the moment of UPDATE the live CHECK is still
+  `kind IN ('labour','materials')`, which rejects
+  `kind='subcontract'`. The audit's C1 fix addressed transaction
+  ordering for ALTER TYPE only, not CHECK-vs-UPDATE. **Corrected
+  sequence (forward):** enum-add → DROP old CHECK → UPDATE
+  labour→subcontract → CREATE new CHECK → ADD package_id columns.
+  Downgrade symmetric: DROP new CHECK → UPDATE
+  subcontract→labour → CREATE old CHECK. Both directions verified
+  clean against a seeded labour package.
+- **D3 — TTN slot collision.** Build Pack §2.4 names the new
+  consultant-flip tests `test_TTN_6/7/8`, but those slots were
+  already occupied at HEAD. Renamed the incumbents to TTN_9/10/11
+  (rename-only — semantics unchanged) to free the canonical slots
+  for Pack 3.5's three new tests.
+- **D4 — `test_TM_2` enum assertion.** Pre-3.5 the test queried
+  `pg_enum` for the full member set; Pack 3.5's additive model
+  leaves `labour` orphaned in pg_enum. Per Build Pack §0.4 the
+  test now asserts against `pg_get_constraintdef('ck_packages_kind_values')`
+  for `package_kind` only; the other 3 enums keep the original
+  pg_enum member-set assertion.
+- **D5 — Demo cost-codes.** Four temporary dotted codes
+  (`4.02, 4.05, 4.10, 4.20`) inserted during Gate 5 screenshot proof
+  so the dotted-code sort could be visually demonstrated against the
+  hyphenated-format seed (`XXX-NN`). Removed before the Final Gate;
+  cost_codes count back to the canonical **130**.
+
+### Locked operator decisions (Chat 55 D-table)
+
+| # | Decision |
+|---|----------|
+| LD-P35-1 | Package kinds: `materials → PO`, `subcontract → SC` (CIS counterparty), `consultant → PO` (CIS-clean by construction — the PO path applies no CIS). |
+| LD-P35-2 | `_supplier_kind_guard` flip: `consultant` packages REQUIRE `supplier_type='Consultant'` (pre-3.5 rejected outright). `subcontract` narrows from "Contractor or Supplier" to "Contractor only". |
+| LD-P35-3 | `package_id` on `purchase_orders` and `subcontracts` is nullable with `ON DELETE SET NULL` — deleting a package never cascade-destroys a real financial order. |
+| LD-P35-4 | Standalone PO/SC POSTs accept optional `package_id`; service validates UUID + exists + same-tenant + same-project before any DB write (422 on mismatch). |
+| LD-P35-5 | Money invariants unchanged: `materials → PO` routing is identical to pre-3.5; awarded_net reconciliation = Σ line nets (`_q2` Decimal); VAT 20% maths on POs untouched; subcontract `cis_applies` default True preserved. |
+| LD-P35-6 | Permission count stays at **142**; no new permissions added. |
+
+### Gate-by-gate STOPs (2nd-run WARM-DB count progression)
+
+| Gate | Count (collected / passed / failed) | New tests | Notes |
+|------|--------------------------------------|-----------|-------|
+| Baseline | 1579 / 1557 / 19 | — | 19 stale assertions inherited from pre-Pack-3 packs; all about old alembic heads / perm counts. None touch packages / money / auth. |
+| Gate 1 | 1579 / 1557 / 19 | — | Migration only; down/up round-trip on live DB with seeded labour package = PASS. |
+| Gate 2 | 1582 / 1560 / 19 | TTN_4 renamed; TTN_6/7/8 new (consultant flip); TM_1/TM_2 updated | `_supplier_kind_guard` rewritten for 3 kinds. |
+| Gate 3 | 1587 / 1565 / 19 | award_consultant_routes_to_po, award_subcontract_routes_to_subcontract, award_materials_po_carries_package_id, award_consultant_po_is_cis_clean, consultant_award_reconciles_awarded_net | LIVE-API award proven for all 3 kinds (materials → PO £240, subcontract → SC cis_applies True, consultant → PO subcontract_id null). |
+| Gate 4 | 1591 / 1569 / 19 | TestPK35StandalonePackageLink (4 named) | Standalone-POST LIVE proof (with/without/foreign package_id). |
+| Gates 5+6+7 | 1591 / 1569 / 19 | — (frontend-only) | UI: grouped lines + dotted-code subtotals; 3-radio dialog + filter; kind-aware invite picker (live: consultant pkg → only Consultants; subcontract pkg → only Contractors); PO front-door chooser; bidirectional back-link display. |
+| Final | 1591 / 1569 / 19 (IDENTICAL to baseline-failure set) | — | Backend +12 tests landed (5 + 4 + 3 renamed). Net suite delta: +12 passed, 0 new failures. |
+
 ## Chat 53 — Build Pack B88 Pack 3 · Packages (the tendering spine)
 
 Backend + frontend pack. Introduces the **tendering spine**: a sixth

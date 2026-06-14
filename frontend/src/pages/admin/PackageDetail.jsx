@@ -891,9 +891,11 @@ function InviteBidderDialog({ pkg, onClose, onInvited }) {
         <label className="block">
           <span className="block text-xs font-medium text-slate-600">
             Supplier{' '}
-            {pkg.kind === 'labour'
-              ? '(Contractor only — LD-P6)'
-              : '(Supplier / Contractor)'}
+            {pkg.kind === 'subcontract'
+              ? '(Contractor only — CIS counterparty)'
+              : pkg.kind === 'consultant'
+                ? '(Consultant only)'
+                : '(Supplier / Contractor)'}
           </span>
           <select
             value={supplierId}

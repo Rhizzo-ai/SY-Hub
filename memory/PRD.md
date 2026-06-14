@@ -2959,3 +2959,32 @@ cd /app/backend && python -m app.bootstrap   # idempotent; bootstraps DB + seeds
 sudo supervisorctl start backend
 cd /app/backend && pytest tests/ --ignore=tests/test_c3_governance_smoke.py
 ```
+
+
+---
+
+## Chat 55 — B88 Pack 3.5 (2026-06-14)
+
+### Headline
+Packages get a **3-value kind vocabulary** (`materials`, `subcontract`, `consultant`) replacing the 2-value (`labour`, `materials`) set, with a **bidirectional `package_id` link** threaded into both downstream tables (`purchase_orders`, `subcontracts`) and surfaced across the UI.
+
+### What changed
+- **Migration `0048_package_kind_3value_links`** — additive enum extension; `labour → subcontract` data migration; CHECK swap to the live 3-value set; nullable `package_id` UUID FK on both PO and SC tables (`ON DELETE SET NULL`).
+- **`_supplier_kind_guard` flip** — consultant packages REQUIRE Consultants (pre-3.5 rejected them outright); subcontract narrows to Contractor only.
+- **Award routing** — new `consultant → PO` branch (CIS-clean by construction); `materials → PO` unchanged; `subcontract → SC` (was `labour → SC`); all three thread `package_id`.
+- **Standalone path** — `POCreate.package_id` and `SubcontractCreateBody.package_id`; service-side validation (UUID + exists + same-tenant + same-project, 422 on mismatch).
+- **Frontend** — grouped lines + dotted-code subtotals on `PackageDetail`; 3-radio dialog + filter; kind-aware invite picker; "one front door" PO chooser; back-link callout on PO detail.
+
+### Final invariants
+- alembic head: `0048_package_kind_3value_links`
+- permissions: **142**, roles: **10**, cost_codes: **130** (canonical per Pack 1 G4 corrected master)
+- Suite (2nd-run WARM-DB): **1591 collected · 1569 passed · 19 failed** (failure set IDENTICAL to pre-Pack baseline — no regressions)
+- Materials → PO money maths unchanged (£200 net + 20% VAT = £240 gross)
+- Subcontract `cis_applies` default True preserved
+
+### Build-Pack corrections recorded in CHANGELOG
+D1 (rev id length), D2 (CHECK-vs-UPDATE ordering), D3 (TTN slot collision), D4 (TM_2 enum assertion), D5 (demo cost-codes — cleaned up).
+
+### Closing doc
+`/app/docs/chat_55_pack_3_5_closing.md`
+
