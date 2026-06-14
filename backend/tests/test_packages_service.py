@@ -28,8 +28,8 @@ from tests._packages_common import (
     PWD, READONLY_EMAIL,
     add_line, award, bump_self_approval_threshold, cancel_award,
     create_package, enter_bid, invite_bidder, make_active_budget,
-    make_contractor, make_entity_and_project, make_supplier,
-    send_to_tender, wipe,
+    make_consultant, make_contractor, make_entity_and_project,
+    make_supplier, send_to_tender, wipe,
 )
 from tests.conftest import login_with_auto_enroll
 
@@ -88,13 +88,13 @@ def budget(admin, db_engine, project):
 # T-M : migration + schema
 # ==========================================================================
 
-def test_TM_1_alembic_head_is_0047(db_engine):
-    """Alembic head reports 0047_packages and all 6 tables exist."""
+def test_TM_1_alembic_head_is_0048(db_engine):
+    """Pack 3.5 — alembic head reports 0048 and all 6 tables exist."""
     with db_engine.connect() as c:
         head = c.execute(text(
             "SELECT version_num FROM alembic_version"
         )).scalar()
-    assert head == "0047_packages", head
+    assert head == "0048_package_kind_3value_links", head
     expected_tables = {
         "packages", "package_lines", "package_bids", "package_bid_lines",
         "package_awards", "package_award_lines",
@@ -109,9 +109,18 @@ def test_TM_1_alembic_head_is_0047(db_engine):
 
 
 def test_TM_2_enums_present_with_expected_values(db_engine):
-    """All 4 new PG enums + 'award' on permission_action."""
+    """All 4 new PG enums + 'award' on permission_action.
+
+    Pack 3.5 — `package_kind` is now a 3-value LIVE vocabulary
+    (`materials`, `subcontract`, `consultant`). The DB enum physically
+    retains the orphaned `labour` value (Postgres cannot drop enum
+    values; precedent 0020/0047); the live allowed set is enforced by
+    the named CHECK constraint `ck_packages_kind_values`, NOT the
+    enum's full member list. So `package_kind` is asserted against the
+    CHECK-allowed set (per Build Pack §0.4); the other enums use the
+    full pg_enum member list as before.
+    """
     enum_expected = {
-        "package_kind": {"labour", "materials"},
         "package_status": {
             "draft", "out_to_tender", "partially_awarded",
             "awarded", "cancelled",
@@ -130,6 +139,16 @@ def test_TM_2_enums_present_with_expected_values(db_engine):
             ), {"n": enum_name}).all()
             values = {r[0] for r in rows}
             assert values == expected, (enum_name, values, expected)
+
+        # package_kind — assert against the CHECK-allowed live set.
+        check_def = c.execute(text(
+            "SELECT pg_get_constraintdef(oid) FROM pg_constraint "
+            "WHERE conname = 'ck_packages_kind_values'"
+        )).scalar() or ""
+        for v in ("materials", "subcontract", "consultant"):
+            assert v in check_def, (v, check_def)
+        assert "labour" not in check_def, check_def
+
         # 'award' on permission_action
         rows = c.execute(text(
             "SELECT e.enumlabel FROM pg_enum e "
@@ -426,10 +445,10 @@ def test_TTN_3_invite_dup_returns_409(admin, project, budget):
     assert r2.status_code == 409, r2.text
 
 
-def test_TTN_4_labour_rejects_non_contractor(admin, project, budget):
+def test_TTN_4_subcontract_rejects_non_contractor(admin, project, budget):
     r = create_package(
         admin, project_id=project, budget_id=budget["id"],
-        title="TN4", kind="labour",
+        title="TN4", kind="subcontract",
     )
     pkg = r.json()
     add_line(admin, pkg["id"], budget_line_id=budget["lines"][0]["id"])
@@ -455,7 +474,51 @@ def test_TTN_5_materials_accepts_supplier(admin, project, budget):
     assert r.status_code == 201, r.text  # warn-not-block
 
 
-def test_TTN_6_enter_bid_computes_net_ignores_client_net(admin, project, budget):
+# Pack 3.5 — supplier_kind_guard FLIP: consultant packages REQUIRE
+# Consultant suppliers (pre-3.5 they were rejected outright). Three new
+# named TTN tests cover the new live truth.
+
+
+def test_TTN_6_consultant_accepts_consultant(admin, project, budget):
+    r = create_package(
+        admin, project_id=project, budget_id=budget["id"],
+        title="TN6", kind="consultant",
+    )
+    pkg = r.json()
+    add_line(admin, pkg["id"], budget_line_id=budget["lines"][0]["id"])
+    send_to_tender(admin, pkg["id"])
+    consultant = make_consultant(admin)
+    r = invite_bidder(admin, pkg["id"], supplier_id=consultant)
+    assert r.status_code == 201, r.text
+
+
+def test_TTN_7_consultant_rejects_non_consultant(admin, project, budget):
+    r = create_package(
+        admin, project_id=project, budget_id=budget["id"],
+        title="TN7", kind="consultant",
+    )
+    pkg = r.json()
+    add_line(admin, pkg["id"], budget_line_id=budget["lines"][0]["id"])
+    send_to_tender(admin, pkg["id"])
+    contractor = make_contractor(admin)
+    r = invite_bidder(admin, pkg["id"], supplier_id=contractor)
+    assert r.status_code == 422, r.text
+
+
+def test_TTN_8_materials_rejects_consultant(admin, project, budget):
+    r = create_package(
+        admin, project_id=project, budget_id=budget["id"],
+        title="TN8", kind="materials",
+    )
+    pkg = r.json()
+    add_line(admin, pkg["id"], budget_line_id=budget["lines"][0]["id"])
+    send_to_tender(admin, pkg["id"])
+    consultant = make_consultant(admin)
+    r = invite_bidder(admin, pkg["id"], supplier_id=consultant)
+    assert r.status_code == 422, r.text
+
+
+def test_TTN_9_enter_bid_computes_net_ignores_client_net(admin, project, budget):
     r = create_package(
         admin, project_id=project, budget_id=budget["id"],
         title="TN6", kind="materials",
@@ -480,7 +543,7 @@ def test_TTN_6_enter_bid_computes_net_ignores_client_net(admin, project, budget)
     assert Decimal(bl["quoted_net_amount"]) == Decimal("90000.00")
 
 
-def test_TTN_7_enter_bid_rejects_foreign_line(admin, project, budget):
+def test_TTN_10_enter_bid_rejects_foreign_line(admin, project, budget):
     r = create_package(
         admin, project_id=project, budget_id=budget["id"],
         title="TN7", kind="materials",
@@ -498,7 +561,7 @@ def test_TTN_7_enter_bid_rejects_foreign_line(admin, project, budget):
     assert r.status_code == 422, r.text
 
 
-def test_TTN_8_decline_withdrawn_bid_not_awardable(admin, project, budget):
+def test_TTN_11_decline_withdrawn_bid_not_awardable(admin, project, budget):
     r = create_package(
         admin, project_id=project, budget_id=budget["id"],
         title="TN8", kind="materials",

@@ -27,7 +27,7 @@ from sqlalchemy.orm import relationship
 from app.db import Base
 
 
-PACKAGE_KINDS = ("labour", "materials")
+PACKAGE_KINDS = ("materials", "subcontract", "consultant")
 PACKAGE_STATUSES = (
     "draft", "out_to_tender", "partially_awarded", "awarded", "cancelled",
 )

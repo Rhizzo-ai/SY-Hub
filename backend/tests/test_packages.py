@@ -163,11 +163,11 @@ def test_TAW_1_single_full_materials_award_creates_PO(admin, project, budget):
         assert Decimal(ln["net_amount"]) == Decimal("100000.00")
 
 
-def test_TAW_2_single_full_labour_award_creates_subcontract(
+def test_TAW_2_single_full_subcontract_award_creates_subcontract(
     admin, project, budget,
 ):
     pkg, pl_ids = _pkg_with_lines_at_tender(
-        admin, project, budget, kind="labour", title="AW2",
+        admin, project, budget, kind="subcontract", title="AW2",
     )
     contractor = make_contractor(admin)
     iv = invite_bidder(admin, pkg["id"], supplier_id=contractor)
@@ -675,10 +675,10 @@ def test_TCX_2_cancel_award_with_issued_PO_blocked(
 def test_TCX_3_cancel_award_with_active_subcontract_blocked(
     admin, project, budget,
 ):
-    """A labour award whose Subcontract has been activated → cancel
+    """A subcontract award whose Subcontract has been activated → cancel
     is blocked with 409."""
     pkg, pl_ids = _pkg_with_lines_at_tender(
-        admin, project, budget, kind="labour", title="CX3",
+        admin, project, budget, kind="subcontract", title="CX3",
     )
     contractor = make_contractor(admin)
     iv = invite_bidder(admin, pkg["id"], supplier_id=contractor)

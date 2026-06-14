@@ -15,9 +15,10 @@ Server computes every `net = round(qty × rate, 2)`. Client nets are
 NEVER trusted (LD-P4 — bidders compete on rate, not measurement).
 
 Downstream creates are delegated to the EXISTING services on the SAME
-session/transaction:
-  materials → services.purchase_orders.create_po
-  labour    → services.subcontracts.create_subcontract
+session/transaction (Pack 3.5 — 3-value vocabulary):
+  materials   → services.purchase_orders.create_po
+  subcontract → services.subcontracts.create_subcontract
+  consultant  → services.purchase_orders.create_po  (CIS-clean PO)
 
 A raise at any step rolls back the whole award call (T-AW-10).
 """
@@ -729,19 +730,36 @@ def cancel_package(
 
 
 def _supplier_kind_guard(supplier: Supplier, kind: str) -> None:
-    """Mirror BuildPack §3.2 — kind/type coherence."""
-    if supplier.supplier_type in ("Consultant", "Other"):
-        raise ValueError(
-            f"Supplier of type {supplier.supplier_type!r} cannot be a bidder; "
-            f"expected Contractor (labour) or Supplier/Contractor (materials)"
-        )
-    if kind == "labour" and supplier.supplier_type != "Contractor":
-        raise ValueError(
-            f"labour packages require a Contractor bidder; got "
-            f"supplier_type={supplier.supplier_type!r}"
-        )
-    # materials: Supplier or Contractor both accepted (warn-not-block on
-    # Contractor — surfaced as a soft note in metadata, not a 422).
+    """Kind/supplier-type coherence (Pack 3.5 — 3-value vocabulary).
+
+    - materials   → bidder must be Supplier OR Contractor.
+    - subcontract → bidder must be Contractor (CIS counterparty).
+    - consultant  → bidder must be Consultant. (The flip — pre-3.5 the
+                    guard rejected Consultant outright; consultant
+                    packages now *require* it.)
+    - Other       → invalid for every kind.
+    """
+    st = supplier.supplier_type
+    if kind == "materials":
+        if st not in ("Supplier", "Contractor"):
+            raise ValueError(
+                f"materials packages require a Supplier or Contractor "
+                f"bidder; got supplier_type={st!r}"
+            )
+    elif kind == "subcontract":
+        if st != "Contractor":
+            raise ValueError(
+                f"subcontract packages require a Contractor bidder "
+                f"(CIS counterparty); got supplier_type={st!r}"
+            )
+    elif kind == "consultant":
+        if st != "Consultant":
+            raise ValueError(
+                f"consultant packages require a Consultant bidder; "
+                f"got supplier_type={st!r}"
+            )
+    else:  # pragma: no cover — kind constrained by enum + CHECK
+        raise ValueError(f"Unknown package kind {kind!r}")
 
 
 def invite_bidder(
@@ -1203,7 +1221,7 @@ def award_package(
             po_id = po.id
             downstream_kind = "purchase_order"
             downstream_id = po.id
-        elif p.kind == "labour":
+        elif p.kind == "subcontract":
             sc_kwargs: dict[str, Any] = {
                 "title": f"{p.reference} — {p.title} ({supplier.name})"[:200],
                 "original_contract_sum": str(awarded_net_total),

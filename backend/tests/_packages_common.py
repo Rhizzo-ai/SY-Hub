@@ -145,6 +145,11 @@ def make_contractor(admin_session, **kw) -> str:
     return make_supplier(admin_session, supplier_type="Contractor", **kw)
 
 
+def make_consultant(admin_session, **kw) -> str:
+    """Pack 3.5 — Consultant bidder helper for consultant packages."""
+    return make_supplier(admin_session, supplier_type="Consultant", **kw)
+
+
 def make_active_budget(
     admin_session, db_engine, project_id, *,
     line_count: int = 2,
