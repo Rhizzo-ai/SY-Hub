@@ -843,3 +843,8 @@ path exists today.
 - B91 addendum: named column-layout presets per user (Emergent suggestion,
   Pack 2 Gate 2).
 
+- **B99** — Packages list: project filter. Chat 53 shipped status + kind
+  filters only. Add a project filter to /admin/packages list.
+- **B100** — Packages: inline "create new supplier" CTA from the invite-bidder
+  dialog. Current flow: cancel out → Suppliers → create → return. Add an
+  inline create-and-return path.
