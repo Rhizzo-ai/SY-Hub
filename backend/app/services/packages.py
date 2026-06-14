@@ -1193,6 +1193,9 @@ def award_package(
             po_payload: dict[str, Any] = {
                 "supplier_id": str(supplier.id),
                 "budget_id": str(p.budget_id),
+                # Pack 3.5 — thread the package_id into the PO create
+                # so the downstream PO carries its origin link.
+                "package_id": str(p.id),
                 "lines": [
                     {
                         "budget_line_id": str(
@@ -1225,6 +1228,9 @@ def award_package(
             sc_kwargs: dict[str, Any] = {
                 "title": f"{p.reference} — {p.title} ({supplier.name})"[:200],
                 "original_contract_sum": str(awarded_net_total),
+                # Pack 3.5 — thread the package_id into the SC create
+                # so the downstream subcontract carries its origin link.
+                "package_id": p.id,
             }
             if spec.get("scope_description"):
                 sc_kwargs["scope_description"] = spec["scope_description"]
@@ -1243,6 +1249,46 @@ def award_package(
             sc_id = sc.id
             downstream_kind = "subcontract"
             downstream_id = sc.id
+        elif p.kind == "consultant":
+            # Pack 3.5 — consultant packages route to PO (NOT
+            # subcontract). Professional fees are CIS-clean by
+            # construction: the PO path applies NO CIS, and
+            # `create_subcontract` would hard-reject any supplier with
+            # `supplier_type != 'Contractor'` (LD2) — so a consultant
+            # can never be a subcontract counterparty anyway. Identical
+            # payload shape to the materials branch.
+            po_payload = {
+                "supplier_id": str(supplier.id),
+                "budget_id": str(p.budget_id),
+                "package_id": str(p.id),
+                "lines": [
+                    {
+                        "budget_line_id": str(
+                            ln["package_line"].budget_line_id
+                        ),
+                        "cost_code": ln["package_line"].cost_code,
+                        "description": ln["package_line"].description,
+                        "quantity": str(ln["quantity"]),
+                        "unit_rate": str(ln["awarded_unit_rate"]),
+                        "unit": ln["package_line"].unit,
+                    }
+                    for ln in lines_prep
+                ],
+            }
+            if spec.get("required_by_date"):
+                po_payload["required_by_date"] = spec["required_by_date"]
+            if spec.get("delivery_address"):
+                po_payload["delivery_address"] = spec["delivery_address"]
+            po = po_svc.create_po(
+                db,
+                user=user, perms=perms,
+                project_id=p.project_id,
+                payload=po_payload,
+                request=request,
+            )
+            po_id = po.id
+            downstream_kind = "purchase_order"
+            downstream_id = po.id
         else:  # pragma: no cover — kind enum constrained
             raise PackageStateError(f"Unknown package kind {p.kind!r}")
 

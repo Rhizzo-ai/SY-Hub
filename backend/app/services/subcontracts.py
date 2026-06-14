@@ -175,6 +175,10 @@ def serialise(s: Subcontract, *, with_sensitive: bool = True) -> dict[str, Any]:
         "purchase_order_id": (
             str(s.purchase_order_id) if s.purchase_order_id else None
         ),
+        # Pack 3.5 — bidirectional package link (NULL on standalone SCs).
+        "package_id": (
+            str(s.package_id) if s.package_id else None
+        ),
         "reference": s.reference,
         "title": s.title,
         "scope_description": s.scope_description,
@@ -258,6 +262,7 @@ def create_subcontract(
     user: User,
     perms: UserPermissions,
     purchase_order_id: Optional[uuid.UUID] = None,
+    package_id: Optional[uuid.UUID] = None,  # Pack 3.5
     scope_description: Optional[str] = None,
     original_contract_sum: Any = 0,
     retention_pct: Any = 0,
@@ -292,6 +297,25 @@ def create_subcontract(
             f"Counterparty must be a Contractor (got "
             f"supplier_type={supplier.supplier_type!r}). LD2."
         )
+
+    # Pack 3.5 — optional package link. Validate same tenant + project.
+    if package_id is not None:
+        try:
+            package_id = uuid.UUID(str(package_id))
+        except (TypeError, ValueError) as e:
+            raise ValueError(
+                f"package_id is not a valid UUID: {e}"
+            ) from e
+        from app.models.packages import Package
+        pkg = db.get(Package, package_id)
+        if pkg is None:
+            raise ValueError(f"package_id {package_id} not found")
+        if pkg.tenant_id != user.tenant_id and not perms.is_super_admin:
+            raise ValueError(f"package_id {package_id} not found")
+        if pkg.project_id != project_id:
+            raise ValueError(
+                f"package_id {package_id} belongs to a different project"
+            )
 
     ocs = _quantize2(_coerce_decimal(
         original_contract_sum, field="original_contract_sum"
@@ -334,6 +358,7 @@ def create_subcontract(
         project_id=project_id,
         subcontractor_id=subcontractor_id,
         purchase_order_id=purchase_order_id,
+        package_id=package_id,  # Pack 3.5
         reference=reference,
         title=title,
         scope_description=(

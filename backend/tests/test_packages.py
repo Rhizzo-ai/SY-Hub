@@ -24,8 +24,8 @@ from tests._packages_common import (
     PWD, READONLY_EMAIL, SITE_EMAIL,
     add_line, award, bump_self_approval_threshold, cancel_award,
     create_package, enter_bid, invite_bidder, make_active_budget,
-    make_contractor, make_entity_and_project, make_supplier,
-    send_to_tender, wipe,
+    make_consultant, make_contractor, make_entity_and_project,
+    make_supplier, send_to_tender, wipe,
 )
 from tests.conftest import login_with_auto_enroll
 
@@ -161,6 +161,8 @@ def test_TAW_1_single_full_materials_award_creates_PO(admin, project, budget):
     assert len(lines) == 2
     for ln in lines:
         assert Decimal(ln["net_amount"]) == Decimal("100000.00")
+    # Pack 3.5 — bidirectional package_id link populated on the PO.
+    assert po["package_id"] == pkg["id"]
 
 
 def test_TAW_2_single_full_subcontract_award_creates_subcontract(
@@ -195,6 +197,183 @@ def test_TAW_2_single_full_subcontract_award_creates_subcontract(
     sc = rs.json()
     assert sc["status"] == "Draft"
     assert Decimal(sc["original_contract_sum"]) == Decimal("200000.00")
+    # Pack 3.5 — bidirectional package_id link populated on the SC, and
+    # CIS-applies True by default on the subcontract path.
+    assert sc["package_id"] == pkg["id"]
+    assert sc["cis_applies"] is True
+
+
+# ==========================================================================
+# T-PK35 — Pack 3.5 award routing (Gate 3 named tests, Build Pack §3.4)
+# ==========================================================================
+
+def test_award_consultant_routes_to_po(admin, project, budget):
+    """consultant package → PO (NOT subcontract), package_id populated."""
+    pkg, pl_ids = _pkg_with_lines_at_tender(
+        admin, project, budget, kind="consultant", title="C1",
+    )
+    consultant = make_consultant(admin)
+    iv = invite_bidder(admin, pkg["id"], supplier_id=consultant)
+    assert iv.status_code == 201, iv.text
+    bid_id = iv.json()["bids"][0]["id"]
+    enter_bid(admin, bid_id, lines=[
+        {"package_line_id": pl_ids[0], "quoted_unit_rate": "1000"},
+        {"package_line_id": pl_ids[1], "quoted_unit_rate": "1000"},
+    ])
+    r = award(admin, pkg["id"], awards=[{
+        "supplier_id": consultant, "source_bid_id": bid_id,
+        "lines": [
+            {"package_line_id": pl_ids[0], "quantity": "100",
+             "awarded_unit_rate": "1000"},
+            {"package_line_id": pl_ids[1], "quantity": "100",
+             "awarded_unit_rate": "1000"},
+        ],
+    }])
+    assert r.status_code == 200, r.text
+    aw = r.json()["awards"][0]
+    assert aw["created_purchase_order_id"] is not None
+    assert aw["created_subcontract_id"] is None
+    po_id = aw["created_purchase_order_id"]
+    rp = admin.get(f"{BASE_URL}/api/v1/purchase-orders/{po_id}")
+    assert rp.status_code == 200, rp.text
+    po = rp.json()
+    assert po["package_id"] == pkg["id"]
+
+
+def test_award_subcontract_routes_to_subcontract(admin, project, budget):
+    """subcontract package → SC, package_id populated, cis_applies True."""
+    pkg, pl_ids = _pkg_with_lines_at_tender(
+        admin, project, budget, kind="subcontract", title="SC1",
+    )
+    contractor = make_contractor(admin)
+    iv = invite_bidder(admin, pkg["id"], supplier_id=contractor)
+    bid_id = iv.json()["bids"][0]["id"]
+    enter_bid(admin, bid_id, lines=[
+        {"package_line_id": pl_ids[0], "quoted_unit_rate": "1000"},
+        {"package_line_id": pl_ids[1], "quoted_unit_rate": "1000"},
+    ])
+    r = award(admin, pkg["id"], awards=[{
+        "supplier_id": contractor, "source_bid_id": bid_id,
+        "lines": [
+            {"package_line_id": pl_ids[0], "quantity": "100",
+             "awarded_unit_rate": "1000"},
+            {"package_line_id": pl_ids[1], "quantity": "100",
+             "awarded_unit_rate": "1000"},
+        ],
+    }])
+    assert r.status_code == 200, r.text
+    aw = r.json()["awards"][0]
+    assert aw["created_subcontract_id"] is not None
+    assert aw["created_purchase_order_id"] is None
+    sc_id = aw["created_subcontract_id"]
+    sc = admin.get(f"{BASE_URL}/api/v1/subcontracts/{sc_id}").json()
+    assert sc["package_id"] == pkg["id"]
+    assert sc["cis_applies"] is True
+
+
+def test_award_materials_po_carries_package_id(admin, project, budget):
+    """materials award produces a PO whose package_id == package.id."""
+    pkg, pl_ids = _pkg_with_lines_at_tender(
+        admin, project, budget, kind="materials", title="M1",
+    )
+    supplier = make_supplier(admin)
+    iv = invite_bidder(admin, pkg["id"], supplier_id=supplier)
+    bid_id = iv.json()["bids"][0]["id"]
+    enter_bid(admin, bid_id, lines=[
+        {"package_line_id": pl_ids[0], "quoted_unit_rate": "1000"},
+        {"package_line_id": pl_ids[1], "quoted_unit_rate": "1000"},
+    ])
+    r = award(admin, pkg["id"], awards=[{
+        "supplier_id": supplier, "source_bid_id": bid_id,
+        "lines": [
+            {"package_line_id": pl_ids[0], "quantity": "100",
+             "awarded_unit_rate": "1000"},
+            {"package_line_id": pl_ids[1], "quantity": "100",
+             "awarded_unit_rate": "1000"},
+        ],
+    }])
+    assert r.status_code == 200, r.text
+    aw = r.json()["awards"][0]
+    po_id = aw["created_purchase_order_id"]
+    po = admin.get(f"{BASE_URL}/api/v1/purchase-orders/{po_id}").json()
+    assert po["package_id"] == pkg["id"]
+
+
+def test_award_consultant_po_is_cis_clean(admin, project, budget):
+    """Consultant-origin POs carry NO CIS treatment.
+
+    The PO model has no CIS field at all (CIS lives only on the
+    subcontract path); a consultant award is therefore CIS-clean by
+    construction. Asserted by checking the subcontract path was NOT
+    taken (`created_subcontract_id IS NULL`) and the resulting PO
+    serialiser exposes no CIS field.
+    """
+    pkg, pl_ids = _pkg_with_lines_at_tender(
+        admin, project, budget, kind="consultant", title="C2",
+    )
+    consultant = make_consultant(admin)
+    iv = invite_bidder(admin, pkg["id"], supplier_id=consultant)
+    bid_id = iv.json()["bids"][0]["id"]
+    enter_bid(admin, bid_id, lines=[
+        {"package_line_id": pl_ids[0], "quoted_unit_rate": "500"},
+        {"package_line_id": pl_ids[1], "quoted_unit_rate": "500"},
+    ])
+    r = award(admin, pkg["id"], awards=[{
+        "supplier_id": consultant, "source_bid_id": bid_id,
+        "lines": [
+            {"package_line_id": pl_ids[0], "quantity": "100",
+             "awarded_unit_rate": "500"},
+            {"package_line_id": pl_ids[1], "quantity": "100",
+             "awarded_unit_rate": "500"},
+        ],
+    }])
+    assert r.status_code == 200, r.text
+    aw = r.json()["awards"][0]
+    assert aw["created_subcontract_id"] is None
+    po_id = aw["created_purchase_order_id"]
+    po = admin.get(f"{BASE_URL}/api/v1/purchase-orders/{po_id}").json()
+    cis_field_names = {
+        "cis_applies", "cis_deduction_rate_pct",
+        "cis_labour_amount", "cis_treatment",
+    }
+    assert not (set(po.keys()) & cis_field_names), (
+        f"Consultant-origin PO unexpectedly exposes CIS fields: "
+        f"{set(po.keys()) & cis_field_names}"
+    )
+
+
+def test_consultant_award_reconciles_awarded_net(admin, project, budget):
+    """awarded_net header = Σ awarded line nets (identical maths to materials)."""
+    pkg, pl_ids = _pkg_with_lines_at_tender(
+        admin, project, budget, kind="consultant", title="C3",
+    )
+    consultant = make_consultant(admin)
+    iv = invite_bidder(admin, pkg["id"], supplier_id=consultant)
+    bid_id = iv.json()["bids"][0]["id"]
+    enter_bid(admin, bid_id, lines=[
+        {"package_line_id": pl_ids[0], "quoted_unit_rate": "750"},
+        {"package_line_id": pl_ids[1], "quoted_unit_rate": "1250"},
+    ])
+    r = award(admin, pkg["id"], awards=[{
+        "supplier_id": consultant, "source_bid_id": bid_id,
+        "lines": [
+            {"package_line_id": pl_ids[0], "quantity": "100",
+             "awarded_unit_rate": "750"},
+            {"package_line_id": pl_ids[1], "quantity": "100",
+             "awarded_unit_rate": "1250"},
+        ],
+    }])
+    assert r.status_code == 200, r.text
+    body = r.json()
+    header_net = Decimal(body["awarded_net"])
+    line_net_sum = sum(
+        (Decimal(al["awarded_net"])
+         for aw in body["awards"]
+         for al in aw["lines"]),
+        Decimal("0"),
+    )
+    assert header_net == line_net_sum
+    assert header_net == Decimal("200000.00")  # 100*750 + 100*1250
 
 
 def test_TAW_3_split_award_two_suppliers_within_total(admin, project, budget):

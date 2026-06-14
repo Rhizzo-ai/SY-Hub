@@ -63,6 +63,8 @@ class POCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     supplier_id: uuid.UUID
     budget_id: uuid.UUID
+    # Pack 3.5 — optional package link (NULL = standalone "simple" PO).
+    package_id: Optional[uuid.UUID] = None
     po_number_prefix_id: Optional[uuid.UUID] = None
     lines: List[POLineCreate] = Field(..., min_length=1)
     issue_date: Optional[date] = None

@@ -268,6 +268,29 @@ def create_po(
         db, project_id, uuid.UUID(str(payload["budget_id"]))
     )
 
+    # Pack 3.5 — optional bidirectional package link. Validate it
+    # exists, lives in the same tenant, and points at the same project.
+    # On the AWARD path the package is guaranteed valid; this guard
+    # protects the standalone path (callers passing `package_id` via
+    # POCreate).
+    package_id_raw = payload.get("package_id")
+    package_id: Optional[uuid.UUID] = None
+    if package_id_raw is not None:
+        try:
+            package_id = uuid.UUID(str(package_id_raw))
+        except (TypeError, ValueError) as e:
+            raise ValueError(f"package_id is not a valid UUID: {e}") from e
+        from app.models.packages import Package
+        pkg = db.get(Package, package_id)
+        if pkg is None:
+            raise ValueError(f"package_id {package_id} not found")
+        if pkg.tenant_id != user.tenant_id and not perms.is_super_admin:
+            raise ValueError(f"package_id {package_id} not found")
+        if pkg.project_id != project_id:
+            raise ValueError(
+                f"package_id {package_id} belongs to a different project"
+            )
+
     line_payloads = list(payload["lines"])
     budget_line_ids = [
         uuid.UUID(str(lp["budget_line_id"])) for lp in line_payloads
@@ -315,6 +338,7 @@ def create_po(
         po_sequence=seq,
         supplier_id=supplier.id,
         budget_id=budget.id,
+        package_id=package_id,  # Pack 3.5
         status="draft",
         issue_date=payload.get("issue_date"),
         required_by_date=payload.get("required_by_date"),
@@ -824,6 +848,10 @@ def serialise(
         "po_sequence": po.po_sequence,
         "supplier_id": str(po.supplier_id),
         "budget_id": str(po.budget_id),
+        # Pack 3.5 — bidirectional package link (NULL on standalone POs).
+        "package_id": (
+            str(po.package_id) if po.package_id is not None else None
+        ),
         "status": po.status,
         "issue_date": (
             po.issue_date.isoformat() if po.issue_date else None

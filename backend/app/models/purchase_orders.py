@@ -80,6 +80,14 @@ class PurchaseOrder(Base):
         ForeignKey("budgets.id", ondelete="RESTRICT"),
         nullable=False,
     )
+    # Pack 3.5 — bidirectional link to the originating package (NULL =
+    # standalone "simple" PO; SET NULL on package delete so deleting a
+    # package never cascade-destroys a real financial order).
+    package_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("packages.id", ondelete="SET NULL"),
+        nullable=True,
+    )
 
     status: Mapped[str] = mapped_column(
         PGEnum(*PO_STATUSES, name="po_status", create_type=False),

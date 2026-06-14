@@ -79,6 +79,14 @@ class Subcontract(Base):
         ForeignKey("purchase_orders.id", ondelete="SET NULL"),
         nullable=True,
     )
+    # Pack 3.5 — bidirectional link to the originating package (NULL =
+    # standalone subcontract; SET NULL on package delete so deleting a
+    # package never cascade-destroys a real financial subcontract).
+    package_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("packages.id", ondelete="SET NULL"),
+        nullable=True,
+    )
 
     reference = Column(String(30), nullable=False)
     title = Column(String(200), nullable=False)

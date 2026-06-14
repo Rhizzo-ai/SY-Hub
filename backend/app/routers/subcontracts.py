@@ -49,6 +49,8 @@ class SubcontractCreateBody(BaseModel):
     title: str = Field(..., max_length=200)
     scope_description: Optional[str] = None
     purchase_order_id: Optional[uuid.UUID] = None
+    # Pack 3.5 — optional package link (NULL = standalone subcontract).
+    package_id: Optional[uuid.UUID] = None
     original_contract_sum: str = "0"
     retention_pct: str = "0"
     cis_applies: bool = True
@@ -115,6 +117,7 @@ def create_subcontract(
             title=body.title,
             scope_description=body.scope_description,
             purchase_order_id=body.purchase_order_id,
+            package_id=body.package_id,  # Pack 3.5
             original_contract_sum=body.original_contract_sum,
             retention_pct=body.retention_pct,
             cis_applies=body.cis_applies,
