@@ -179,6 +179,12 @@ def serialise(s: Subcontract, *, with_sensitive: bool = True) -> dict[str, Any]:
         "package_id": (
             str(s.package_id) if s.package_id else None
         ),
+        # Pack 3.5 — package.reference enrichment for read-only display.
+        "package_reference": (
+            s.package.reference
+            if s.package_id is not None and s.package is not None
+            else None
+        ),
         "reference": s.reference,
         "title": s.title,
         "scope_description": s.scope_description,

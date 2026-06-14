@@ -171,6 +171,12 @@ class PurchaseOrder(Base):
         cascade="all, delete-orphan", passive_deletes=True,
         order_by="PurchaseOrderLine.line_number",
     )
+    # Pack 3.5 — bidirectional link to originating package (lazy, read-only
+    # from the PO side). String-quoted to avoid an import cycle with
+    # app.models.packages.
+    package = relationship(
+        "Package", foreign_keys=[package_id], lazy="select",
+    )
 
     __table_args__ = (
         UniqueConstraint("project_id", "po_number", name="ux_po_project_number"),

@@ -852,6 +852,14 @@ def serialise(
         "package_id": (
             str(po.package_id) if po.package_id is not None else None
         ),
+        # Pack 3.5 — package.reference enrichment for read-only display.
+        # `package` relationship is lazy; resolved on access. Returns None
+        # when no link.
+        "package_reference": (
+            po.package.reference
+            if po.package_id is not None and po.package is not None
+            else None
+        ),
         "status": po.status,
         "issue_date": (
             po.issue_date.isoformat() if po.issue_date else None

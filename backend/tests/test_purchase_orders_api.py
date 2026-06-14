@@ -964,3 +964,173 @@ class TestR7Batch2FollowOnListProjectPOs:
         assert body["total"] == 0
         assert body["limit"] == 50
         assert body["offset"] == 0
+
+
+
+# ==========================================================================
+# T-PK35 — Pack 3.5 standalone-path package link (Gate 4 named tests)
+# ==========================================================================
+
+def _seed_package(engine, admin_email: str, project_id: str,
+                  budget_id: str, *, kind: str = "materials") -> str:
+    """Direct-SQL insert of a minimal package row in the given project."""
+    with engine.begin() as c:
+        tenant_id = c.execute(text(
+            "SELECT e.tenant_id FROM projects p "
+            "JOIN entities e ON e.id = p.primary_entity_id "
+            "WHERE p.id = :p"
+        ), {"p": project_id}).scalar()
+        user_id = c.execute(text(
+            "SELECT id FROM users WHERE email = :e"
+        ), {"e": admin_email}).scalar()
+        ref = f"PKG-G4-{uuid.uuid4().hex[:6].upper()}"
+        pid = c.execute(text("""
+            INSERT INTO packages
+              (tenant_id, project_id, budget_id, reference, title,
+               kind, status, created_by, updated_by)
+            VALUES
+              (:t, :p, :b, :r, 'Gate 4 standalone-link package',
+               :k, 'draft', :u, :u)
+            RETURNING id
+        """), {"t": tenant_id, "p": project_id, "b": budget_id, "r": ref,
+               "k": kind, "u": user_id}).scalar()
+    return str(pid)
+
+
+class TestPK35StandalonePackageLink:
+    """Build Pack §4.4 — 4 named tests for the standalone create path."""
+
+    def test_standalone_po_create_with_package_id_links(
+        self, admin, project_setup, engine,
+    ):
+        pkg_id = _seed_package(
+            engine, ADMIN_EMAIL,
+            project_setup["project_id"], project_setup["budget_id"],
+        )
+        try:
+            body = _po_create_body(project_setup, package_id=pkg_id)
+            r = admin.post(
+                f"{BASE_URL}/api/v1/projects/"
+                f"{project_setup['project_id']}/purchase-orders",
+                json=body,
+            )
+            assert r.status_code == 201, r.text
+            out = r.json()
+            assert out["package_id"] == pkg_id
+            # Read-side enrichment must come through too.
+            rg = admin.get(f"{BASE_URL}/api/v1/purchase-orders/{out['id']}")
+            assert rg.status_code == 200, rg.text
+            got = rg.json()
+            assert got["package_id"] == pkg_id
+            assert got["package_reference"] is not None
+            assert got["package_reference"].startswith("PKG-G4-")
+        finally:
+            with engine.begin() as c:
+                c.execute(text(
+                    "UPDATE purchase_orders SET package_id = NULL "
+                    "WHERE package_id = :i"
+                ), {"i": pkg_id})
+                c.execute(text(
+                    "DELETE FROM packages WHERE id = :i"
+                ), {"i": pkg_id})
+
+    def test_standalone_po_create_without_package_id_unlinked(
+        self, admin, project_setup,
+    ):
+        # No package_id key at all — flows through extra="forbid" cleanly.
+        body = _po_create_body(project_setup)
+        assert "package_id" not in body
+        r = admin.post(
+            f"{BASE_URL}/api/v1/projects/"
+            f"{project_setup['project_id']}/purchase-orders",
+            json=body,
+        )
+        assert r.status_code == 201, r.text
+        out = r.json()
+        assert out["package_id"] is None
+        rg = admin.get(f"{BASE_URL}/api/v1/purchase-orders/{out['id']}")
+        got = rg.json()
+        assert got["package_id"] is None
+        assert got["package_reference"] is None
+
+    def test_po_create_rejects_foreign_package_id(
+        self, admin, project_setup, engine,
+    ):
+        """package_id from another project → 422."""
+        other_eid = _entity_id(engine, ADMIN_EMAIL)
+        other_pid = _create_project(admin, other_eid)
+        other_bid, _ = _seed_budget_and_lines(engine, admin, other_pid)
+        foreign_pkg_id = _seed_package(
+            engine, ADMIN_EMAIL, other_pid, other_bid,
+        )
+        try:
+            body = _po_create_body(
+                project_setup, package_id=foreign_pkg_id,
+            )
+            r = admin.post(
+                f"{BASE_URL}/api/v1/projects/"
+                f"{project_setup['project_id']}/purchase-orders",
+                json=body,
+            )
+            assert r.status_code == 422, r.text
+            assert "different project" in r.text.lower() or \
+                   "package" in r.text.lower(), r.text
+        finally:
+            with engine.begin() as c:
+                c.execute(text(
+                    "DELETE FROM packages WHERE id = :i"
+                ), {"i": foreign_pkg_id})
+                c.execute(text(
+                    "DELETE FROM budgets WHERE project_id = :p"
+                ), {"p": other_pid})
+                c.execute(text(
+                    "DELETE FROM appraisals WHERE project_id = :p"
+                ), {"p": other_pid})
+                c.execute(text(
+                    "DELETE FROM projects WHERE id = :p"
+                ), {"p": other_pid})
+
+    def test_subcontract_create_with_package_id_links(
+        self, admin, project_setup, engine,
+    ):
+        pkg_id = _seed_package(
+            engine, ADMIN_EMAIL,
+            project_setup["project_id"], project_setup["budget_id"],
+            kind="subcontract",
+        )
+        try:
+            # Subcontractor (Contractor type).
+            suf = uuid.uuid4().hex[:6].upper()
+            s = admin.post(f"{BASE_URL}/api/v1/suppliers", json={
+                "name": f"SC G4 {suf}", "contractor_code": f"CON{suf}",
+                "company_type": "Limited", "supplier_type": "Contractor",
+                "vat_registered": True,
+            })
+            assert s.status_code == 201, s.text
+            subcontractor_id = s.json()["id"]
+            r = admin.post(f"{BASE_URL}/api/v1/subcontracts", json={
+                "project_id": project_setup["project_id"],
+                "subcontractor_id": subcontractor_id,
+                "title": "Gate 4 standalone-link SC",
+                "original_contract_sum": "1000.00",
+                "package_id": pkg_id,
+            })
+            assert r.status_code == 201, r.text
+            out = r.json()
+            assert out["package_id"] == pkg_id
+            sc_id = out["id"]
+            rg = admin.get(f"{BASE_URL}/api/v1/subcontracts/{sc_id}")
+            assert rg.status_code == 200, rg.text
+            got = rg.json()
+            assert got["package_id"] == pkg_id
+            assert got["package_reference"] is not None
+            assert got["package_reference"].startswith("PKG-G4-")
+        finally:
+            with engine.begin() as c:
+                c.execute(text(
+                    "DELETE FROM subcontracts WHERE package_id = :i "
+                    "OR project_id = :p"
+                ), {"i": pkg_id, "p": project_setup["project_id"]})
+                c.execute(text(
+                    "DELETE FROM packages WHERE id = :i"
+                ), {"i": pkg_id})

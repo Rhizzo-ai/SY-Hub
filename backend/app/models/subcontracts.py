@@ -126,6 +126,11 @@ class Subcontract(Base):
         cascade="all, delete-orphan", passive_deletes=True,
         order_by="SubcontractVariation.created_at",
     )
+    # Pack 3.5 — bidirectional link to originating package (lazy, read-only
+    # from the subcontract side). String-quoted to avoid an import cycle.
+    package = relationship(
+        "Package", foreign_keys=[package_id], lazy="select",
+    )
 
     __table_args__ = (
         CheckConstraint(
