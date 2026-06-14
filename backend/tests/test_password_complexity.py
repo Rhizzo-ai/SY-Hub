@@ -13,7 +13,7 @@ from tests.conftest import plain_login, login_with_auto_enroll
 
 BASE_URL = (
     os.environ.get("REACT_APP_BACKEND_URL", "").rstrip("/")
-    or "https://vault-core-8.preview.emergentagent.com"
+    or "https://money-locked-down.preview.emergentagent.com"
 )
 
 READONLY_EMAIL = "test-readonly@example.test"
