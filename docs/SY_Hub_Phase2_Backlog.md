@@ -848,3 +848,65 @@ path exists today.
 - **B100** — Packages: inline "create new supplier" CTA from the invite-bidder
   dialog. Current flow: cancel out → Suppliers → create → return. Add an
   inline create-and-return path.
+
+### Chat 54 — new items added at chat-end (2026-06-14)
+
+- **B101** — Programme / Schedule module (own track — site-ops). Logged from
+  five Buildertrend "Schedule" screenshots (Calendar / List / Gantt / Filter /
+  More Actions) supplied by operator Chat 54, as the target quality bar. NOT a
+  fold-in to B88; a multi-pack module in its own right, sequenced AFTER the
+  commercial spine. Full feature capture lives in the artefact
+  `B101_Programme_Schedule_Module_Spec.md` (Chat 54 output) — paste its body
+  here or keep alongside. Core: three synced views (Calendar/List/Gantt) over
+  one task set; per-task ID, title+colour, % complete, phase, workday duration,
+  start/end, assignees, predecessors/dependencies, accept/pending/decline,
+  per-task files/comments/RFIs, Show Client toggle. Gantt: dependency
+  connectors, critical path, baseline overlay, phase overlay, day/week/month
+  zoom, draft mode (undo/redo). Tabs: Schedule / Baseline / Workday Exceptions.
+  Filter drawer with saved presets (Title/Assigned To/Status/Tags/Phases).
+  More Actions: Import From Templates, Track Conflicts, Notify Assigned Users,
+  Delete All Items, Export to PDF. Top bar: Schedule Online publish toggle,
+  settings, history/audit, New Schedule Item, Templates mgmt. SY-Hub musts on
+  top of BT: mobile-first assignee view, offline task updates, real-time
+  notifications, RBAC at every layer (new `programme`/`schedule` permission
+  resource), append-only audit. Once built, the order→schedule link
+  (raised Chat 54) becomes a clean fold-in; `linked_programme_task_id`
+  (legacy, nullable, no FK) gains its real FK here.
+
+- **B102** — Unbudgeted-order handling. Today a PO/package REQUIRES a budget +
+  budget line — there is no path to raise an order with no budget line, so real
+  unbudgeted spend gets pushed off-system. Decision (Chat 54): do NOT block;
+  allow the order but force it onto an auto-created, flagged "Unbudgeted —
+  [cost code]" budget line, marked red, that a director must acknowledge/clear
+  with who+when logged. Mirrors the rule already decided for unbudgeted actuals
+  (B19). Money stays traceable, nothing hidden, user never fully blocked.
+  Touches budget side + order-creation flow together; its own gates. Scoped as
+  the small pass that follows B88 Pack 3.5. NOT in Pack 3.5 scope.
+
+### Chat 54 — B88 Pack 3.5 design (LOCKED, ready to build Chat 55)
+
+Pack 3.5 = package types + cost-code subgrouping + package↔PO/subcontract link.
+Locked decisions (build from these, design fully code-grounded in Chat 54):
+- **Package kind → 3 values:** `materials` (→ PO), `subcontract` (→ subcontract;
+  covers labour AND supply-&-fit, which are the same thing), `consultant`
+  (→ PO, CIS-clean). Migrate existing `labour` rows → `subcontract`; `materials`
+  unchanged. Demo-data only on live → light migration gate, no prod-data backup
+  ceremony. Enum add via `ALTER TYPE ... ADD VALUE` in autocommit_block (leave
+  `labour` orphaned per 0020/0047 precedent); drop+recreate the named CHECK
+  `ck_packages_kind_values` to the new value set.
+- **`_supplier_kind_guard` rewrite:** materials → Supplier|Contractor;
+  subcontract → Contractor (CIS); consultant → Consultant (today the guard
+  REJECTS Consultant outright — this flips).
+- **One front door:** "New order" → choose Simple order (today's PO form,
+  unchanged) or Package (today's flow). Both intact underneath.
+- **Stored link:** new optional `package_id` column on `purchase_orders` AND
+  `subcontracts` (nullable; standalone orders omit it). `create_po` /
+  `create_subcontract` accept `package_id` in payload — clean non-breaking add.
+  Link shown both ways (order shows "from package X"; package award tab shows
+  created PO/subcontract — already half-there via
+  `package_awards.created_purchase_order_id` / `created_subcontract_id`).
+- **Item 1:** package lines group under cost codes with per-cost-code subtotals,
+  display-only (NO stored group ref — derive from line.cost_code). Mirror the
+  grid's `groupLinesByCategory` PATTERN, but note package lines store
+  `cost_code` as a STRING (e.g. "4.02"), not `cost_code_id` — so the grid
+  helper
