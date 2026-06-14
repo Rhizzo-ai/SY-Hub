@@ -70,9 +70,35 @@ only.
   inline. No silent onError anywhere on these pages.
 - Routes wired in `App.js`, "Packages" nav added to `AppShell.jsx`
   beside "Cost Codes" (gated on `packages.view`).
-- 9 new test IDs covering: list / detail / new dialog / line picker /
-  invite bidder / enter bid (with live preview) / award form (with
-  per-spec line inputs and Σ-block) / cancel award.
+- 41 frontend tests (12 list + 15 detail + 14 helpers); full suite at
+  **866 / 866 green**.
+
+### Demo seed — `scripts/seed_b88_pack3_packages_demo.py`
+
+Operator-invoked sandbox seed (HARD safety guard: refuses unless
+`SYHUB_ALLOW_DEMO_SEED=1` AND `--force`). Builds three demo packages
+via the real service layer:
+
+- PKG-XXXX  Materials  Partially awarded  (2-way SPLIT, 2 draft POs)
+- PKG-XXXX  Labour     Partially awarded  (1 Draft subcontract)
+- PKG-XXXX  Materials  Draft
+
+All demo rows tagged `DEMO — ` for the matching `--clean` teardown
+that removes only the rows it created (cancels active awards first,
+deletes draft POs/SCs, then removes the unreferenced demo suppliers).
+
+```sh
+# seed
+cd /app/backend
+SYHUB_ALLOW_DEMO_SEED=1 /root/.venv/bin/python \
+    scripts/seed_b88_pack3_packages_demo.py --force
+
+# clean
+SYHUB_ALLOW_DEMO_SEED=1 /root/.venv/bin/python \
+    scripts/seed_b88_pack3_packages_demo.py --force --clean
+```
+
+NOT wired into bootstrap.py / on-restart.sh / any auto-seed path.
 
 
 

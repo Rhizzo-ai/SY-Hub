@@ -127,6 +127,25 @@ The Pack 3 spine intentionally does NOT yet wire chat / notifications
 / exports / multi-version packages / template duplication — those are
 left for future packs.
 
+## Demo seed — operator-invoked only
+
+`backend/scripts/seed_b88_pack3_packages_demo.py` builds three demo
+packages (1 materials split award, 1 labour single award, 1 draft)
+via the real service layer. HARD safety guard refuses to run unless
+`SYHUB_ALLOW_DEMO_SEED=1` AND `--force`. Idempotent. NOT wired into
+bootstrap.py / on-restart.sh.
+
+```sh
+# seed
+cd /app/backend
+SYHUB_ALLOW_DEMO_SEED=1 /root/.venv/bin/python \
+    scripts/seed_b88_pack3_packages_demo.py --force
+
+# clean (removes ONLY the demo rows it created)
+SYHUB_ALLOW_DEMO_SEED=1 /root/.venv/bin/python \
+    scripts/seed_b88_pack3_packages_demo.py --force --clean
+```
+
 ---
 
 End of Chat 53 closing.
