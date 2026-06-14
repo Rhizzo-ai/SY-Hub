@@ -7,7 +7,6 @@ specification says, or when a specification error is found and corrected.
 ## Format
 
 Each entry: date, prompt reference (if applicable), change, rationale.
-<img width="653" height="541" alt="image" src="https://github.com/user-attachments/assets/23bd8b76-7ed5-4683-b801-cde644930636" />
 
 ## Entries
 
