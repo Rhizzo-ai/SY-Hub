@@ -26,6 +26,7 @@ from sqlalchemy import create_engine, text
 
 from app.services.budget_errors import BudgetStateError
 from app.services.budget_lines import (
+    clear_unbudgeted,
     create_unbudgeted_line,
     scan_requires_attention,
 )
@@ -389,3 +390,454 @@ class TestCreateUnbudgetedLineOnFrozenBudget:
         # deadlock on its DELETE FROM budgets call because pytest
         # finalises the chain fixture before db_session.rollback runs.
         db_session.rollback()
+
+
+# =====================================================================
+# Gate 4 — director acknowledgement ("clear") of an unbudgeted line.
+#
+# T13     — clear-action lifts attention + stamps who/when, writes
+#           exactly one audit row tagged event=clear_unbudgeted.
+# T13b    — THE Gate-2-deviation catch: clearing actually recomputes
+#           variance_status off the forced Red. No manual variance set.
+# T14     — second clear is idempotent (200, same cleared_at, no
+#           extra audit row).
+# T15     — clear against a normal (non-unbudgeted) line returns 422.
+# T16     — HTTP-level: a user lacking budgets.clear_unbudgeted (the
+#           finance test user) gets 403.
+# T17     — actuals / committed on the line are untouched by the
+#           clear-action.
+# T18     — _serialise_line exposes the seven new fields.
+# T19     — _grid_line_node exposes the same seven fields.
+# =====================================================================
+import os as _os
+
+import requests as _requests
+from sqlalchemy import select as _select
+
+_BASE_URL = (
+    _os.environ.get("REACT_APP_BACKEND_URL", "").rstrip("/")
+    or "http://localhost:8001"
+)
+_PWD = _os.environ["TEST_USER_PASSWORD"]
+_DIRECTOR_EMAIL = "test-director@example.test"
+_FINANCE_EMAIL = "test-finance@example.test"
+_ADMIN_EMAIL = "test-admin@example.test"
+_PM_EMAIL = "test-pm@example.test"
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _reset_mfa_for_http_tests(engine):
+    """Reset MFA on the test users used by the HTTP-level B102 tests
+    so `login_with_auto_enroll` will go through the enrol path and
+    cache the TOTP secret in conftest._MFA_SECRETS for the rest of
+    the module. Without this, the helper raises pytest.skip on the
+    second login attempt because the per-process secret cache is
+    empty.
+
+    Pattern from /app/memory/test_credentials.md (the canonical
+    headless-flow reset).
+    """
+    with engine.begin() as c:
+        c.execute(text("""
+            UPDATE users SET mfa_enabled = false,
+                             mfa_method = NULL,
+                             mfa_secret_encrypted = NULL,
+                             mfa_backup_codes_encrypted = NULL,
+                             mfa_enrolled_at = NULL,
+                             failed_login_attempts = 0,
+                             locked_until = NULL,
+                             lockout_level = 0
+             WHERE email LIKE 'test-%@example.test'
+        """))
+    yield
+    # No re-enrolment on teardown — other tests in the full-suite run
+    # may rely on MFA-disabled state; if so, the next test session
+    # picks up a fresh seed. The reset is idempotent.
+
+
+def _login(email):
+    """Login under the cookie-only contract — minimal helper local to
+    this file so the test isn't coupled to the heavyweight
+    `tests.conftest.login_with_auto_enroll` (which assumes MFA reset
+    has happened in the same module-scope db_engine fixture). Reuses
+    the cached-MFA secrets module from conftest."""
+    from tests.conftest import login_with_auto_enroll
+    return login_with_auto_enroll(None, _BASE_URL, email, _PWD)
+
+
+class TestClearUnbudgetedLifecycle:
+    """Service-level coverage of the clear-action (T13, T13b, T14)."""
+
+    def test_clear_unbudgeted_lifts_attention_logs_who_when(
+        self, db_session, active_chain,
+    ):
+        """T13 — clear sets cleared_by/at, requires_attention False;
+        is_unbudgeted stays True (permanent provenance marker);
+        exactly one audit row tagged event=clear_unbudgeted."""
+        from app.models.budgets import BudgetLine
+        from app.models.audit import AuditLog
+
+        u, perms = _perms_for(db_session, active_chain["user_id"])
+        line = create_unbudgeted_line(
+            db_session,
+            budget_id=uuid.UUID(active_chain["budget_id"]),
+            user=u, perms=perms,
+            cost_code_id=uuid.UUID(active_chain["cost_code_id"]),
+            entity_id=uuid.UUID(active_chain["entity_id"]),
+            reason="Unexpected ground conditions — beyond appraisal",
+            source="purchase_order",
+        )
+        db_session.commit()
+
+        # ── Act ──
+        clear_unbudgeted(
+            db_session, line_id=line.id, user=u, perms=perms,
+        )
+        db_session.commit()
+
+        fresh = db_session.get(BudgetLine, line.id)
+        assert fresh.requires_attention is False
+        assert fresh.unbudgeted_cleared_by == u.id
+        assert fresh.unbudgeted_cleared_at is not None
+        # Permanent provenance marker — must NOT reset to False.
+        assert fresh.is_unbudgeted is True
+
+        # Exactly one audit row with event=clear_unbudgeted.
+        audits = db_session.scalars(
+            _select(AuditLog)
+            .where(AuditLog.resource_type == "budget_lines")
+            .where(AuditLog.resource_id == line.id)
+        ).all()
+        clear_rows = [
+            a for a in audits
+            if (a.metadata_json or {}).get("event") == "clear_unbudgeted"
+        ]
+        assert len(clear_rows) == 1, (
+            f"expected 1 clear_unbudgeted audit row, got {len(clear_rows)}"
+        )
+
+    def test_clear_unbudgeted_recomputes_variance_off_red(
+        self, db_session, active_chain,
+    ):
+        """T13b — variance_status must be recomputed off the forced Red.
+
+        Pre-conditions: create_unbudgeted_line wrote variance_status="Red"
+        by direct assignment, not by maths. A £0-budget line with zero
+        actuals/committed/ftc has variance_pct=0 → _classify_variance
+        returns "Green". So after clear+recompute, the line must NOT be
+        Red. (Without the recompute, the forced Red would outlive the
+        acknowledgement — see Gate 2 deviation log.)
+        """
+        from app.models.budgets import BudgetLine
+
+        u, perms = _perms_for(db_session, active_chain["user_id"])
+        line = create_unbudgeted_line(
+            db_session,
+            budget_id=uuid.UUID(active_chain["budget_id"]),
+            user=u, perms=perms,
+            cost_code_id=uuid.UUID(active_chain["cost_code_id"]),
+            entity_id=uuid.UUID(active_chain["entity_id"]),
+            reason="Site security upgrades — not in original brief",
+            source="package",
+        )
+        db_session.commit()
+
+        # Pre-clear assertion: the forced Red is still on the row.
+        pre = db_session.get(BudgetLine, line.id)
+        assert pre.variance_status == "Red"
+
+        # ── Act: clear and let the service recompute ──
+        clear_unbudgeted(
+            db_session, line_id=line.id, user=u, perms=perms,
+        )
+        db_session.commit()
+
+        post = db_session.get(BudgetLine, line.id)
+        # The exact post-clear colour comes from _classify_variance(0)
+        # which, per its first branch (variance_pct <= 0), returns
+        # "Green". Pin that explicitly so a future tightening of the
+        # banding (e.g. Amber as the new default for £0) trips this
+        # test and forces a Build-Pack deviation log entry.
+        assert post.variance_status == "Green", (
+            f"expected Green after clear+recompute, got "
+            f"{post.variance_status!r} — the forced-Red marker has "
+            "survived acknowledgement, see Gate 2 deviation."
+        )
+
+    def test_clear_unbudgeted_idempotent(self, db_session, active_chain):
+        """T14 — second clear returns the line unchanged, writes no
+        extra audit row, does NOT re-stamp cleared_at/cleared_by."""
+        from app.models.budgets import BudgetLine
+        from app.models.audit import AuditLog
+
+        u, perms = _perms_for(db_session, active_chain["user_id"])
+        line = create_unbudgeted_line(
+            db_session,
+            budget_id=uuid.UUID(active_chain["budget_id"]),
+            user=u, perms=perms,
+            cost_code_id=uuid.UUID(active_chain["cost_code_id"]),
+            entity_id=uuid.UUID(active_chain["entity_id"]),
+            reason="Idempotency probe",
+            source="purchase_order",
+        )
+        db_session.commit()
+
+        clear_unbudgeted(db_session, line_id=line.id, user=u, perms=perms)
+        db_session.commit()
+        after_first = db_session.get(BudgetLine, line.id)
+        first_cleared_at = after_first.unbudgeted_cleared_at
+        first_cleared_by = after_first.unbudgeted_cleared_by
+
+        # ── Act: second clear ──
+        clear_unbudgeted(db_session, line_id=line.id, user=u, perms=perms)
+        db_session.commit()
+
+        after_second = db_session.get(BudgetLine, line.id)
+        # Idempotent: timestamps must be byte-for-byte identical.
+        assert after_second.unbudgeted_cleared_at == first_cleared_at
+        assert after_second.unbudgeted_cleared_by == first_cleared_by
+
+        # Audit row count for clear_unbudgeted must be exactly 1.
+        audits = db_session.scalars(
+            _select(AuditLog)
+            .where(AuditLog.resource_type == "budget_lines")
+            .where(AuditLog.resource_id == line.id)
+        ).all()
+        clear_rows = [
+            a for a in audits
+            if (a.metadata_json or {}).get("event") == "clear_unbudgeted"
+        ]
+        assert len(clear_rows) == 1, (
+            f"idempotent path wrote {len(clear_rows)} audit rows; "
+            "expected exactly 1."
+        )
+
+
+class TestClearUnbudgetedHTTP:
+    """HTTP-level coverage of the clear-action (T15, T16)."""
+
+    def test_clear_unbudgeted_on_non_unbudgeted_line_422(
+        self, db_session, active_chain,
+    ):
+        """T15 — clearing a normal (is_unbudgeted=False) line returns
+        422. Uses HTTP so the service ValueError-to-422 mapping is
+        exercised."""
+        # Build a normal (non-unbudgeted) line directly so we don't
+        # have to seed a full appraisal. Just insert a row.
+        from app.models.budgets import BudgetLine
+
+        normal = BudgetLine(
+            id=uuid.uuid4(),
+            budget_id=uuid.UUID(active_chain["budget_id"]),
+            cost_code_id=uuid.UUID(active_chain["cost_code_id"]),
+            entity_id=uuid.UUID(active_chain["entity_id"]),
+            line_description="Normal budgeted line — not B102",
+            original_budget=Decimal("1000"),
+            current_budget=Decimal("1000"),
+            actuals_to_date=Decimal("0"),
+            committed_not_invoiced=Decimal("0"),
+            forecast_to_complete=Decimal("0"),
+            forecast_final_cost=Decimal("0"),
+            variance_value=Decimal("0"),
+            variance_pct=Decimal("0"),
+            variance_status="Green",
+            requires_attention=False,
+            is_contingency=False,
+            is_locked=False,
+            is_unbudgeted=False,
+            display_order=999,
+        )
+        db_session.add(normal)
+        db_session.commit()
+
+        s = _login(_ADMIN_EMAIL)
+        r = s.post(
+            f"{_BASE_URL}/api/v1/budget-lines/{normal.id}/clear-unbudgeted"
+        )
+        assert r.status_code == 422, (r.status_code, r.text)
+        assert "not an unbudgeted line" in r.json().get("detail", "")
+
+    def test_clear_unbudgeted_requires_permission_403(
+        self, db_session, active_chain,
+    ):
+        """T16 — a project_manager (no `budgets.clear_unbudgeted`) → 403.
+
+        PM is preferred over finance for this test because PM has no
+        MFA (per /app/memory/test_credentials.md), so the login path
+        avoids the TOTP enrolment dance entirely — the auth-failure
+        signal is cleaner.
+        """
+        u, perms = _perms_for(db_session, active_chain["user_id"])
+        line = create_unbudgeted_line(
+            db_session,
+            budget_id=uuid.UUID(active_chain["budget_id"]),
+            user=u, perms=perms,
+            cost_code_id=uuid.UUID(active_chain["cost_code_id"]),
+            entity_id=uuid.UUID(active_chain["entity_id"]),
+            reason="Test of 403 perm path",
+            source="purchase_order",
+        )
+        db_session.commit()
+
+        s = _login(_PM_EMAIL)
+        r = s.post(
+            f"{_BASE_URL}/api/v1/budget-lines/{line.id}/clear-unbudgeted"
+        )
+        assert r.status_code == 403, (r.status_code, r.text)
+
+
+class TestClearUnbudgetedDoesNotTouchSpend:
+    def test_clear_unbudgeted_spend_remains_on_line(
+        self, db_session, active_chain,
+    ):
+        """T17 — actuals + committed_not_invoiced (the source-of-truth
+        spend columns) are byte-identical before vs after the clear.
+
+        forecast_to_complete and forecast_final_cost are NOT pinned here:
+        they are derived quantities that `recompute_summary` re-derives
+        from (current_budget, actuals, committed) on every recompute —
+        so they SHOULD update when the clear-action triggers a
+        recompute. That re-derivation is correct behaviour, not a leak.
+        """
+        from app.models.budgets import BudgetLine
+
+        u, perms = _perms_for(db_session, active_chain["user_id"])
+        line = create_unbudgeted_line(
+            db_session,
+            budget_id=uuid.UUID(active_chain["budget_id"]),
+            user=u, perms=perms,
+            cost_code_id=uuid.UUID(active_chain["cost_code_id"]),
+            entity_id=uuid.UUID(active_chain["entity_id"]),
+            reason="Spend-invariance probe",
+            source="purchase_order",
+        )
+        # Stamp some realistic spend numbers post-create.
+        line.actuals_to_date = Decimal("345.67")
+        line.committed_not_invoiced = Decimal("89.10")
+        db_session.commit()
+
+        before = (line.actuals_to_date, line.committed_not_invoiced)
+        clear_unbudgeted(db_session, line_id=line.id, user=u, perms=perms)
+        db_session.commit()
+
+        fresh = db_session.get(BudgetLine, line.id)
+        after = (fresh.actuals_to_date, fresh.committed_not_invoiced)
+        assert after == before, (
+            f"source-of-truth spend figures must be untouched; "
+            f"before={before} after={after}"
+        )
+
+
+class TestSerialiserExposesUnbudgetedFields:
+    """T18 + T19 — both the detail serialiser and the grid node
+    surface the seven new fields."""
+
+    EXPECTED_KEYS = {
+        "is_unbudgeted",
+        "unbudgeted_reason",
+        "unbudgeted_source",
+        "unbudgeted_created_by",
+        "unbudgeted_cleared_by",
+        "unbudgeted_cleared_at",
+        "unbudgeted_awaiting_ack",
+    }
+
+    def test_serialise_line_exposes_unbudgeted_fields(
+        self, db_session, active_chain,
+    ):
+        """T18 — _serialise_line (detail) carries all 7 keys.
+
+        Verified by GETting the budget detail (which lists all lines
+        through _serialise_line) and walking to our line; this
+        exercises the real serialiser without coupling to an internal
+        Python symbol.
+        """
+        u, perms = _perms_for(db_session, active_chain["user_id"])
+        line = create_unbudgeted_line(
+            db_session,
+            budget_id=uuid.UUID(active_chain["budget_id"]),
+            user=u, perms=perms,
+            cost_code_id=uuid.UUID(active_chain["cost_code_id"]),
+            entity_id=uuid.UUID(active_chain["entity_id"]),
+            reason="Serialiser exposure probe",
+            source="purchase_order",
+        )
+        db_session.commit()
+
+        s = _login(_ADMIN_EMAIL)
+        r = s.get(
+            f"{_BASE_URL}/api/v1/budgets/{active_chain['budget_id']}"
+        )
+        assert r.status_code == 200, (r.status_code, r.text)
+        body = r.json()
+        # Budget-detail response typically has a "lines" list.
+        lines = body.get("lines") or []
+        ours = next((l for l in lines if str(l.get("id")) == str(line.id)), None)
+        assert ours is not None, (
+            f"line {line.id} missing from budget detail; "
+            f"got {len(lines)} lines"
+        )
+        missing = self.EXPECTED_KEYS - set(ours.keys())
+        assert not missing, (
+            f"_serialise_line missing keys: {missing} "
+            f"(line keys: {sorted(ours.keys())})"
+        )
+        # Sanity-pin a few values.
+        assert ours["is_unbudgeted"] is True
+        assert ours["unbudgeted_source"] == "purchase_order"
+        assert ours["unbudgeted_awaiting_ack"] is True
+        assert ours["unbudgeted_cleared_at"] is None
+
+    def test_grid_node_exposes_unbudgeted_fields(
+        self, db_session, active_chain,
+    ):
+        """T19 — _grid_line_node carries all 7 keys."""
+        u, perms = _perms_for(db_session, active_chain["user_id"])
+        line = create_unbudgeted_line(
+            db_session,
+            budget_id=uuid.UUID(active_chain["budget_id"]),
+            user=u, perms=perms,
+            cost_code_id=uuid.UUID(active_chain["cost_code_id"]),
+            entity_id=uuid.UUID(active_chain["entity_id"]),
+            reason="Grid node exposure probe",
+            source="package",
+        )
+        db_session.commit()
+
+        s = _login(_ADMIN_EMAIL)
+        r = s.get(
+            f"{_BASE_URL}/api/v1/budgets/{active_chain['budget_id']}/grid"
+        )
+        assert r.status_code == 200, (r.status_code, r.text)
+        body = r.json()
+        # Walk the grid tree until we find our line.
+        # Grid structure: {groups: [{lines: [...]}, ...]} or similar.
+        # Be defensive — flatten any list of dicts.
+        def _find_line(obj, line_id):
+            if isinstance(obj, dict):
+                if str(obj.get("id")) == str(line_id) and "is_unbudgeted" in obj:
+                    return obj
+                for v in obj.values():
+                    found = _find_line(v, line_id)
+                    if found:
+                        return found
+            elif isinstance(obj, list):
+                for v in obj:
+                    found = _find_line(v, line_id)
+                    if found:
+                        return found
+            return None
+
+        node = _find_line(body, line.id)
+        assert node is not None, (
+            "grid response did not contain a node for the test line "
+            f"{line.id}; top-level keys: {sorted(body.keys()) if isinstance(body, dict) else type(body)}"
+        )
+        missing = self.EXPECTED_KEYS - set(node.keys())
+        assert not missing, (
+            f"_grid_line_node missing keys: {missing} "
+            f"(node keys: {sorted(node.keys())})"
+        )
+        assert node["is_unbudgeted"] is True
+        assert node["unbudgeted_source"] == "package"
+        assert node["unbudgeted_awaiting_ack"] is True

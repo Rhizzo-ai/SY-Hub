@@ -10,9 +10,11 @@ from __future__ import annotations
 
 import logging
 import uuid
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Optional
 
+from fastapi import Request
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -31,6 +33,8 @@ from app.services.budget_errors import (
 from app.services.budgets import (
     _scope_check_project, _load_budget_for_write, recompute_summary,
 )
+from app.services import cost_code_scope as scope_svc
+from app.services.audit import record_audit
 
 log = logging.getLogger(__name__)
 
@@ -353,6 +357,160 @@ def create_unbudgeted_line(
     line.variance_status = "Red"
     line.requires_attention = True
     db.flush()
+    return line
+
+
+# ----------------------------------------------------------------------
+# B102 — director acknowledgement ("clear") of an unbudgeted order line.
+# Wired to POST /api/v1/budget-lines/{line_id}/clear-unbudgeted.
+# Permission: budgets.clear_unbudgeted (granted to director +
+# super_admin by default; finance default-off — see seed_rbac).
+# Idempotent — second call returns the same line unchanged, writes no
+# extra audit row.
+# ----------------------------------------------------------------------
+def clear_unbudgeted(
+    db: Session,
+    *,
+    line_id: uuid.UUID,
+    user: User,
+    perms: UserPermissions,
+    request: Optional[Request] = None,
+) -> BudgetLine:
+    """Acknowledge an unbudgeted order line (B102 director clear-action).
+
+    Loads the line (404-on-not-found and 404-on-out-of-scope), takes a
+    write lock on the parent budget, records who acknowledged it +
+    when, and re-runs `recompute_summary` so the forced-Red marker
+    written at creation is replaced by the genuine variance colour
+    derived from real maths (the catch flagged in Gate 2's deviation
+    log — without this recompute the forced Red would outlive the
+    acknowledgement and the line would stay visually red forever).
+
+    Idempotency contract: if `unbudgeted_cleared_at` is already set,
+    the function is a no-op — the line is returned unchanged, no
+    audit row is written, and `cleared_by` / `cleared_at` are NOT
+    re-stamped. This protects against double-click submissions and
+    concurrent acknowledgements (two directors racing → the FOR
+    UPDATE on the parent budget serialises them and the second
+    transaction sees `cleared_at` populated).
+
+    Args:
+      line_id: BudgetLine.id (UUID).
+      user: actor (the director).
+      perms: actor's permissions — used by `assert_line_in_scope` to
+        enforce construction-scope visibility.
+      request: optional FastAPI Request, passed to record_audit for
+        IP / UA / session capture.
+
+    Returns:
+      The (possibly-already-acknowledged) BudgetLine. Caller must
+      commit + refresh + serialise.
+
+    Raises:
+      BudgetNotFoundError: line does not exist OR is out of the
+        caller's cost-code scope (existence not leaked).
+      BudgetStateError: line is not flagged as unbudgeted.
+    """
+    line = db.get(BudgetLine, line_id)
+    if line is None:
+        raise BudgetNotFoundError("Budget line not found")
+    # Scope check first — out-of-scope must 404, not leak existence.
+    scope_svc.assert_line_in_scope(db, perms, line)
+
+    if not line.is_unbudgeted:
+        raise BudgetStateError("line is not an unbudgeted line")
+
+    # Idempotent short-circuit. We deliberately check BEFORE taking
+    # the FOR UPDATE lock to keep the common "already cleared" path
+    # cheap; the second concurrent acknowledger may still slip past
+    # this check, which is why the recompute-locked branch below
+    # re-checks under the lock.
+    if line.unbudgeted_cleared_at is not None:
+        return line
+
+    # Lock the parent budget for the recompute. This:
+    #   - serialises concurrent directors hitting the same line
+    #   - is the canonical money-path lock pattern in this codebase
+    #     (mirrors update_line / create_item / delete_line).
+    # _load_budget_for_write checks LINE_FROZEN_BUDGET_STATUSES, but
+    # we tolerate that: if a budget went Locked/Closed between the
+    # line being created and the director acknowledging it, the
+    # acknowledgement should still be possible — the line's spend is
+    # already real and someone needs to sign it off. We pass
+    # allow_frozen=True so the helper does not block.
+    #
+    # ⚠ _load_budget_for_write may not currently support
+    # allow_frozen; if it does not, we re-lock by hand via a SELECT
+    # FOR UPDATE on the budget row. Inspected at HEAD — the helper
+    # raises on frozen statuses with no override. We therefore use
+    # the row-lock directly rather than the helper.
+    budget = db.execute(
+        select(Budget).where(Budget.id == line.budget_id).with_for_update()
+    ).scalar_one()
+
+    # Re-check under the lock to close the race window.
+    db.refresh(line, attribute_names=[
+        "unbudgeted_cleared_at", "unbudgeted_cleared_by",
+        "requires_attention", "variance_status",
+    ])
+    if line.unbudgeted_cleared_at is not None:
+        return line
+
+    # ── Mutation ──
+    before = {
+        "unbudgeted_cleared_at": line.unbudgeted_cleared_at,
+        "unbudgeted_cleared_by": line.unbudgeted_cleared_by,
+        "requires_attention": line.requires_attention,
+        "variance_status": line.variance_status,
+    }
+
+    now = datetime.now(timezone.utc)
+    line.unbudgeted_cleared_at = now
+    line.unbudgeted_cleared_by = user.id
+    line.requires_attention = False
+
+    # ── Recompute (THE Gate-2-deviation catch) ──
+    # Re-derive variance_status for every line on this budget from
+    # actual maths. For the now-acknowledged £0 unbudgeted line this
+    # collapses Red → Green (current_budget=0, variance_pct=0,
+    # _classify_variance(0) returns "Green"). The forced Red marker
+    # from `create_unbudgeted_line` does NOT outlive acknowledgement.
+    db.refresh(budget, attribute_names=["lines"])
+    recompute_summary(db, budget)
+    db.flush()
+
+    # ── Audit ──
+    after = {
+        "unbudgeted_cleared_at": line.unbudgeted_cleared_at,
+        "unbudgeted_cleared_by": line.unbudgeted_cleared_by,
+        "requires_attention": line.requires_attention,
+        "variance_status": line.variance_status,
+    }
+    field_changes = [
+        {"field": f, "old": before[f], "new": after[f]}
+        for f in (
+            "unbudgeted_cleared_at",
+            "unbudgeted_cleared_by",
+            "requires_attention",
+            "variance_status",
+        )
+        if before[f] != after[f]
+    ]
+    record_audit(
+        db,
+        action="Update",
+        resource_type="budget_lines",
+        resource_id=line.id,
+        actor_user_id=user.id,
+        project_id=budget.project_id,
+        field_changes=field_changes,
+        metadata={
+            "event": "clear_unbudgeted",
+            "budget_id": str(budget.id),
+            "unbudgeted_source": line.unbudgeted_source,
+        },
+        request=request,
+    )
     return line
 
 

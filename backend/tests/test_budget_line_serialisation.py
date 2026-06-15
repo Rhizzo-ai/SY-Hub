@@ -48,6 +48,17 @@ class _StubLine:
             variance_value=Decimal("0"),
             variance_pct=Decimal("0"),
             actuals_this_period=Decimal("0"),
+            # B102 — Unbudgeted-Order Handling. Added to the stub so
+            # the serialiser (which now reads these as plain attributes)
+            # doesn't trip AttributeError on this duck-type. Mirrors the
+            # NOT-NULL boolean + nullable companions on the real model
+            # post-migration 0049.
+            is_unbudgeted=False,
+            unbudgeted_reason=None,
+            unbudgeted_source=None,
+            unbudgeted_created_by=None,
+            unbudgeted_cleared_by=None,
+            unbudgeted_cleared_at=None,
             items=[],
         )
         defaults.update(overrides)

@@ -196,6 +196,25 @@ def _serialise_line(l: BudgetLine, *, include_sensitive: bool,  # noqa: E741
         # BCR dialog can validate the source line. Default false; never
         # null in DB (server_default on the column).
         "is_contingency": bool(l.is_contingency),
+        # B102 — Unbudgeted-Order Handling. The dedicated marker
+        # column is enough for the grid; `awaiting_ack` is a derived
+        # convenience for the frontend so it doesn't have to compute
+        # "is_unbudgeted AND cleared_at IS NULL" itself.
+        "is_unbudgeted": bool(l.is_unbudgeted),
+        "unbudgeted_reason": l.unbudgeted_reason,
+        "unbudgeted_source": l.unbudgeted_source,
+        "unbudgeted_created_by": (
+            str(l.unbudgeted_created_by) if l.unbudgeted_created_by else None
+        ),
+        "unbudgeted_cleared_by": (
+            str(l.unbudgeted_cleared_by) if l.unbudgeted_cleared_by else None
+        ),
+        "unbudgeted_cleared_at": (
+            l.unbudgeted_cleared_at.isoformat() if l.unbudgeted_cleared_at else None
+        ),
+        "unbudgeted_awaiting_ack": bool(
+            l.is_unbudgeted and l.unbudgeted_cleared_at is None
+        ),
         "created_at": l.created_at.isoformat() if l.created_at else None,
         "updated_at": l.updated_at.isoformat() if l.updated_at else None,
         # B88 Pack 2 §R5 / D4 — money keys promoted out of the
@@ -645,6 +664,26 @@ def _grid_line_node(
         "is_contingency": bool(line.is_contingency),
         "is_locked": bool(line.is_locked),
         "requires_attention": bool(line.requires_attention),
+        # B102 — Unbudgeted-Order Handling. Grid surfaces the same
+        # marker fields as the detail serialiser so the BudgetGridV2
+        # can paint the line distinctively while awaiting director
+        # acknowledgement.
+        "is_unbudgeted": bool(line.is_unbudgeted),
+        "unbudgeted_reason": line.unbudgeted_reason,
+        "unbudgeted_source": line.unbudgeted_source,
+        "unbudgeted_created_by": (
+            str(line.unbudgeted_created_by) if line.unbudgeted_created_by else None
+        ),
+        "unbudgeted_cleared_by": (
+            str(line.unbudgeted_cleared_by) if line.unbudgeted_cleared_by else None
+        ),
+        "unbudgeted_cleared_at": (
+            line.unbudgeted_cleared_at.isoformat()
+            if line.unbudgeted_cleared_at else None
+        ),
+        "unbudgeted_awaiting_ack": bool(
+            line.is_unbudgeted and line.unbudgeted_cleared_at is None
+        ),
         "display_order": line.display_order,
         "notes": line.notes,
         "updated_at": line.updated_at.isoformat() if line.updated_at else None,
@@ -950,6 +989,58 @@ def delete_budget_line(
     )
     db.commit()
     return None
+
+
+# ---------------------------------------------------------------------
+# Endpoint 9d: clear-unbudgeted — director acknowledgement of a line
+# auto-created by a PO / package against a cost code with no budget
+# line (B102, Chat 57+). Mounted on /budget-lines/{line_id}/... to
+# stay consistent with the rest of the per-line endpoints (update /
+# delete). Body-less POST — mirrors activate/lock/close convention.
+# Permission: budgets.clear_unbudgeted (director + super_admin by
+# default; finance default-off — see seed_rbac).
+# ---------------------------------------------------------------------
+
+@router.post("/budget-lines/{line_id}/clear-unbudgeted")
+def clear_unbudgeted_line(
+    line_id: uuid.UUID, request: Request,
+    current: User = Depends(get_current_user),
+    perms: UserPermissions = Depends(
+        require_permission("budgets.clear_unbudgeted")
+    ),
+    db: Session = Depends(get_db),
+):
+    """Acknowledge an unbudgeted order line.
+
+    Returns the (now-acknowledged) line, serialised with all the
+    B102 marker fields so the frontend can flip the row from
+    "awaiting director sign-off" to "acknowledged" without a refetch.
+    Idempotent — POSTing twice returns 200 both times with the same
+    cleared_at; no extra audit row is written.
+
+    404 if the line does not exist or is out of the caller's scope.
+    422 if the line is not an unbudgeted line in the first place.
+    403 if the caller lacks `budgets.clear_unbudgeted`.
+    """
+    try:
+        line = line_svc.clear_unbudgeted(
+            db, line_id=line_id, user=current, perms=perms, request=request,
+        )
+    except BudgetNotFoundError:
+        # Pattern α — out-of-scope and not-found both return 404 with
+        # the same generic phrasing; we do not leak existence.
+        raise HTTPException(404, "Budget line not found")
+    except BudgetStateError as exc:
+        # "line is not an unbudgeted line" — 422 (semantic).
+        raise HTTPException(422, str(exc))
+    db.commit()
+    db.refresh(line)
+    include_sensitive = (
+        perms.has("budgets.view_sensitive") or perms.is_super_admin
+    )
+    return _serialise_line(
+        line, include_sensitive=include_sensitive, include_items=True,
+    )
 
 
 # ---------------------------------------------------------------------
