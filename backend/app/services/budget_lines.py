@@ -213,6 +213,149 @@ def create_line(
     return line
 
 
+# ----------------------------------------------------------------------
+# B102 — Unbudgeted-Order Handling: helper used by PO + package flows
+# when a caller raises an order against a cost code with no existing
+# budget line. Single source of truth for the auto-line so both code
+# paths produce identical rows.
+# ----------------------------------------------------------------------
+_UNBUDGETED_SOURCES: frozenset[str] = frozenset({"purchase_order", "package"})
+
+
+def create_unbudgeted_line(
+    db: Session,
+    *,
+    budget_id: uuid.UUID,
+    user: User,
+    perms: UserPermissions,
+    cost_code_id: uuid.UUID,
+    cost_code_subcategory_id: Optional[uuid.UUID] = None,
+    entity_id: Optional[uuid.UUID] = None,
+    reason: str,
+    source: str,
+) -> BudgetLine:
+    """Create a £0 budget line flagged as unbudgeted (B102).
+
+    Used by the PO and package services when the caller raises an order
+    against a cost code that has no existing budget line. The line is
+    forced Red + requires_attention=True and carries the raiser's reason
+    so a director can later acknowledge it via
+    `clear_unbudgeted` (Gate 4).
+
+    Trust boundary: the caller is responsible for permission gating
+    (pos.create / packages.edit upstream). This helper does NOT itself
+    check a permission — creating the line is a side-effect of an
+    authorised upstream write.
+
+    Args:
+      budget_id: target budget. Must be writable per the create_line
+        budget-status guard (LINE_FROZEN_BUDGET_STATUSES rejected by
+        create_line — i.e. Locked / Superseded / Closed). Draft/Active
+        are permitted at the helper level; the upstream PO service
+        layer additionally requires Active.
+      cost_code_id: cost code the auto-line will hang on. Used to build
+        a deterministic line_description ("Unbudgeted — {code} {name}").
+      cost_code_subcategory_id: optional subcat; validated against the
+        cost code by `_validate_cost_code_subcategory`.
+      entity_id: if None, falls back to the budget's project
+        `primary_entity_id` (mirrors how appraisal-seeded lines source
+        entity). Validated to be in the user's tenant by
+        `_validate_entity_in_tenant`.
+      reason: mandatory, non-empty after strip (D-E2). The schema layer
+        also enforces this; the service-level check is a backstop so
+        callers that bypass the schema (tests, internal jobs) cannot
+        sneak through a blank.
+      source: must be 'purchase_order' or 'package'. Anything else is
+        a programmer error and raises BudgetStateError.
+
+    Returns:
+      The persisted BudgetLine with `is_unbudgeted=True`,
+      `variance_status='Red'`, `requires_attention=True`,
+      `unbudgeted_reason=reason.strip()`, `unbudgeted_source=source`,
+      `unbudgeted_created_by=user.id`, original_budget=0,
+      `unbudgeted_cleared_at=None`.
+
+    Lock re-entrancy: `create_line` internally re-acquires
+    SELECT ... FOR UPDATE on the budget row. PostgreSQL row locks are
+    re-entrant within a single transaction, so callers that have
+    already locked the budget (e.g. `create_po`) are safe to invoke
+    this helper inline — no deadlock, no block. Gate 5 (T7) exercises
+    the live PO path end-to-end.
+    """
+    # D-E2 backstop — schema also enforces, but the helper is a public
+    # service entrypoint and may be called outside an HTTP request.
+    if not reason or not reason.strip():
+        raise BudgetStateError("unbudgeted_reason is required")
+    if source not in _UNBUDGETED_SOURCES:
+        raise BudgetStateError(
+            "unbudgeted_source must be one of 'purchase_order' or 'package'"
+        )
+
+    # Resolve entity: caller-supplied wins, else project's primary entity.
+    if entity_id is None:
+        # Load the budget without taking a lock here — `create_line` will
+        # acquire FOR UPDATE inside the same transaction. We only need
+        # the project_id to find the project's primary_entity_id.
+        b_for_proj = db.get(Budget, budget_id)
+        if b_for_proj is None:
+            raise BudgetNotFoundError("Budget not found")
+        project = db.get(Project, b_for_proj.project_id)
+        if project is None or project.primary_entity_id is None:
+            raise BudgetStateError(
+                "cannot resolve entity_id from budget's project"
+            )
+        entity_id = project.primary_entity_id
+
+    # Cost-code presence drives line_description. We look up the
+    # cost code here so the description can be built before delegating
+    # to `create_line`. `create_line` will independently re-validate the
+    # cost code via `db.get(CostCode, ...)`; the cost is one extra cache
+    # hit on a small lookup table — acceptable.
+    cc = db.get(CostCode, cost_code_id)
+    if cc is None:
+        raise BudgetStateError("cost_code_id not found")
+    description_raw = f"Unbudgeted — {cc.code} {cc.name}"
+    line_description = description_raw[:255]
+
+    # Delegate base-row creation. This:
+    #   - locks the budget FOR UPDATE
+    #   - validates LINE_FROZEN_BUDGET_STATUSES (rejects Locked/etc.)
+    #   - validates cost code + subcategory + entity-in-tenant
+    #   - computes display_order
+    #   - inserts the row + the 4 default items
+    #   - calls recompute_summary on the parent (which sets
+    #     variance_status from variance maths — see post-call override).
+    line = create_line(
+        db,
+        budget_id=budget_id,
+        user=user,
+        perms=perms,
+        cost_code_id=cost_code_id,
+        cost_code_subcategory_id=cost_code_subcategory_id,
+        entity_id=entity_id,
+        line_description=line_description,
+        original_budget=Decimal("0"),
+        notes=None,
+    )
+
+    # Apply B102 markers AFTER create_line's internal recompute_summary
+    # has run. We deliberately do NOT call recompute_summary or
+    # db.refresh(line) again — that would re-derive variance_status from
+    # maths (which for a £0 line would land Green) and clobber the
+    # forced Red. The forced Red + requires_attention is the visual
+    # signal to the operator that this is an unbudgeted line awaiting
+    # director acknowledgement; its lifecycle is independent of the
+    # variance scan (D-E1).
+    line.is_unbudgeted = True
+    line.unbudgeted_reason = reason.strip()
+    line.unbudgeted_source = source
+    line.unbudgeted_created_by = user.id
+    line.variance_status = "Red"
+    line.requires_attention = True
+    db.flush()
+    return line
+
+
 def bulk_update_lines(
     db: Session,
     *,
@@ -518,8 +661,20 @@ def scan_requires_attention(
     flagged = 0
     cleared = 0
     scanned = 0
+    skipped_unbudgeted = 0
     for line in db.scalars(stmt).all():
         scanned += 1
+        # B102 D-E1: never let the variance scan touch the
+        # variance_status / requires_attention of an unbudgeted line
+        # whose director acknowledgement has not yet landed. Its
+        # Red/attention state is owned by the unbudgeted sign-off
+        # lifecycle, not by variance maths. Counted as `scanned` (we
+        # visited it) but not `flagged`/`cleared`. After
+        # acknowledgement (cleared_at set), the line rejoins normal
+        # scan behaviour — see test_scan_resumes_after_acknowledgement.
+        if line.is_unbudgeted and line.unbudgeted_cleared_at is None:
+            skipped_unbudgeted += 1
+            continue
         should_flag = (line.variance_status == "Red")
         if should_flag and not line.requires_attention:
             line.requires_attention = True
@@ -528,4 +683,9 @@ def scan_requires_attention(
             line.requires_attention = False
             cleared += 1
     db.flush()
-    return {"flagged": flagged, "cleared": cleared, "scanned": scanned}
+    return {
+        "flagged": flagged,
+        "cleared": cleared,
+        "scanned": scanned,
+        "skipped_unbudgeted": skipped_unbudgeted,
+    }

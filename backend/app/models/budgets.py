@@ -157,6 +157,30 @@ class BudgetLine(Base):
     is_contingency = Column(
         Boolean, nullable=False, default=False, server_default="false",
     )
+    # B102 — Unbudgeted-Order Handling (migration 0049). Set True for
+    # lines auto-created by a PO/package raised against a cost code with
+    # no existing budget line. The dedicated marker keeps the variance
+    # scan from clobbering / re-flagging the line while a director's
+    # acknowledgement is pending (D-E1 — enforced in
+    # services.budget_lines.scan_requires_attention).
+    is_unbudgeted = Column(
+        Boolean, nullable=False, default=False, server_default="false",
+    )
+    unbudgeted_reason = Column(Text, nullable=True)
+    # 'purchase_order' | 'package' — populated by the helper that
+    # creates the line; single-writer via the service layer.
+    unbudgeted_source = Column(String(20), nullable=True)
+    unbudgeted_created_by = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    unbudgeted_cleared_by = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    unbudgeted_cleared_at = Column(DateTime(timezone=True), nullable=True)
     display_order = Column(Integer, nullable=False)
     notes = Column(Text, nullable=True)
     created_at = Column(
