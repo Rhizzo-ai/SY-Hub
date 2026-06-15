@@ -86,6 +86,12 @@ ACTIONS = (
     # the tendering spine: striking a winning bid into a downstream
     # PO/SC under the Σ-guard).
     "award",
+    # B102 (Chat 57+) — director acknowledgement of an unbudgeted
+    # order line auto-created by PO / package flows. Paired with the
+    # `permission_action` PG enum value added by migration 0049 —
+    # the Python tuple and the PG enum MUST stay in lockstep or
+    # SAEnum will reject seed-time inserts.
+    "clear_unbudgeted",
 )
 
 ENTITY_SCOPES = ("All", "Specific")

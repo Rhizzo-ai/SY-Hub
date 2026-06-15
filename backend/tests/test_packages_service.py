@@ -88,13 +88,19 @@ def budget(admin, db_engine, project):
 # T-M : migration + schema
 # ==========================================================================
 
-def test_TM_1_alembic_head_is_0048(db_engine):
-    """Pack 3.5 — alembic head reports 0048 and all 6 tables exist."""
+def test_TM_1_alembic_head_is_0049(db_engine):
+    """Pack 3.5 — alembic head reports 0049 and all 6 tables exist.
+
+    Bumped from 0048 → 0049 as part of B102 (Unbudgeted-Order Handling).
+    Migration 0049 adds six columns on `budget_lines` and extends the
+    `permission_action` enum; the package tables introduced in 0047/0048
+    are untouched.
+    """
     with db_engine.connect() as c:
         head = c.execute(text(
             "SELECT version_num FROM alembic_version"
         )).scalar()
-    assert head == "0048_package_kind_3value_links", head
+    assert head == "0049_unbudgeted_order_lines", head
     expected_tables = {
         "packages", "package_lines", "package_bids", "package_bid_lines",
         "package_awards", "package_award_lines",
@@ -591,14 +597,19 @@ def test_TTN_11_decline_withdrawn_bid_not_awardable(admin, project, budget):
 # ==========================================================================
 
 def test_TRB_1_rbac_seed_packages_perms_and_grants(db_engine):
-    """Permissions count == 142; packages.* present with correct sensitive
+    """Permissions count == 143; packages.* present with correct sensitive
     set; default role grants exclude award/delete on custom-role rule
-    (verified directly on shipped roles)."""
+    (verified directly on shipped roles).
+
+    Count bumped from 142 → 143 as part of B102 (adds
+    `budgets.clear_unbudgeted` to the catalogue, non-sensitive). The
+    packages.* set itself is unchanged.
+    """
     with db_engine.connect() as c:
         total = c.execute(text(
             "SELECT count(*) FROM permissions"
         )).scalar()
-        assert total == 142, total
+        assert total == 143, total
         pkg = c.execute(text(
             "SELECT code, is_sensitive FROM permissions "
             "WHERE resource='packages' ORDER BY code"

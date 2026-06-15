@@ -100,7 +100,14 @@ PERMISSION_CATALOGUE += [
 ]
 PERMISSION_CATALOGUE += _perms_for(
     "budgets",
-    include=["view", "view_sensitive", "create", "edit", "approve", "admin"],
+    include=["view", "view_sensitive", "create", "edit", "approve", "admin",
+             # B102 — director acknowledgement of an unbudgeted order
+             # line auto-created by PO / package flows. Non-sensitive
+             # (the act itself is not money-disclosing); the actual
+             # acknowledgement endpoint requires this perm separately
+             # from budgets.edit so finance / PM can't silently clear
+             # an unbudgeted line that a director hasn't sighted.
+             "clear_unbudgeted"],
     sensitive={"admin"},
 )
 PERMISSION_CATALOGUE += _perms_for(
