@@ -35,7 +35,13 @@ from app.models.purchase_orders import (
 from app.models.suppliers import Supplier
 from app.models.user import User
 from app.services import po_numbering, po_transitions
+from app.services import budget_lines as bl_svc
 from app.services.audit import field_diff, record_audit
+from app.services.budget_errors import (
+    BudgetNotFoundError,
+    BudgetStateError,
+    BudgetValidationError,
+)
 from app.services.budgets_reconciliation import recompute_for_po
 from app.services.po_authz import (
     EditPermission,
@@ -244,7 +250,6 @@ def create_po(
         raise ValueError("Project not found")
     # Pattern α: ensure visibility.
     from app.services.budgets import _scope_check_project
-    from app.services.budget_errors import BudgetNotFoundError
     try:
         _scope_check_project(db, project, user, perms)
     except BudgetNotFoundError as e:
@@ -292,6 +297,60 @@ def create_po(
             )
 
     line_payloads = list(payload["lines"])
+
+    # ── B102 Gate 5 — RESOLVE BEFORE VALIDATE ──
+    # Walk every line payload and, for each `unbudgeted=true` entry,
+    # create the flagged £0 auto-line on THIS budget and substitute its
+    # id back into the payload. After this single pass every line
+    # payload carries a real `budget_line_id`, so the existing
+    # _validate_budget_lines invariant ("all belong to this budget")
+    # holds unchanged — the auto-line was just created on
+    # budget.id and is the most recent member of the set.
+    #
+    # The Active-budget guard already ran at _validate_budget(~267)
+    # above — a non-Active budget never reaches this loop, so the
+    # whole PO (including any auto-line attempts) is rejected with
+    # po/budget-not-active and nothing is persisted.
+    #
+    # Lock re-entrancy: create_unbudgeted_line → create_line
+    # re-acquires SELECT ... FOR UPDATE on the budget row that
+    # _validate_budget already touched. PostgreSQL row locks are
+    # re-entrant within a single transaction, so no hang / deadlock.
+    # T7 exercises this end-to-end against the live API.
+    #
+    # Rollback safety: this loop runs inside create_po's caller-owned
+    # transaction. The router commits at the end; if a later line
+    # payload (or numbering, or PO insert) raises, the session is
+    # rolled back by the request-scoped get_db fixture, so any
+    # half-created auto-line vanishes with the rest of the PO. T10c
+    # proves this against the live path.
+    for lp in line_payloads:
+        if lp.get("unbudgeted"):
+            cc_id = uuid.UUID(str(lp["unbudgeted_cost_code_id"]))
+            subcat_raw = lp.get("unbudgeted_subcategory_id")
+            subcat_id = uuid.UUID(str(subcat_raw)) if subcat_raw else None
+            try:
+                auto = bl_svc.create_unbudgeted_line(
+                    db,
+                    budget_id=budget.id,
+                    user=user,
+                    perms=perms,
+                    cost_code_id=cc_id,
+                    cost_code_subcategory_id=subcat_id,
+                    entity_id=None,  # helper defaults from project primary entity
+                    reason=str(lp["unbudgeted_reason"]),
+                    source="purchase_order",
+                )
+            except (BudgetStateError, BudgetNotFoundError,
+                    BudgetValidationError) as e:
+                # Surface service-layer rejections as 422 at the router
+                # (mirrors the existing ValueError→422 mapping below).
+                # E.g. unknown cost_code_id, subcat mismatch.
+                raise ValueError(str(e)) from e
+            lp["budget_line_id"] = auto.id
+            # leave lp["unbudgeted"] etc. in place; downstream reads
+            # `budget_line_id` only.
+
     budget_line_ids = [
         uuid.UUID(str(lp["budget_line_id"])) for lp in line_payloads
     ]

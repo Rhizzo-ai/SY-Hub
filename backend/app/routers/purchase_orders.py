@@ -26,7 +26,7 @@ from datetime import date
 from typing import Any, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -48,7 +48,17 @@ router = APIRouter(tags=["purchase_orders"])
 
 class POLineCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    budget_line_id: uuid.UUID
+    # B102 — Unbudgeted-Order Handling. `budget_line_id` is now optional
+    # at the schema level; XOR-enforced against `unbudgeted=true` by the
+    # after-validator. A normal line must still carry a budget_line_id;
+    # an unbudgeted line must carry cost code + reason and NO
+    # budget_line_id. Service layer (create_po) resolves the unbudgeted
+    # branch into a real auto-line BEFORE _validate_budget_lines runs.
+    budget_line_id: Optional[uuid.UUID] = None
+    unbudgeted: bool = False
+    unbudgeted_cost_code_id: Optional[uuid.UUID] = None
+    unbudgeted_subcategory_id: Optional[uuid.UUID] = None
+    unbudgeted_reason: Optional[str] = Field(None, max_length=2000)
     description: str = Field(..., min_length=1, max_length=5000)
     quantity: float = Field(..., gt=0)
     unit_rate: float = Field(..., ge=0)
@@ -57,6 +67,31 @@ class POLineCreate(BaseModel):
     unit: Optional[str] = Field(None, max_length=20)
     line_number: Optional[int] = Field(None, ge=1)
     notes: Optional[str] = Field(None)
+
+    @model_validator(mode="after")
+    def _xor_budget_line(self):
+        """B102 XOR — exactly one of {budget_line_id, unbudgeted=true}.
+
+        unbudgeted=true ⇒ cost_code_id + reason required, budget_line_id
+        forbidden. unbudgeted=false ⇒ budget_line_id required.
+        """
+        if self.unbudgeted:
+            if self.budget_line_id is not None:
+                raise ValueError(
+                    "a line cannot be both unbudgeted and carry a budget_line_id"
+                )
+            if self.unbudgeted_cost_code_id is None:
+                raise ValueError(
+                    "unbudgeted_cost_code_id is required for an unbudgeted line"
+                )
+            if not (self.unbudgeted_reason and self.unbudgeted_reason.strip()):
+                raise ValueError(
+                    "unbudgeted_reason is required for an unbudgeted line"
+                )
+        else:
+            if self.budget_line_id is None:
+                raise ValueError("budget_line_id is required unless unbudgeted=true")
+        return self
 
 
 class POCreate(BaseModel):

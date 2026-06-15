@@ -132,6 +132,21 @@ def _build_chain(engine, *, budget_status: str = "Active") -> dict:
 
 def _tear_chain(engine, refs: dict) -> None:
     with engine.begin() as c:
+        # B102 Gate 5 — strip PO chain first (lines FK budget_lines.id;
+        # POs FK budget.id / project.id). Tests in TestPOUnbudgetedCreate
+        # may have committed real POs against this budget.
+        c.execute(text("""
+            DELETE FROM purchase_order_lines
+            WHERE purchase_order_id IN (
+                SELECT id FROM purchase_orders WHERE project_id=:p
+            )
+        """), {"p": refs["project_id"]})
+        c.execute(text(
+            "DELETE FROM purchase_orders WHERE project_id=:p"
+        ), {"p": refs["project_id"]})
+        c.execute(text(
+            "DELETE FROM project_number_prefixes WHERE project_id=:p"
+        ), {"p": refs["project_id"]})
         c.execute(text("""
             DELETE FROM budget_line_items
             WHERE budget_line_id IN (
@@ -772,7 +787,7 @@ class TestSerialiserExposesUnbudgetedFields:
         body = r.json()
         # Budget-detail response typically has a "lines" list.
         lines = body.get("lines") or []
-        ours = next((l for l in lines if str(l.get("id")) == str(line.id)), None)
+        ours = next((ln for ln in lines if str(ln.get("id")) == str(line.id)), None)
         assert ours is not None, (
             f"line {line.id} missing from budget detail; "
             f"got {len(lines)} lines"
@@ -841,3 +856,452 @@ class TestSerialiserExposesUnbudgetedFields:
         assert node["is_unbudgeted"] is True
         assert node["unbudgeted_source"] == "package"
         assert node["unbudgeted_awaiting_ack"] is True
+
+
+# =====================================================================
+# Gate 5 — PO unbudgeted create path (T7–T10c). HTTP-level tests that
+# drive POST /api/v1/projects/{pid}/purchase-orders against an Active
+# budget with one or more `unbudgeted=true` line entries. The service
+# RESOLVE-BEFORE-VALIDATE path is what makes _validate_budget_lines'
+# invariant continue to hold for both line kinds — these tests pin it.
+# =====================================================================
+
+def _create_supplier_for_admin(admin_session) -> str:
+    """Mint a fresh supplier via the live API. Stable name suffix so
+    multiple test runs don't collide. Returns the supplier UUID as str."""
+    suffix = uuid.uuid4().hex[:8].upper()
+    r = admin_session.post(
+        f"{_BASE_URL}/api/v1/suppliers",
+        json={"name": f"B102-Supplier {suffix}"},
+    )
+    assert r.status_code == 201, (r.status_code, r.text)
+    return r.json()["id"]
+
+
+def _ensure_po_prefix(engine, project_id: str, user_id: str) -> None:
+    """Idempotently seed a default PO number prefix on `project_id`.
+
+    The `active_chain` fixture inserts the project via raw SQL and
+    skips the project-create API path (heavy), so the auto-seed of a
+    default PO prefix that the API path performs never runs. Without
+    a default prefix, `allocate_next_number` raises NumberingError and
+    the PO create returns 422. We seed one here.
+    """
+    with engine.begin() as c:
+        existing = c.execute(text(
+            "SELECT id FROM project_number_prefixes "
+            "WHERE project_id=:p AND entity_type='po' "
+            "AND is_default=true AND is_archived=false"
+        ), {"p": project_id}).scalar()
+        if existing:
+            return
+        c.execute(text("""
+            INSERT INTO project_number_prefixes
+              (project_id, entity_type, middle_prefix, description,
+               is_default, is_archived, next_sequence,
+               created_by, updated_by)
+            VALUES (:p, 'po', NULL, 'B102 test default PO prefix',
+                    true, false, 1, :u, :u)
+        """), {"p": project_id, "u": user_id})
+
+
+def _pick_active_cost_code_ids(engine, n: int) -> list[str]:
+    """Return `n` distinct Active cost-code ids ordered by code so two
+    cooperating tests can co-exist without unique-constraint clashes
+    on (budget_id, cost_code_id)."""
+    with engine.begin() as c:
+        rows = c.execute(text(
+            "SELECT id FROM cost_codes WHERE status='Active' "
+            "ORDER BY code LIMIT :n"
+        ), {"n": n}).all()
+    assert len(rows) >= n, f"need >= {n} Active cost codes"
+    return [str(r[0]) for r in rows]
+
+
+class TestPOUnbudgetedCreate:
+    """T7–T10c — Purchase-order create flow opened to the unbudgeted
+    branch."""
+
+    def test_po_unbudgeted_line_creates_and_attaches(
+        self, db_session, engine, active_chain,
+    ):
+        """T7 — POST a PO with one unbudgeted line on an Active budget.
+
+        Expectations:
+          * 201 from the create endpoint.
+          * The persisted PO line points at a NEW budget_line_id (≠ any
+            preceding line on the budget).
+          * That auto-line carries is_unbudgeted=True, awaiting_ack=True,
+            variance_status=Red, unbudgeted_source='purchase_order'.
+          * PO header subtotal/vat/gross compute correctly from qty×rate.
+          * No deadlock from the lock re-entrancy path (the test would
+            time out at the requests layer if create_unbudgeted_line
+            blocked behind _validate_budget's earlier touch).
+        """
+        admin = _login(_ADMIN_EMAIL)
+        supplier_id = _create_supplier_for_admin(admin)
+        cc_ids = _pick_active_cost_code_ids(engine, 3)
+        _ensure_po_prefix(engine, active_chain["project_id"],
+                          active_chain["user_id"])
+        # Snapshot count of unbudgeted lines on the budget BEFORE.
+        with engine.begin() as c:
+            before_count = c.execute(text(
+                "SELECT COUNT(*) FROM budget_lines "
+                "WHERE budget_id=:b AND is_unbudgeted=true"
+            ), {"b": active_chain["budget_id"]}).scalar()
+
+        body = {
+            "supplier_id": supplier_id,
+            "budget_id": active_chain["budget_id"],
+            "lines": [{
+                "unbudgeted": True,
+                "unbudgeted_cost_code_id": cc_ids[0],
+                "unbudgeted_reason": "T7 — rectification required mid-build",
+                "description": "T7 unbudgeted PO line",
+                "quantity": 2,
+                "unit_rate": 125.50,
+                "vat_rate": 20.00,
+            }],
+        }
+        r = admin.post(
+            f"{_BASE_URL}/api/v1/projects/{active_chain['project_id']}"
+            f"/purchase-orders",
+            json=body,
+        )
+        assert r.status_code == 201, (r.status_code, r.text)
+        po = r.json()
+        # Header totals: qty 2 × £125.50 = 251.00 net; 20% VAT = 50.20;
+        # gross = 301.20.
+        assert Decimal(str(po["subtotal_amount"])) == Decimal("251.00"), po
+        assert Decimal(str(po["vat_amount"])) == Decimal("50.20"), po
+        assert Decimal(str(po["total_amount"])) == Decimal("301.20"), po
+        assert len(po["lines"]) == 1
+        auto_line_id = po["lines"][0]["budget_line_id"]
+        assert auto_line_id, po
+
+        # The auto-line is visible on the grid as is_unbudgeted/Red/awaiting-ack.
+        gr = admin.get(
+            f"{_BASE_URL}/api/v1/budgets/{active_chain['budget_id']}/grid"
+        )
+        assert gr.status_code == 200, (gr.status_code, gr.text)
+
+        def _find(obj, lid):
+            if isinstance(obj, dict):
+                if str(obj.get("id")) == str(lid) and "is_unbudgeted" in obj:
+                    return obj
+                for v in obj.values():
+                    f = _find(v, lid)
+                    if f:
+                        return f
+            elif isinstance(obj, list):
+                for v in obj:
+                    f = _find(v, lid)
+                    if f:
+                        return f
+            return None
+
+        node = _find(gr.json(), auto_line_id)
+        assert node is not None, f"auto-line {auto_line_id} not on grid"
+        assert node["is_unbudgeted"] is True
+        assert node["unbudgeted_awaiting_ack"] is True
+        assert node["unbudgeted_source"] == "purchase_order"
+        assert node["variance_status"] == "Red"
+        assert (node.get("unbudgeted_reason") or "").startswith("T7 —")
+
+        # Persistence proof: exactly +1 unbudgeted line on the budget.
+        with engine.begin() as c:
+            after_count = c.execute(text(
+                "SELECT COUNT(*) FROM budget_lines "
+                "WHERE budget_id=:b AND is_unbudgeted=true"
+            ), {"b": active_chain["budget_id"]}).scalar()
+        assert after_count == before_count + 1, (before_count, after_count)
+
+    def test_po_unbudgeted_missing_reason_422(
+        self, db_session, engine, active_chain,
+    ):
+        """T8 — unbudgeted line with blank reason → 422 from schema."""
+        admin = _login(_ADMIN_EMAIL)
+        supplier_id = _create_supplier_for_admin(admin)
+        cc_ids = _pick_active_cost_code_ids(engine, 1)
+        # Per-test-case bodies. Each pair MUST be rejected.
+        for reason_val in (None, "", "   "):
+            body = {
+                "supplier_id": supplier_id,
+                "budget_id": active_chain["budget_id"],
+                "lines": [{
+                    "unbudgeted": True,
+                    "unbudgeted_cost_code_id": cc_ids[0],
+                    # `unbudgeted_reason` deliberately bad.
+                    **({} if reason_val is None
+                       else {"unbudgeted_reason": reason_val}),
+                    "description": "T8 — blank reason",
+                    "quantity": 1, "unit_rate": 10.00,
+                }],
+            }
+            r = admin.post(
+                f"{_BASE_URL}/api/v1/projects/{active_chain['project_id']}"
+                f"/purchase-orders",
+                json=body,
+            )
+            assert r.status_code == 422, (
+                reason_val, r.status_code, r.text
+            )
+
+    def test_po_unbudgeted_with_budget_line_id_conflict_422(
+        self, db_session, engine, active_chain,
+    ):
+        """T9 — XOR — unbudgeted=true AND budget_line_id set → 422."""
+        admin = _login(_ADMIN_EMAIL)
+        supplier_id = _create_supplier_for_admin(admin)
+        cc_ids = _pick_active_cost_code_ids(engine, 1)
+        # Need any budget_line_id on this budget; mint one with the
+        # ORM so the conflict is real-shaped (not a random UUID).
+        from app.models.budgets import BudgetLine
+        bogus = BudgetLine(
+            id=uuid.uuid4(),
+            budget_id=uuid.UUID(active_chain["budget_id"]),
+            cost_code_id=uuid.UUID(cc_ids[0]),
+            entity_id=uuid.UUID(active_chain["entity_id"]),
+            line_description="T9 carrier line",
+            original_budget=Decimal("0"), current_budget=Decimal("0"),
+            actuals_to_date=Decimal("0"),
+            committed_not_invoiced=Decimal("0"),
+            forecast_to_complete=Decimal("0"),
+            forecast_final_cost=Decimal("0"),
+            variance_value=Decimal("0"), variance_pct=Decimal("0"),
+            variance_status="Green", requires_attention=False,
+            is_contingency=False, is_locked=False, is_unbudgeted=False,
+            display_order=900,
+        )
+        db_session.add(bogus)
+        db_session.commit()
+
+        body = {
+            "supplier_id": supplier_id,
+            "budget_id": active_chain["budget_id"],
+            "lines": [{
+                "unbudgeted": True,
+                "budget_line_id": str(bogus.id),
+                "unbudgeted_cost_code_id": cc_ids[0],
+                "unbudgeted_reason": "T9 — XOR probe",
+                "description": "T9 conflict",
+                "quantity": 1, "unit_rate": 10.00,
+            }],
+        }
+        r = admin.post(
+            f"{_BASE_URL}/api/v1/projects/{active_chain['project_id']}"
+            f"/purchase-orders",
+            json=body,
+        )
+        assert r.status_code == 422, (r.status_code, r.text)
+        assert "both unbudgeted and carry a budget_line_id" in r.text
+
+    def test_po_normal_line_still_requires_budget_line_id(
+        self, db_session, engine, active_chain,
+    ):
+        """T10 — regression — normal line without budget_line_id rejects;
+        with budget_line_id it still passes (back-compat proof)."""
+        admin = _login(_ADMIN_EMAIL)
+        supplier_id = _create_supplier_for_admin(admin)
+        cc_ids = _pick_active_cost_code_ids(engine, 1)
+        _ensure_po_prefix(engine, active_chain["project_id"],
+                          active_chain["user_id"])
+
+        # Mint a real budget line for the positive leg.
+        from app.models.budgets import BudgetLine
+        bl = BudgetLine(
+            id=uuid.uuid4(),
+            budget_id=uuid.UUID(active_chain["budget_id"]),
+            cost_code_id=uuid.UUID(cc_ids[0]),
+            entity_id=uuid.UUID(active_chain["entity_id"]),
+            line_description="T10 carrier line",
+            original_budget=Decimal("500"), current_budget=Decimal("500"),
+            actuals_to_date=Decimal("0"),
+            committed_not_invoiced=Decimal("0"),
+            forecast_to_complete=Decimal("0"),
+            forecast_final_cost=Decimal("0"),
+            variance_value=Decimal("0"), variance_pct=Decimal("0"),
+            variance_status="Green", requires_attention=False,
+            is_contingency=False, is_locked=False, is_unbudgeted=False,
+            display_order=901,
+        )
+        db_session.add(bl)
+        db_session.commit()
+
+        # Negative leg: normal line with no budget_line_id → 422.
+        neg_body = {
+            "supplier_id": supplier_id,
+            "budget_id": active_chain["budget_id"],
+            "lines": [{
+                "description": "T10 neg — no anchor",
+                "quantity": 1, "unit_rate": 10.00,
+            }],
+        }
+        r_neg = admin.post(
+            f"{_BASE_URL}/api/v1/projects/{active_chain['project_id']}"
+            f"/purchase-orders",
+            json=neg_body,
+        )
+        assert r_neg.status_code == 422, (r_neg.status_code, r_neg.text)
+        assert "budget_line_id is required" in r_neg.text
+
+        # Positive leg: normal line WITH budget_line_id → 201.
+        pos_body = {
+            "supplier_id": supplier_id,
+            "budget_id": active_chain["budget_id"],
+            "lines": [{
+                "budget_line_id": str(bl.id),
+                "description": "T10 pos — happy path",
+                "quantity": 3, "unit_rate": 50.00, "vat_rate": 20.00,
+            }],
+        }
+        r_pos = admin.post(
+            f"{_BASE_URL}/api/v1/projects/{active_chain['project_id']}"
+            f"/purchase-orders",
+            json=pos_body,
+        )
+        assert r_pos.status_code == 201, (r_pos.status_code, r_pos.text)
+        po = r_pos.json()
+        assert Decimal(str(po["subtotal_amount"])) == Decimal("150.00")
+
+    def test_po_mixed_normal_and_unbudgeted_lines(
+        self, db_session, engine, active_chain,
+    ):
+        """T10b — one PO with a normal line AND an unbudgeted line.
+
+        Both kinds resolve, _validate_budget_lines passes on the union,
+        and the header totals aggregate across both. The auto-line is
+        created on THIS budget (so the membership invariant holds
+        unchanged), and both per-line records persist.
+        """
+        admin = _login(_ADMIN_EMAIL)
+        supplier_id = _create_supplier_for_admin(admin)
+        cc_ids = _pick_active_cost_code_ids(engine, 3)
+        _ensure_po_prefix(engine, active_chain["project_id"],
+                          active_chain["user_id"])
+
+        # Real budget_line for the normal-line leg.
+        from app.models.budgets import BudgetLine
+        bl = BudgetLine(
+            id=uuid.uuid4(),
+            budget_id=uuid.UUID(active_chain["budget_id"]),
+            cost_code_id=uuid.UUID(cc_ids[1]),
+            entity_id=uuid.UUID(active_chain["entity_id"]),
+            line_description="T10b normal carrier",
+            original_budget=Decimal("1000"), current_budget=Decimal("1000"),
+            actuals_to_date=Decimal("0"),
+            committed_not_invoiced=Decimal("0"),
+            forecast_to_complete=Decimal("0"),
+            forecast_final_cost=Decimal("0"),
+            variance_value=Decimal("0"), variance_pct=Decimal("0"),
+            variance_status="Green", requires_attention=False,
+            is_contingency=False, is_locked=False, is_unbudgeted=False,
+            display_order=902,
+        )
+        db_session.add(bl)
+        db_session.commit()
+
+        body = {
+            "supplier_id": supplier_id,
+            "budget_id": active_chain["budget_id"],
+            "lines": [
+                {
+                    "budget_line_id": str(bl.id),
+                    "description": "T10b normal",
+                    "quantity": 4, "unit_rate": 25.00, "vat_rate": 20.00,
+                },
+                {
+                    "unbudgeted": True,
+                    "unbudgeted_cost_code_id": cc_ids[2],
+                    "unbudgeted_reason": "T10b — unforeseen variation",
+                    "description": "T10b unbudgeted",
+                    "quantity": 1, "unit_rate": 80.00, "vat_rate": 20.00,
+                },
+            ],
+        }
+        r = admin.post(
+            f"{_BASE_URL}/api/v1/projects/{active_chain['project_id']}"
+            f"/purchase-orders",
+            json=body,
+        )
+        assert r.status_code == 201, (r.status_code, r.text)
+        po = r.json()
+        # 100.00 + 80.00 = 180.00 net; VAT 36.00; gross 216.00.
+        assert Decimal(str(po["subtotal_amount"])) == Decimal("180.00")
+        assert Decimal(str(po["vat_amount"])) == Decimal("36.00")
+        assert Decimal(str(po["total_amount"])) == Decimal("216.00")
+        assert len(po["lines"]) == 2
+
+        # Resolve which PO-line is the unbudgeted one by inspecting the
+        # backing budget_line — only the auto-line should be flagged.
+        from app.models.budgets import BudgetLine as BL
+        bl_ids = [uuid.UUID(str(line["budget_line_id"])) for line in po["lines"]]
+        rows = db_session.scalars(
+            _select(BL).where(BL.id.in_(bl_ids))
+        ).all()
+        flags = {r.id: r.is_unbudgeted for r in rows}
+        assert sum(1 for v in flags.values() if v) == 1, flags
+        assert sum(1 for v in flags.values() if not v) == 1, flags
+
+    def test_po_unbudgeted_on_nonactive_budget_422_and_rollback(
+        self, db_session, engine, active_chain,
+    ):
+        """T10c — unbudgeted PO on a NON-Active budget → 422 +
+        the auto-line is NEVER persisted (rollback proof).
+
+        The Active-budget guard runs in _validate_budget BEFORE the
+        resolve loop, so the create_unbudgeted_line helper is never
+        reached for a non-Active budget. We prove that:
+          1) the response is 422 with the po/budget-not-active marker,
+          2) no new budget_line was committed.
+        """
+        admin = _login(_ADMIN_EMAIL)
+        supplier_id = _create_supplier_for_admin(admin)
+        cc_ids = _pick_active_cost_code_ids(engine, 1)
+
+        # Move the budget into Locked status directly (avoid the full
+        # lock-endpoint dance — we only need the status flip).
+        with engine.begin() as c:
+            c.execute(text(
+                "UPDATE budgets SET status='Locked' WHERE id=:b"
+            ), {"b": active_chain["budget_id"]})
+            before_count = c.execute(text(
+                "SELECT COUNT(*) FROM budget_lines WHERE budget_id=:b"
+            ), {"b": active_chain["budget_id"]}).scalar()
+
+        body = {
+            "supplier_id": supplier_id,
+            "budget_id": active_chain["budget_id"],
+            "lines": [{
+                "unbudgeted": True,
+                "unbudgeted_cost_code_id": cc_ids[0],
+                "unbudgeted_reason": "T10c — guarded by Active check",
+                "description": "T10c on Locked budget",
+                "quantity": 1, "unit_rate": 50.00,
+            }],
+        }
+        r = admin.post(
+            f"{_BASE_URL}/api/v1/projects/{active_chain['project_id']}"
+            f"/purchase-orders",
+            json=body,
+        )
+        try:
+            assert r.status_code == 422, (r.status_code, r.text)
+            assert "po/budget-not-active" in r.text
+
+            with engine.begin() as c:
+                after_count = c.execute(text(
+                    "SELECT COUNT(*) FROM budget_lines WHERE budget_id=:b"
+                ), {"b": active_chain["budget_id"]}).scalar()
+            assert after_count == before_count, (
+                "rollback failed — a budget_line was committed despite "
+                "the non-Active rejection."
+            )
+        finally:
+            # Restore status so the chain teardown succeeds (the fixture
+            # teardown deletes budget_lines before budgets, no status
+            # check, but other parametric runs share the chain).
+            with engine.begin() as c:
+                c.execute(text(
+                    "UPDATE budgets SET status='Active' WHERE id=:b"
+                ), {"b": active_chain["budget_id"]})
