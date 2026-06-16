@@ -102,3 +102,30 @@ class POLineIncompleteError(BudgetError):
             f"PO submit refused: incomplete line(s) "
             f"{self.line_numbers}"
         )
+
+
+class BudgetLineRaceError(BudgetError):
+    """B105/B106 §3.9 — concurrency race on resolve-or-mint.
+
+    Raised when two requests resolve-then-mint the same
+    (budget_id, cost_code_id, cost_code_subcategory_id) triple
+    concurrently. The first writer wins; the second hits
+    `uq_budget_lines_budget_cost_subcat` on flush, raising
+    SQLAlchemy's `IntegrityError`. `create_po` / `add_package_line`
+    translate that into this error so the router emits a clean 409
+    instead of a raw 500. The client may retry — on retry, the
+    resolve pass finds the winning row and allocates into it.
+
+    Always 409 at the route layer.
+    """
+
+    def __init__(self, cost_code_id, cost_code_subcategory_id=None):
+        self.cost_code_id = str(cost_code_id) if cost_code_id else None
+        self.cost_code_subcategory_id = (
+            str(cost_code_subcategory_id)
+            if cost_code_subcategory_id else None
+        )
+        super().__init__(
+            f"A budget line for cost_code_id={self.cost_code_id} "
+            f"was just created concurrently; retry the request."
+        )

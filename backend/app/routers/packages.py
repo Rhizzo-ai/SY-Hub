@@ -46,6 +46,7 @@ from app.schemas.packages import (
     PackageUpdateBody,
 )
 from app.services import packages as svc
+from app.services.budget_errors import BudgetLineRaceError as _BLineRace
 from app.services.packages import (
     PackageNotFoundError, PackageStateError,
 )
@@ -63,6 +64,19 @@ def _map(exc: Exception) -> HTTPException:
         return HTTPException(status_code=404, detail=str(exc) or "Not found")
     if isinstance(exc, PackageStateError):
         return HTTPException(status_code=409, detail=str(exc))
+    # B105/B106 §3.9 — concurrent mint race surfaces as 409, not 500.
+    from app.services.budget_errors import BudgetLineRaceError as _BLR
+    if isinstance(exc, _BLR):
+        return HTTPException(
+            status_code=409,
+            detail={
+                "type": "budget_line_race",
+                "title": "A budget line for this cost code was just "
+                         "created concurrently; retry the request.",
+                "cost_code_id": exc.cost_code_id,
+                "cost_code_subcategory_id": exc.cost_code_subcategory_id,
+            },
+        )
     if isinstance(exc, ValueError):
         return HTTPException(status_code=422, detail=str(exc))
     return HTTPException(status_code=500, detail=str(exc))
@@ -237,7 +251,8 @@ def add_line(
             notes=body.notes,
             user=current, perms=perms, request=request,
         )
-    except (PackageNotFoundError, PackageStateError, ValueError) as exc:
+    except (PackageNotFoundError, PackageStateError, ValueError,
+            _BLineRace) as exc:
         raise _map(exc)
     db.commit()
     p = svc.get_package(db, package_id, user=current, perms=perms)

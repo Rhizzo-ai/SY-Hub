@@ -22,6 +22,7 @@ from typing import Any, Iterable, Optional
 
 from fastapi import Request
 from sqlalchemy import and_, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from app.auth.permissions import UserPermissions
@@ -38,6 +39,7 @@ from app.services import po_numbering, po_transitions
 from app.services import budget_lines as bl_svc
 from app.services.audit import field_diff, record_audit
 from app.services.budget_errors import (
+    BudgetLineRaceError,
     BudgetNotFoundError,
     BudgetStateError,
     BudgetValidationError,
@@ -118,26 +120,42 @@ def _compute_line_totals(
 
     All values quantized to the column's scale (4 / 4 / 2 / 2 / 2 / 2).
 
-    B105/B106 — Draft tolerance: under the cost-code-first model a PO
-    DRAFT may have incomplete lines (quantity/unit_rate may be None or
-    blank). When either is missing we persist the line with
-    quantity=0, unit_rate=0, net=vat=gross=0 and DO NOT raise. The
-    completeness gate at submit (§3.8) is what enforces real numbers
-    before money moves; the variance/commitment paths never see a
-    real net on an incomplete draft because submit blocks first.
+    B105/B106 — Draft tolerance (deviation note from spec §3.4 step 5):
+    Under the cost-code-first model a PO DRAFT may have incomplete
+    lines (quantity/unit_rate may be None or blank). When either is
+    missing we persist the line with quantity=1.0000, unit_rate=0,
+    net=vat=gross=0 and DO NOT raise.
+
+    Spec literal vs implementation: §3.4 step 5 says "persist the
+    line with quantity=None ... net=vat=gross=0". The live DB,
+    however, has two binding constraints:
+      • column `purchase_order_lines.quantity` is NOT NULL
+      • CHECK `ck_pol_quantity_positive` enforces `quantity > 0`
+    Both ship at alembic head 0049 and B105/B106 hard boundary §0.2
+    forbids any new DDL. We therefore cannot persist `quantity=None`
+    OR `quantity=0`; the smallest constraint-satisfying value is
+    quantity=1, rate=0 → net=0. The SPIRIT of §3.4 step 5 is
+    preserved: net=vat=gross=0 on incomplete drafts, completeness gate
+    at submit (§3.8) refuses them before money moves.
+
+    Edge case acknowledged: a draft with qty=1, rate=0 looks identical
+    to a deliberate "free item" line at submit. The completeness gate
+    permits both (rate=0 is valid per §3.8) — i.e. a never-completed
+    draft submitted as-is becomes a free-item line. This is acceptable
+    given §0.2 (no DDL) and consistent with Build Pack §3.8's
+    `unit_rate >= 0` rule. If a future iteration wants to distinguish
+    them, a non-nullable boolean flag on the column would be needed
+    (and a fresh alembic migration), out of scope for this session.
+
     Real values, when present, are bound-checked as before
     (quantity > 0, unit_rate >= 0, vat_rate 0..100).
     """
     qty_raw = line_payload.get("quantity")
     rate_raw = line_payload.get("unit_rate")
-    # B105/B106 draft tolerance — when either is missing, persist with
-    # qty=1 (DB CHECK constraint forbids 0) and rate=0 so net stays £0.
-    # The submit completeness gate (§3.8) refuses the line when its
-    # NEEDED fields are missing (description, cost_code, vat_rate).
-    # A line that legitimately wants £0 (free item) is permitted at
-    # submit because qty=1, rate=0 satisfies the gate; that's
-    # consistent with the spec ("unit_rate>=0").
     if qty_raw is None or rate_raw is None:
+        # Draft-tolerance path — see docstring for the spec deviation
+        # note. quantity=1, rate=0 satisfies the DB CHECK constraint
+        # while preserving net=vat=gross=0.
         vat_rate = _q(line_payload.get("vat_rate", Decimal("20.00")))
         if vat_rate < 0 or vat_rate > 100:
             raise ValueError("Line vat_rate must be between 0 and 100")
@@ -432,14 +450,36 @@ def create_po(
             raw_reason = lp.get("unbudgeted_reason")
             reason = (str(raw_reason).strip() if raw_reason else "") \
                 or "Auto-created: order raised against an unbudgeted cost code"
+            # B105/B106 §3.9 race handling: wrap the mint in a
+            # SAVEPOINT so an IntegrityError from
+            # `uq_budget_lines_budget_cost_subcat` (concurrent mint
+            # of the same triple) rolls back ONLY this mint attempt
+            # — not the outer caller transaction — and the service
+            # surfaces a 409 (`BudgetLineRaceError`) instead of a
+            # raw 500. SAVEPOINT is essential: a plain IntegrityError
+            # on the parent transaction would force the caller into
+            # `db.rollback()`, killing every line minted earlier in
+            # this PO request.
             try:
-                line = bl_svc.create_unbudgeted_line(
-                    db, budget_id=budget.id, user=user, perms=perms,
-                    cost_code_id=cc_id, cost_code_subcategory_id=sub_id,
-                    entity_id=None,
-                    reason=reason, source="purchase_order",
-                    force_flag=False,
-                )
+                with db.begin_nested():
+                    line = bl_svc.create_unbudgeted_line(
+                        db, budget_id=budget.id, user=user, perms=perms,
+                        cost_code_id=cc_id, cost_code_subcategory_id=sub_id,
+                        entity_id=None,
+                        reason=reason, source="purchase_order",
+                        force_flag=False,
+                    )
+            except IntegrityError as e:
+                # The SAVEPOINT has already rolled back; the parent
+                # transaction is intact. Surface to the router as 409.
+                _msg = str(e.orig) + str(e)
+                if ("uq_budget_lines_budget_cost_subcat" in _msg
+                        or "uq_budget_lines_no_subcat_unique" in _msg):
+                    raise BudgetLineRaceError(
+                        cost_code_id=cc_id,
+                        cost_code_subcategory_id=sub_id,
+                    ) from e
+                raise
             except (BudgetStateError, BudgetNotFoundError,
                     BudgetValidationError) as e:
                 raise ValueError(str(e)) from e

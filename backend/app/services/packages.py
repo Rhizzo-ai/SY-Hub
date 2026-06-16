@@ -31,6 +31,7 @@ from typing import Any, Iterable, Optional
 
 from fastapi import Request
 from sqlalchemy import func, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from app.auth.permissions import UserPermissions
@@ -54,6 +55,7 @@ from app.services import subcontracts as sc_svc
 from app.services import budget_lines as bl_svc
 from app.services.audit import field_diff, record_audit
 from app.services.budget_errors import (
+    BudgetLineRaceError,
     BudgetNotFoundError,
     BudgetStateError,
     BudgetValidationError,
@@ -553,14 +555,29 @@ def add_package_line(
         raw_reason = unbudgeted_reason
         reason = (str(raw_reason).strip() if raw_reason else "") \
             or "Auto-created: order raised against an unbudgeted cost code"
+        # B105/B106 §3.9 race handling — wrap in SAVEPOINT so a
+        # concurrent mint on the same triple surfaces as 409
+        # (`BudgetLineRaceError`) rather than 500. See create_po for
+        # the matching pattern; the package transaction stays intact
+        # so any earlier lines on this package are not lost.
         try:
-            bline = bl_svc.create_unbudgeted_line(
-                db, budget_id=p.budget_id, user=user, perms=perms,
-                cost_code_id=cc_id, cost_code_subcategory_id=sub_id,
-                entity_id=None,
-                reason=reason, source="package",
-                force_flag=False,
-            )
+            with db.begin_nested():
+                bline = bl_svc.create_unbudgeted_line(
+                    db, budget_id=p.budget_id, user=user, perms=perms,
+                    cost_code_id=cc_id, cost_code_subcategory_id=sub_id,
+                    entity_id=None,
+                    reason=reason, source="package",
+                    force_flag=False,
+                )
+        except IntegrityError as e:
+            _msg = str(e.orig) + str(e)
+            if ("uq_budget_lines_budget_cost_subcat" in _msg
+                    or "uq_budget_lines_no_subcat_unique" in _msg):
+                raise BudgetLineRaceError(
+                    cost_code_id=cc_id,
+                    cost_code_subcategory_id=sub_id,
+                ) from e
+            raise
         except (BudgetStateError, BudgetNotFoundError,
                 BudgetValidationError) as e:
             raise ValueError(str(e)) from e

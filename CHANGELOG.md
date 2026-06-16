@@ -10,6 +10,173 @@ Each entry: date, prompt reference (if applicable), change, rationale.
 
 ## Entries
 
+## Chat 59 — B105/B106 · Cost-code-first commercial line model
+
+Backend money-path pack. Implements §3.1–§3.10 of `B105-B106-build-pack-v1.md`
+without any DDL — alembic head stays at `0049_unbudgeted_order_lines`. Gate B
+(commitment-ack) is formally cancelled per §0.1 (already satisfied by the
+2.5 over-budget approval gate). Audit-on-state-change discipline,
+SAVEPOINT-wrapped race handling, and three new test files. Notifications
+deferred (§9). Three-pass audit and warm-DB pytest ×2 (1634 P / 19 stale F /
+1 S / 3 X) — failures verified identical to origin/main baseline 73aeb73.
+
+### Migrations / DDL
+
+- **NONE.** Head stays at `0049_unbudgeted_order_lines`. All §0.2 columns
+  already present.
+- No `commitment_ack_*` columns, no `acknowledge_commitment` action/endpoint
+  (Gate B cancelled).
+
+### RBAC
+
+- **NO new permission, no new role grant.** Clearance for an
+  unbudgeted-over-floor line reuses the existing `budgets.clear_unbudgeted`
+  permission and the existing `POST /budget-lines/{id}/clear-unbudgeted`
+  endpoint.
+
+### Config
+
+- New `system_config` row seeded:
+  - key `budget.unbudgeted_ack_floor_gbp`
+  - default `1000.00` (Decimal, category Budget, minimum_role_to_edit
+    `director`)
+  - mirrors the self-approval threshold pattern; in-code fallback
+    `DEFAULT_UNBUDGETED_ACK_FLOOR_GBP = Decimal("1000.00")`.
+- New helper `app.services.system_config.get_unbudgeted_ack_floor(db)`
+  with `>= floor` comparison semantics enforced at the call site
+  (at exactly £1000 → blocks).
+
+### Service-layer
+
+- `app.services.budget_lines.find_line_for_code(db, *, budget_id,
+  cost_code_id, cost_code_subcategory_id)` — new helper. Matches the
+  `uq_budget_lines_budget_cost_subcat` triple exactly, `IS NULL` for
+  null subcategory.
+- `app.services.budget_lines.create_unbudgeted_line(..., force_flag=False)` —
+  new kwarg. Default (`False`) preserves `is_unbudgeted=True` + provenance
+  but does NOT force `variance_status="Red"` or `requires_attention=True`.
+  Legacy (`True`) keeps the original B102 mint-time forced-Red — used
+  only by the re-baselined legacy tests.
+- `app.services.budget_lines.evaluate_unbudgeted_floor_gate(db, *,
+  budget_line_ids)` — new gate evaluator. Audit row only written when
+  the marker-state CHANGES (not on every evaluation).
+- `app.services.purchase_orders.create_po` — resolve-or-mint pass
+  replaces the B102 unbudgeted pre-pass. SAVEPOINT-wrapped mint;
+  IntegrityError on the unique constraint → `BudgetLineRaceError`
+  (router 409, not 500). One-shot per-request deprecation warning on
+  the deprecated `unbudgeted_*` cluster.
+- `app.services.purchase_orders._compute_line_totals` — draft tolerance.
+  Missing qty or rate persists as `quantity=1.0000`, `unit_rate=0`,
+  `net=vat=gross=0`. **Spec deviation note:** §3.4 step 5 literal wording
+  says `quantity=None`; live DB `purchase_order_lines.quantity` is
+  NOT NULL with CHECK `quantity > 0` so `None` and `0` are physically
+  impossible without DDL (forbidden by §0.2). Spirit preserved: incomplete
+  drafts persist £0 net; submit completeness gate (§3.8) refuses them.
+- `app.services.purchase_orders.issue_po` — Gate A wired after
+  `recompute_for_po`; raises `UnbudgetedAckRequiredError` (409) on cross.
+- `app.services.po_approvals.submit_po_with_budget_gate` — Gate A wired
+  on both branches (within-budget auto-approve, over-budget pending);
+  completeness check (§3.8) runs FIRST and raises `POLineIncompleteError`
+  (422) with the offending line numbers.
+- `app.services.po_commitments.evaluate_budget_overrun` — single-line
+  skip for `is_unbudgeted and unbudgeted_cleared_at is None` (option (ii)
+  separation). Uses `getattr` defaults so SimpleNamespace unit-test
+  mocks treat them as normal budgeted lines by default.
+- `app.services.packages.add_package_line` — same resolve-or-mint pattern
+  as create_po; SAVEPOINT-wrapped race catch; alias-mismatch 422;
+  package_lines unique-constraint guard surfaces a clean
+  `PackageStateError` (409) instead of letting `IntegrityError` bubble
+  to 500 when the same code resolves twice on one package.
+
+### Schemas
+
+- `POLineCreate` (`routers/purchase_orders.py`) — XOR validator collapsed.
+  `cost_code_id` (+ optional `cost_code_subcategory_id`) is the new
+  preferred input. `budget_line_id` accepted as back-compat alias.
+  Deprecated `unbudgeted*` cluster kept (accept-but-ignore for routing,
+  used only as fallback when `cost_code_id` is absent). `description`,
+  `quantity`, `unit_rate` now Optional at create.
+- `PackageLineCreateBody` (`schemas/packages.py`) — same collapse +
+  cost-code-first input. Schema-level qty/rate requirement on unbudgeted
+  leg removed; service-level `_inherit_from_budget_line` handles defaults.
+
+### Errors / router mappings
+
+- New `app.services.budget_errors`:
+  - `UnbudgetedAckRequiredError` → router 409 with body
+    `{type: "unbudgeted_ack_required", lines: [...]}`.
+  - `POLineIncompleteError` → router 422 with body
+    `{type: "po_line_incomplete", incomplete_line_numbers: [...]}`.
+  - `BudgetLineRaceError` → router 409 with body
+    `{type: "budget_line_race", cost_code_id, cost_code_subcategory_id}`.
+- `_run_transition` and the `/submit` endpoint in
+  `routers/purchase_orders.py` map all three; ordering puts them
+  BEFORE the generic `ValueError → 422` arm.
+- `routers/packages.py:_map` adds the `BudgetLineRaceError → 409`
+  arm; the add-line route includes it in its `try/except` tuple.
+
+### Tests
+
+New (per Build Pack §6 minimum-coverage list):
+
+- `backend/tests/test_cost_code_first_resolve.py` (12 cases: 1–10 + 4b/4c
+  race tests; 1 environmental skip when no Active subcategory is
+  available in the DB).
+- `backend/tests/test_unbudgeted_floor_gate.py` (15 cases: 11–24 + 32).
+- `backend/tests/test_po_completeness_submit.py` (4 cases: 25–28; 28b
+  is unreachable due to DB CHECK `ck_pol_quantity_positive` and
+  explicitly documented).
+
+Re-baselined (existing `backend/tests/test_unbudgeted_orders.py`):
+
+- T1 split into `_force_flag_true_legacy_forces_red` (case 29) and
+  `_default_force_flag_false_neutral` (case 30).
+- T4 + T13b: passed `force_flag=True` to preserve their original
+  forced-Red preconditions.
+- T7 (T9, T10, T11, T11b, T11c): updated to the cost-code-first
+  contract.
+
+Other:
+
+- `backend/tests/test_system_config.py::TestSeed::test_seed_creates_40_keys`
+  → `test_seed_creates_41_keys` (one new key seeded).
+
+### Discipline guardrails honoured
+
+- No git writes from the agent (this commit lands via "Save to GitHub").
+- No new alembic migrations. Head stays `0049_unbudgeted_order_lines`.
+- No notifications wiring (§9 deferred).
+- No frontend changes.
+- Warm-DB pytest run TWICE; both runs identical (1634 P / 19 stale F /
+  1 S / 3 X). Failing-test name list IDENTICAL to baseline (commit
+  73aeb73, pre-session).
+
+### Files touched
+
+```
+backend/app/routers/packages.py                 (M)
+backend/app/routers/purchase_orders.py          (M)
+backend/app/schemas/packages.py                 (M)
+backend/app/seed_system_config.py               (M)
+backend/app/services/budget_errors.py           (M)
+backend/app/services/budget_lines.py            (M)
+backend/app/services/packages.py                (M)
+backend/app/services/po_approvals.py            (M)
+backend/app/services/po_commitments.py          (M)
+backend/app/services/purchase_orders.py         (M)
+backend/app/services/system_config.py           (M)
+backend/tests/test_cost_code_first_resolve.py   (A)
+backend/tests/test_po_completeness_submit.py    (A)
+backend/tests/test_system_config.py             (M)
+backend/tests/test_unbudgeted_floor_gate.py     (A)
+backend/tests/test_unbudgeted_orders.py         (M)
+docs/B105-B106-build-pack-v1.md                 (A)
+docs/B105-B106-emergent-opener.md               (A)
+docs/chat-59-closing.md                         (A)
+CHANGELOG.md                                    (M)
+```
+
+
 ## Chat 57 — B102 · Unbudgeted-order path (Gates 1–6) + cost-code-first pivot (design-deferred)
 
 Backend money-path pack. Ships the B102 unbudgeted-order escape route end to

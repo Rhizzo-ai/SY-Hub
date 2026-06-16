@@ -35,7 +35,7 @@ from app.auth.permissions import UserPermissions, compute_effective_permissions
 from app.db import get_db
 from app.services import purchase_orders as svc
 from app.services.budget_errors import (
-    POLineIncompleteError, UnbudgetedAckRequiredError,
+    BudgetLineRaceError, POLineIncompleteError, UnbudgetedAckRequiredError,
 )
 from app.services.po_authz import PoNotFound
 from app.services.po_numbering import NumberingError
@@ -412,6 +412,18 @@ def create_endpoint(
     except PoNotFound:
         # Pattern α — invisible project surfaces as 404, not 403.
         raise HTTPException(status_code=404, detail="Project not found")
+    except BudgetLineRaceError as e:
+        # B105/B106 §3.9 — concurrent mint race; client may retry.
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "type": "budget_line_race",
+                "title": "A budget line for this cost code was just "
+                         "created concurrently; retry the request.",
+                "cost_code_id": e.cost_code_id,
+                "cost_code_subcategory_id": e.cost_code_subcategory_id,
+            },
+        )
     except NumberingError as e:
         raise HTTPException(status_code=422, detail=str(e))
     except ValueError as e:
