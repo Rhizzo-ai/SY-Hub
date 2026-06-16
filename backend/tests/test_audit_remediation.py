@@ -33,7 +33,7 @@ load_dotenv("/app/backend/.env")
 
 BASE_URL = (
     os.environ.get("REACT_APP_BACKEND_URL", "").rstrip("/")
-    or "https://emergent-build-77.preview.emergentagent.com"
+    or "https://money-path-build.preview.emergentagent.com"
 )
 DATABASE_URL = os.environ["DATABASE_URL"]
 

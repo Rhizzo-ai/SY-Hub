@@ -24,7 +24,7 @@ from sqlalchemy import select
 
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "").rstrip("/")
 if not BASE_URL:
-    BASE_URL = "https://emergent-build-77.preview.emergentagent.com"
+    BASE_URL = "https://money-path-build.preview.emergentagent.com"
 
 ADMIN = "test-admin@example.test"
 DIRECTOR = "test-director@example.test"

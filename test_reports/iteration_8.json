@@ -1,5 +1,5 @@
 {
-  "summary": "Phase D Prompt 2.2 Appraisals Core frontend — full e2e UI verification PASSED. Logged in as test-admin (MFA auto-enrol via pyotp) and drove Playwright browser end-to-end through AppraisalsList → AppraisalPage 5 tabs. All 18 review-request scenarios verified live against https://emergent-build-77.preview.emergentagent.com.",
+  "summary": "Phase D Prompt 2.2 Appraisals Core frontend — full e2e UI verification PASSED. Logged in as test-admin (MFA auto-enrol via pyotp) and drove Playwright browser end-to-end through AppraisalsList → AppraisalPage 5 tabs. All 18 review-request scenarios verified live against https://money-path-build.preview.emergentagent.com.",
   "backend_issues": {"critical": [], "minor": []},
   "frontend_issues": {
     "ui_bugs": [],
