@@ -224,6 +224,10 @@ def add_line(
         svc.add_package_line(
             db, package_id,
             budget_line_id=body.budget_line_id,
+            unbudgeted=body.unbudgeted,
+            unbudgeted_cost_code_id=body.unbudgeted_cost_code_id,
+            unbudgeted_subcategory_id=body.unbudgeted_subcategory_id,
+            unbudgeted_reason=body.unbudgeted_reason,
             description=body.description,
             quantity=body.quantity,
             unit=body.unit,

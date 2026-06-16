@@ -13,7 +13,7 @@ from __future__ import annotations
 import uuid
 from typing import List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class PackageCreateBody(BaseModel):
@@ -31,7 +31,17 @@ class PackageUpdateBody(BaseModel):
 
 
 class PackageLineCreateBody(BaseModel):
-    budget_line_id: uuid.UUID
+    # B102 — Unbudgeted-Order Handling. `budget_line_id` is optional at
+    # the schema level; XOR'd against `unbudgeted=true` by the after-
+    # validator. An unbudgeted package line MUST also carry an explicit
+    # quantity + budgeted_unit_rate — the £0 auto-line we'd otherwise
+    # inherit from would net the package line to zero (see
+    # _inherit_from_budget_line for a £0 source).
+    budget_line_id: Optional[uuid.UUID] = None
+    unbudgeted: bool = False
+    unbudgeted_cost_code_id: Optional[uuid.UUID] = None
+    unbudgeted_subcategory_id: Optional[uuid.UUID] = None
+    unbudgeted_reason: Optional[str] = Field(None, max_length=2000)
     description: Optional[str] = None
     quantity: Optional[str] = None
     unit: Optional[str] = Field(None, max_length=20)
@@ -39,6 +49,36 @@ class PackageLineCreateBody(BaseModel):
     notes: Optional[str] = None
 
     model_config = {"extra": "forbid"}
+
+    @model_validator(mode="after")
+    def _xor_budget_line(self):
+        """B102 XOR — exactly one of {budget_line_id, unbudgeted=true};
+        unbudgeted leg also demands explicit qty + rate so the line
+        doesn't silently net to £0 via _inherit_from_budget_line."""
+        if self.unbudgeted:
+            if self.budget_line_id is not None:
+                raise ValueError(
+                    "a line cannot be both unbudgeted and carry a budget_line_id"
+                )
+            if self.unbudgeted_cost_code_id is None:
+                raise ValueError(
+                    "unbudgeted_cost_code_id is required for an unbudgeted line"
+                )
+            if not (self.unbudgeted_reason and self.unbudgeted_reason.strip()):
+                raise ValueError(
+                    "unbudgeted_reason is required for an unbudgeted line"
+                )
+            if self.quantity is None or self.budgeted_unit_rate is None:
+                raise ValueError(
+                    "unbudgeted package lines require explicit quantity "
+                    "and budgeted_unit_rate"
+                )
+        else:
+            if self.budget_line_id is None:
+                raise ValueError(
+                    "budget_line_id is required unless unbudgeted=true"
+                )
+        return self
 
 
 class PackageLineUpdateBody(BaseModel):

@@ -51,7 +51,13 @@ from app.models.suppliers import Supplier
 from app.models.user import User
 from app.services import purchase_orders as po_svc
 from app.services import subcontracts as sc_svc
+from app.services import budget_lines as bl_svc
 from app.services.audit import field_diff, record_audit
+from app.services.budget_errors import (
+    BudgetNotFoundError,
+    BudgetStateError,
+    BudgetValidationError,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -466,8 +472,12 @@ def delete_package(
 
 def add_package_line(
     db: Session, package_id: uuid.UUID,
-    *, budget_line_id: uuid.UUID,
+    *, budget_line_id: Optional[uuid.UUID] = None,
     user: User, perms: UserPermissions,
+    unbudgeted: bool = False,
+    unbudgeted_cost_code_id: Optional[uuid.UUID] = None,
+    unbudgeted_subcategory_id: Optional[uuid.UUID] = None,
+    unbudgeted_reason: Optional[str] = None,
     description: Optional[str] = None,
     quantity: Optional[Any] = None,
     unit: Optional[str] = None,
@@ -480,12 +490,37 @@ def add_package_line(
         raise PackageStateError(
             f"Lines can be added only in draft status; current={p.status}"
         )
-    bline = db.get(BudgetLine, budget_line_id)
-    if bline is None or bline.budget_id != p.budget_id:
-        raise ValueError(
-            f"budget_line_id {budget_line_id} does not belong to "
-            f"budget {p.budget_id}"
-        )
+
+    # B102 Gate 6 — unbudgeted branch. Mint the £0 auto-line on the
+    # package's budget FIRST, then fall through to the normal inherit
+    # path with `bline = auto`. The draft-only guard above protects
+    # this branch; a non-draft package can't acquire an unbudgeted
+    # auto-line because we never reach the create call. The whole
+    # mutation runs inside add_package_line's caller-owned transaction
+    # — if a later step raises, the request-scoped db rolls back and
+    # the auto-line vanishes with the package-line attempt (T11d).
+    if unbudgeted:
+        try:
+            bline = bl_svc.create_unbudgeted_line(
+                db, budget_id=p.budget_id, user=user, perms=perms,
+                cost_code_id=unbudgeted_cost_code_id,
+                cost_code_subcategory_id=unbudgeted_subcategory_id,
+                entity_id=None,  # helper defaults from project primary entity
+                reason=str(unbudgeted_reason),
+                source="package",
+            )
+        except (BudgetStateError, BudgetNotFoundError,
+                BudgetValidationError) as e:
+            # Same D-G5-1 pattern — surface as ValueError so the router
+            # maps to 422; preserve __cause__.
+            raise ValueError(str(e)) from e
+    else:
+        bline = db.get(BudgetLine, budget_line_id)
+        if bline is None or bline.budget_id != p.budget_id:
+            raise ValueError(
+                f"budget_line_id {budget_line_id} does not belong to "
+                f"budget {p.budget_id}"
+            )
     # Inherit defaults from budget line + items (LD-P4).
     qty_inh, unit_inh, rate_inh, net_inh, notes_inh = (
         _inherit_from_budget_line(db, bline)

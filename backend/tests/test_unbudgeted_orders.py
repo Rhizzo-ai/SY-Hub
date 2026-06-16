@@ -1305,3 +1305,432 @@ class TestPOUnbudgetedCreate:
                 c.execute(text(
                     "UPDATE budgets SET status='Active' WHERE id=:b"
                 ), {"b": active_chain["budget_id"]})
+
+
+# =====================================================================
+# Gate 6 — Package-line unbudgeted path + award inheritance (T11–T12).
+#
+# These run against the public packages HTTP API and reuse the existing
+# B88 Pack 3 test helpers (`tests._packages_common`) which already mint
+# a project + 2-line Active budget through the real endpoints. The
+# unbudgeted leg piggy-backs on the same project/budget chain; we
+# create extra cost-codes-as-needed by inspecting the cost_codes table.
+#
+# Award inheritance (T12) is the money-correctness proof: we change
+# NOTHING in award_package and prove that the downstream PO carries
+# the auto-line's id end-to-end. Pass = T12 green with zero edits to
+# `services/packages.py:award_package` or `services/purchase_orders.py`
+# beyond what Gate 5 already landed.
+# =====================================================================
+
+from tests._packages_common import (  # noqa: E402
+    BASE_URL as _PKG_BASE,
+    PWD as _PKG_PWD,
+    ADMIN_EMAIL as _PKG_ADMIN_EMAIL,
+    add_line as _pkg_add_line,
+    award as _pkg_award,
+    bump_self_approval_threshold as _pkg_bump_threshold,
+    create_package as _pkg_create_package,
+    enter_bid as _pkg_enter_bid,
+    invite_bidder as _pkg_invite_bidder,
+    make_active_budget as _pkg_make_active_budget,
+    make_entity_and_project as _pkg_make_entity_and_project,
+    make_supplier as _pkg_make_supplier,
+    send_to_tender as _pkg_send_to_tender,
+    wipe as _pkg_wipe,
+)
+from tests.conftest import login_with_auto_enroll as _pkg_login
+
+
+@pytest.fixture(scope="module")
+def _g6_engine():
+    e = create_engine(DATABASE_URL, future=True)
+    with e.begin() as c:
+        c.execute(text("""
+            UPDATE users SET mfa_enabled=false, mfa_method=NULL,
+              mfa_secret_encrypted=NULL, mfa_backup_codes_encrypted=NULL,
+              mfa_enrolled_at=NULL, failed_login_attempts=0,
+              locked_until=NULL, lockout_level=0
+             WHERE email LIKE 'test-%@example.test'
+        """))
+    yield e
+    e.dispose()
+
+
+@pytest.fixture(scope="module", autouse=False)
+def _g6_clean(_g6_engine):
+    """Cleanup of the entire packages subtree before AND after this
+    module's run — the `_packages_common.wipe` helper clears packages,
+    POs, subcontracts, audit log + budget plumbing in dependency
+    order."""
+    _pkg_wipe(_g6_engine)
+    yield
+    _pkg_wipe(_g6_engine)
+
+
+@pytest.fixture(scope="module")
+def _g6_admin(_g6_engine):
+    return _pkg_login(None, _PKG_BASE, _PKG_ADMIN_EMAIL, _PKG_PWD)
+
+
+@pytest.fixture(scope="module", autouse=False)
+def _g6_threshold(_g6_engine, _g6_admin):
+    """Lift the budget creator self-activate threshold so the admin
+    can activate the £200,000 module-scope budget. Same dependency the
+    standard packages test suite uses (test_packages.py:_bump_threshold).
+    Module-scope so it runs exactly once per pytest session for this
+    module."""
+    _pkg_bump_threshold(_g6_admin)
+    yield
+
+
+@pytest.fixture(scope="module")
+def _g6_project(_g6_admin, _g6_clean):
+    _, project_id = _pkg_make_entity_and_project(_g6_admin)
+    return project_id
+
+
+@pytest.fixture(scope="module")
+def _g6_budget(_g6_admin, _g6_engine, _g6_project, _g6_threshold):
+    return _pkg_make_active_budget(
+        _g6_admin, _g6_engine, _g6_project,
+        line_count=2, line_amount=Decimal("100000.00"),
+    )
+
+
+def _g6_extra_cc(engine, budget_id: str, n: int = 1) -> list[str]:
+    """Return `n` Active cost_code ids not currently used by any
+    budget_line on `budget_id` (avoids the
+    uq_budget_lines_no_subcat_unique conflict that would otherwise
+    fire when multiple module-scope tests share the same budget).
+    """
+    with engine.begin() as c:
+        rows = c.execute(text("""
+            SELECT id FROM cost_codes
+             WHERE status='Active'
+               AND id NOT IN (
+                   SELECT cost_code_id FROM budget_lines
+                   WHERE budget_id=:b
+               )
+             ORDER BY code LIMIT :n
+        """), {"b": budget_id, "n": n}).all()
+    assert len(rows) >= n, (
+        f"need >= {n} extra Active cost codes not yet on budget {budget_id}"
+    )
+    return [str(r[0]) for r in rows]
+
+
+def _g6_add_unbudgeted_line(session, package_id: str, **body):
+    """POST /packages/{id}/lines with an unbudgeted body. `body` must
+    include unbudgeted_cost_code_id, unbudgeted_reason, quantity,
+    budgeted_unit_rate (the schema enforces this)."""
+    full = {"unbudgeted": True, **body}
+    return session.post(
+        f"{_PKG_BASE}/api/v1/packages/{package_id}/lines", json=full,
+    )
+
+
+def _g6_post_status(session, package_id: str, action: str):
+    return session.post(
+        f"{_PKG_BASE}/api/v1/packages/{package_id}/{action}"
+    )
+
+
+def _g6_unbudgeted_count(engine, budget_id: str) -> int:
+    with engine.begin() as c:
+        return c.execute(text(
+            "SELECT COUNT(*) FROM budget_lines "
+            "WHERE budget_id=:b AND is_unbudgeted=true"
+        ), {"b": budget_id}).scalar()
+
+
+class TestPackageLineUnbudgeted:
+    """T11–T11e — package-line schema and service plumbing."""
+
+    def test_package_line_unbudgeted_creates_line(
+        self, _g6_engine, _g6_admin, _g6_project, _g6_budget,
+    ):
+        """T11 — POST unbudgeted package line on a draft package → 201.
+
+        The new PackageLine.budget_line_id points at a freshly-minted
+        is_unbudgeted/Red/awaiting-ack line; line net = qty×rate, not
+        the £0 that would have come out of _inherit_from_budget_line.
+        """
+        admin = _g6_admin
+        r = _pkg_create_package(
+            admin, project_id=_g6_project, budget_id=_g6_budget["id"],
+            title="G6 T11", kind="materials",
+        )
+        assert r.status_code == 201, r.text
+        pkg = r.json()
+        cc = _g6_extra_cc(_g6_engine, _g6_budget["id"], 1)[0]
+        before = _g6_unbudgeted_count(_g6_engine, _g6_budget["id"])
+
+        ra = _g6_add_unbudgeted_line(
+            admin, pkg["id"],
+            unbudgeted_cost_code_id=cc,
+            unbudgeted_reason="T11 — variation, no budget line exists",
+            quantity="3",
+            budgeted_unit_rate="500.00",
+            description="T11 unbudgeted package line",
+        )
+        assert ra.status_code == 201, ra.text
+        pdata = ra.json()
+        # The new line is the last one we added.
+        added = pdata["lines"][-1]
+        assert Decimal(str(added["budgeted_net_amount"])) == \
+            Decimal("1500.00"), added
+        auto_bl_id = added["budget_line_id"]
+        assert auto_bl_id
+
+        # Grid view confirms the auto-line flags.
+        gr = admin.get(
+            f"{_PKG_BASE}/api/v1/budgets/{_g6_budget['id']}/grid"
+        )
+        assert gr.status_code == 200, gr.text
+
+        def _find(obj, lid):
+            if isinstance(obj, dict):
+                if str(obj.get("id")) == str(lid) and "is_unbudgeted" in obj:
+                    return obj
+                for v in obj.values():
+                    f = _find(v, lid)
+                    if f:
+                        return f
+            elif isinstance(obj, list):
+                for v in obj:
+                    f = _find(v, lid)
+                    if f:
+                        return f
+            return None
+
+        node = _find(gr.json(), auto_bl_id)
+        assert node is not None, "auto-line not on grid"
+        assert node["is_unbudgeted"] is True
+        assert node["unbudgeted_awaiting_ack"] is True
+        assert node["unbudgeted_source"] == "package"
+        assert node["variance_status"] == "Red"
+
+        after = _g6_unbudgeted_count(_g6_engine, _g6_budget["id"])
+        assert after == before + 1, (before, after)
+
+    def test_package_line_unbudgeted_requires_amounts(
+        self, _g6_engine, _g6_admin, _g6_project, _g6_budget,
+    ):
+        """T11b — missing quantity OR budgeted_unit_rate → 422."""
+        admin = _g6_admin
+        r = _pkg_create_package(
+            admin, project_id=_g6_project, budget_id=_g6_budget["id"],
+            title="G6 T11b", kind="materials",
+        )
+        pkg = r.json()
+        cc = _g6_extra_cc(_g6_engine, _g6_budget["id"], 1)[0]
+
+        # Missing quantity.
+        r1 = _g6_add_unbudgeted_line(
+            admin, pkg["id"],
+            unbudgeted_cost_code_id=cc,
+            unbudgeted_reason="T11b missing qty",
+            budgeted_unit_rate="100",
+        )
+        assert r1.status_code == 422, r1.text
+        assert "explicit quantity" in r1.text
+
+        # Missing rate.
+        r2 = _g6_add_unbudgeted_line(
+            admin, pkg["id"],
+            unbudgeted_cost_code_id=cc,
+            unbudgeted_reason="T11b missing rate",
+            quantity="1",
+        )
+        assert r2.status_code == 422, r2.text
+        assert "explicit quantity" in r2.text
+
+    def test_package_line_unbudgeted_missing_reason_422(
+        self, _g6_engine, _g6_admin, _g6_project, _g6_budget,
+    ):
+        """T11c — blank/missing reason → 422."""
+        admin = _g6_admin
+        r = _pkg_create_package(
+            admin, project_id=_g6_project, budget_id=_g6_budget["id"],
+            title="G6 T11c", kind="materials",
+        )
+        pkg = r.json()
+        cc = _g6_extra_cc(_g6_engine, _g6_budget["id"], 1)[0]
+        for reason_val in (None, "", "   "):
+            body = {
+                "unbudgeted_cost_code_id": cc,
+                "quantity": "1", "budgeted_unit_rate": "10",
+            }
+            if reason_val is not None:
+                body["unbudgeted_reason"] = reason_val
+            r = _g6_add_unbudgeted_line(admin, pkg["id"], **body)
+            assert r.status_code == 422, (reason_val, r.status_code, r.text)
+
+    def test_package_line_unbudgeted_on_nondraft_package_409(
+        self, _g6_engine, _g6_admin, _g6_project, _g6_budget,
+    ):
+        """T11d — draft-only guard. Out-to-tender → 409 + ZERO auto-line
+        committed (rollback proof). The guard runs BEFORE the helper
+        call so the create_unbudgeted_line code path is never reached.
+        """
+        admin = _g6_admin
+        # Build a package with one normal line then move it to tender.
+        r = _pkg_create_package(
+            admin, project_id=_g6_project, budget_id=_g6_budget["id"],
+            title="G6 T11d", kind="materials",
+        )
+        pkg = r.json()
+        bl0 = _g6_budget["lines"][0]
+        r2 = _pkg_add_line(admin, pkg["id"], budget_line_id=bl0["id"])
+        assert r2.status_code == 201, r2.text
+        rt = _pkg_send_to_tender(admin, pkg["id"])
+        assert rt.status_code == 200, rt.text
+
+        cc = _g6_extra_cc(_g6_engine, _g6_budget["id"], 1)[0]
+        before = _g6_unbudgeted_count(_g6_engine, _g6_budget["id"])
+        rb = _g6_add_unbudgeted_line(
+            admin, pkg["id"],
+            unbudgeted_cost_code_id=cc,
+            unbudgeted_reason="T11d should reject",
+            quantity="1", budgeted_unit_rate="10",
+        )
+        assert rb.status_code == 409, (rb.status_code, rb.text)
+        after = _g6_unbudgeted_count(_g6_engine, _g6_budget["id"])
+        assert after == before, (
+            "Rollback failure: an auto-line was committed despite the "
+            "draft-only guard rejecting the request."
+        )
+
+    def test_package_line_normal_still_works(
+        self, _g6_engine, _g6_admin, _g6_project, _g6_budget,
+    ):
+        """T11e — back-compat. Normal line WITH budget_line_id → 201;
+        without it and not unbudgeted → 422 (schema XOR)."""
+        admin = _g6_admin
+        r = _pkg_create_package(
+            admin, project_id=_g6_project, budget_id=_g6_budget["id"],
+            title="G6 T11e", kind="materials",
+        )
+        pkg = r.json()
+        bl0 = _g6_budget["lines"][0]
+        rp = _pkg_add_line(admin, pkg["id"], budget_line_id=bl0["id"])
+        assert rp.status_code == 201, rp.text
+
+        # Neg: nothing → 422.
+        rn = admin.post(
+            f"{_PKG_BASE}/api/v1/packages/{pkg['id']}/lines",
+            json={"quantity": "1", "budgeted_unit_rate": "10"},
+        )
+        assert rn.status_code == 422, rn.text
+        assert "budget_line_id is required" in rn.text
+
+
+class TestPackageUnbudgetedAwardInheritance:
+    """T12 — the award path inherits the auto-line into the downstream
+    PO without any award-path code change."""
+
+    def test_award_inherits_unbudgeted_line(
+        self, _g6_engine, _g6_admin, _g6_project, _g6_budget,
+    ):
+        """End-to-end: draft → unbudgeted line → tender → bid → award.
+
+        After award:
+          * created_purchase_order_id is present and points at a PO.
+          * The PO has exactly one line whose budget_line_id ==
+            auto-line.id (inheritance proof — no award code edit).
+          * package.awarded_net ≤ package.total_net (header invariant).
+          * The auto-line STILL reads is_unbudgeted/awaiting-ack —
+            awarding does NOT acknowledge.
+        """
+        admin = _g6_admin
+        r = _pkg_create_package(
+            admin, project_id=_g6_project, budget_id=_g6_budget["id"],
+            title="G6 T12", kind="materials",
+        )
+        pkg = r.json()
+        cc = _g6_extra_cc(_g6_engine, _g6_budget["id"], 1)[0]
+
+        ra = _g6_add_unbudgeted_line(
+            admin, pkg["id"],
+            unbudgeted_cost_code_id=cc,
+            unbudgeted_reason="T12 — variation, awarding via package",
+            quantity="10", budgeted_unit_rate="125.00",
+            description="T12 unbudgeted package line",
+        )
+        assert ra.status_code == 201, ra.text
+        pdata = ra.json()
+        pl = pdata["lines"][-1]
+        auto_bl_id = pl["budget_line_id"]
+        pl_id = pl["id"]
+        package_total_net = Decimal(str(pdata["total_net"]))
+        assert package_total_net == Decimal("1250.00"), pdata
+
+        # Send to tender → invite supplier → enter bid → award.
+        rt = _pkg_send_to_tender(admin, pkg["id"])
+        assert rt.status_code == 200, rt.text
+        supplier_id = _pkg_make_supplier(admin)
+        ri = _pkg_invite_bidder(admin, pkg["id"], supplier_id=supplier_id)
+        assert ri.status_code == 201, ri.text
+        bid_id = ri.json()["bids"][0]["id"]
+        rb = _pkg_enter_bid(admin, bid_id, lines=[
+            {"package_line_id": pl_id, "quoted_unit_rate": "125.00"},
+        ])
+        assert rb.status_code == 200, rb.text
+
+        raw = _pkg_award(admin, pkg["id"], awards=[{
+            "supplier_id": supplier_id, "source_bid_id": bid_id,
+            "lines": [{
+                "package_line_id": pl_id,
+                "quantity": "10", "awarded_unit_rate": "125.00",
+            }],
+        }])
+        assert raw.status_code == 200, raw.text
+        body = raw.json()
+        # Header invariant holds.
+        assert body["status"] == "awarded"
+        assert Decimal(str(body["awarded_net"])) <= package_total_net
+        assert Decimal(str(body["awarded_net"])) == Decimal("1250.00")
+
+        # Downstream PO carries the auto-line id (the inheritance).
+        aw = body["awards"][0]
+        po_id = aw["created_purchase_order_id"]
+        assert po_id, aw
+        rp = admin.get(f"{_PKG_BASE}/api/v1/purchase-orders/{po_id}")
+        assert rp.status_code == 200, rp.text
+        po = rp.json()
+        assert len(po["lines"]) == 1, po
+        downstream_bl_id = po["lines"][0]["budget_line_id"]
+        assert str(downstream_bl_id) == str(auto_bl_id), (
+            "Inheritance FAILED: downstream PO line points at "
+            f"{downstream_bl_id} but auto-line is {auto_bl_id}"
+        )
+
+        # Auto-line is STILL awaiting acknowledgement — awarding does
+        # not clear the flag (only `clear_unbudgeted` does).
+        gr = admin.get(
+            f"{_PKG_BASE}/api/v1/budgets/{_g6_budget['id']}/grid"
+        )
+
+        def _find(obj, lid):
+            if isinstance(obj, dict):
+                if str(obj.get("id")) == str(lid) and "is_unbudgeted" in obj:
+                    return obj
+                for v in obj.values():
+                    f = _find(v, lid)
+                    if f:
+                        return f
+            elif isinstance(obj, list):
+                for v in obj:
+                    f = _find(v, lid)
+                    if f:
+                        return f
+            return None
+
+        node = _find(gr.json(), auto_bl_id)
+        assert node is not None, "auto-line not on grid after award"
+        assert node["is_unbudgeted"] is True
+        assert node["unbudgeted_awaiting_ack"] is True, (
+            "Awarding incorrectly acknowledged the unbudgeted line — "
+            "only clear_unbudgeted should do that."
+        )
