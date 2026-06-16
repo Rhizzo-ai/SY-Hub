@@ -1036,3 +1036,36 @@ triggers the feature should eventually fire, so notifications aren't a retrofit.
   draft" flow (D1 workflow) is AI capture applied to quotes → PO drafts. Current AI
   capture (B24/B25) is wired for invoices via email → actuals, not quotes → POs. Real
   separate build — flag against the AI-capture track so it isn't absorbed into B105/B106.
+
+### Chat 59 — new items added at chat-end (B105/B106 Build Pack session)
+
+- **B43/B44 addendum — tiered unbudgeted approval (operator idea, Chat 59).**
+  When per-role / per-user approval limits (B43) and the threshold admin UI (B44)
+  are built, extend them to cover unbudgeted sign-off tiers, not just budget-change
+  limits. Operator intent: different unbudgeted spend bands require different
+  approver levels (e.g. PM clears up to £X, finance up to £Y, director above £Z),
+  rather than the single global floor B105/B106 ships. B105/B106 ships ONE global
+  config floor `budget.unbudgeted_ack_floor_gbp` (default £1,000, director-editable);
+  at/above it a `budgets.clear_unbudgeted` holder (director/super_admin) must clear
+  before issue. Tiered version makes the clearing authority tier-dependent. Depends
+  on B105/B106 being live first.
+
+- **B-DEPREC-unbudgeted-fields — remove deprecated `unbudgeted_*` request fields.**
+  B105/B106 keeps `unbudgeted`, `unbudgeted_cost_code_id`, `unbudgeted_subcategory_id`,
+  `unbudgeted_reason` on `POLineCreate` / package-line bodies as accepted-but-ignored
+  fallbacks for one release (logs a deprecation warning when sent). Once the B107
+  frontend is live and confirmed to send `cost_code_id`, remove these fields and the
+  fallback branch. Small schema + service cleanup; no data change.
+
+- **B-GATEA-gross-option (candidate, low priority).** Gate A compares the unbudgeted
+  floor against `committed_not_invoiced`. If the operator later prefers to gate on
+  gross PO value instead, it is a one-line change in `evaluate_unbudgeted_floor_gate`.
+  Note only; do not build unprompted.
+
+- **Gate B — formally closed (not a build item).** The original B105/B106 design
+  (Chat 58) specified a second over-budget gate ("Gate B": 10% threshold, 409 block,
+  `commitment_ack_*` columns). A Chat-59 live-code re-read found the existing Prompt
+  2.5 over-budget approval gate (`submit_po_with_budget_gate` → `evaluate_budget_overrun`)
+  already covers budgeted overruns. Operator decided NOT to duplicate it. Gate B is
+  closed; the `commitment_ack_*` columns are never built. Recorded here so the
+  decision is not revisited.
