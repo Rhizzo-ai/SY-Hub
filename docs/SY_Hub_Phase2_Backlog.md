@@ -928,3 +928,59 @@ Locked decisions (build from these, design fully code-grounded in Chat 54):
   needs to filter consultant spend directly (rather than tracing back through
   the originating package), add a flag/source marker on the PO. Defer until
   reporting asks for it.
+
+- **B105** — Cost-code-first commercial line model (DESIGN-FIRST, then Build
+  Pack). Supersedes the entry-point design of the B102 unbudgeted path. PO and
+  package lines pick a **cost code**, not a budget line. The budget line is
+  treated as "the row for that cost code on this budget":
+    - If the cost code already has a budgeted figure → PO value lands in the
+      **committed** column against it. Normal variance behaviour.
+    - If the cost code has no budget → the budget line **auto-materialises**:
+      original-budget column blank, committed column carries the PO value, line
+      reads red as an overspend-against-zero. No separate quarantine surface.
+  What survives from Gates 5 & 6 (on main, NOT wasted): the auto-line minting
+  (`create_unbudgeted_line`), `is_unbudgeted` columns, the
+  `unbudgeted_awaiting_ack` state, and the `budgets.clear_unbudgeted` permission
+  are the foundation this builds on. What changes: the entry point (cost code vs
+  `budget_line_id`) and the request shapes on the PO/package line-create
+  endpoints. This touches the money path sealed in Gates 5 & 6, so it is a
+  deliberate backend redesign — design pass before any Build Pack. Director
+  acknowledgement is now threshold-gated, not binary (see B106). Status:
+  design-first session is the next chat.
+
+- **B106** — Materiality thresholds for unbudgeted/over-budget acknowledgement.
+  Replaces B102's binary "every unbudgeted line needs director ack." Director
+  acknowledgement is required only **above threshold**; below threshold the line
+  is still logged and shown flagged in the grid, it just doesn't block. Two
+  triggers, both config-backed (same pattern as the existing variance thresholds
+  and the £10k self-approval limit):
+    - **Unbudgeted cash floor** — `unbudgeted_ack_floor_gbp`, default £1000.
+      Spend at/under the floor logs + shows flagged but needs no sign-off; above
+      it requires director acknowledgement.
+    - **Over-budget %** — a budgeted cost code where committed costs exceed
+      original budget by more than the threshold % triggers acknowledgement.
+      DECIDED: trigger on **committed** (early warning, when the PO is raised),
+      not on invoiced actuals. RECOMMENDED: reuse the existing red-variance
+      threshold rather than add a second dial — confirm in the design pass.
+  Sub-threshold unbudgeted spend: DECIDED direction is non-blocking but always
+  logged + shown flagged (keep the audit trail, drop the nagging). Confirm
+  states against B102's live ack machinery in the design pass.
+
+- **B107** — Gate 7 (frontend unbudgeted path) — SHELVED. The B102-era plan was
+  to add an unbudgeted toggle + cost-code + reason to the PO line editor
+  (`POLineEditor.jsx`) and the package add-line dialog (`PackageDetail.jsx`).
+  Shelved because the frontend would be built on the `budget_line_id`-primary
+  picker that B105 replaces with a cost-code-first picker. Resume the frontend
+  AFTER B105's backend ships, built against the new model. The read of both
+  surfaces done in Chat 57 (PO editor is a multi-row table with per-row
+  qty/rate/vat; package dialog is a single budget-line dropdown posting
+  `{budget_line_id}`) carries forward to that frontend pack.
+
+- **B108** — PO create form never loads budget lines (pre-existing gap).
+  `PurchaseOrderForm.jsx` asks the user to paste a budget ID from the URL and
+  feeds `POLineEditor` a `budgetLines` prop that is never populated — so the
+  per-row budget-line dropdown is effectively always empty. Not caused by any
+  recent gate; surfaced while reading the surface for Gate 7. Folds naturally
+  into B105/B107 (the cost-code-first form will source codes from the budget
+  grid the way the package dialog already does), so resolve it there rather than
+  as a standalone patch. Logged so it isn't lost.
