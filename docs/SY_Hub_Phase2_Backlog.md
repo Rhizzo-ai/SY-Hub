@@ -984,3 +984,55 @@ Locked decisions (build from these, design fully code-grounded in Chat 54):
   into B105/B107 (the cost-code-first form will source codes from the budget
   grid the way the package dialog already does), so resolve it there rather than
   as a standalone patch. Logged so it isn't lost.
+
+---
+
+## Chat 58 additions (cost-code-first design session)
+
+### B109 — Budget templates (two kinds)
+Two ways to seed a new project's budget: (a) saved cost-code-line sets (e.g.
+"standard housing scheme") pulled into a new budget as a starting point, and
+(b) spreadsheet upload (xlsx/csv) that creates the lines. Both must respect
+one-line-per-cost-code (D2). Design-first. Depends on B105/B106 landing first.
+
+### B110 — Unallocated / buffer budget line (first-class concept)
+A non-cost-code holding line within a group. Money reallocates OUT of the buffer
+into real cost-code lines as detail firms up, group total holding steady (e.g.
+Hazardous comes in at £40k → move £40k from buffer into Fac-01, group total
+unchanged). Home: budget-change-control (2.6/BCRs). Needs a line "kind" marking a
+buffer (no cost code) + an atomic reallocation action preserving the group total.
+Design-first. Money-path — full audit discipline.
+
+### B111 — Staged budget maturity (viability → concept → planning → detail → locked)
+Budgets mature through named stages as design firms up: viability (rough GDV vs
+units) → concept → planning drawings → full detail → locked original (construction
+runs against this). Platform already has versioning (draft/active/locked/superseded);
+this adds named maturity levels + option to keep earlier detail viewable-but-not-
+cluttering during construction. Open question: separate versions vs one budget with
+a maturity attribute + view filtering. Design-first — own session.
+
+### B112 — Notifications mini-track
+Its own mini-track, NOT a bolt-on to the audit log. Source = audit events. New build
+= a rules layer deciding which events become notifications, for whom, via which
+channel (in-app bell, email). Keeps users from drowning in audit noise. First thread
+to build: the B105/B106 director sign-off alert ("a PO needs your sign-off") — wire
+that one notification during B105/B106 to prove the pattern. Ties to hard constraints
+"real-time where it matters" + "notifications must be live". Design-first for the full
+track.
+
+STANDING BUILD HABIT (Chat 58): on every build from here, note which notification
+triggers the feature should eventually fire, so notifications aren't a retrofit.
+
+### Process / principle notes (Chat 58)
+- Operational-vs-historical state principle: operational state (needs action now?)
+  lives ON the record for fast reads (grid, submit checks); historical/analytical
+  views (every overrun + sign-off across jobs) are built from the audit trail or
+  purpose-built reporting tables in the reporting track. Applied in D4; will recur.
+- Variance thresholds are in-code constants (VARIANCE_AMBER_PCT / VARIANCE_RED_PCT
+  in budgets.py), NOT config-backed; there is NO _load_variance_thresholds reader.
+  Making the variance % UI-editable later = a small dedicated task to promote
+  VARIANCE_RED_PCT into system_config. Backlog candidate if/when raised.
+- Quote-into-PO AI capture: the "drag a quote onto a new PO, AI extracts + fills the
+  draft" flow (D1 workflow) is AI capture applied to quotes → PO drafts. Current AI
+  capture (B24/B25) is wired for invoices via email → actuals, not quotes → POs. Real
+  separate build — flag against the AI-capture track so it isn't absorbed into B105/B106.
