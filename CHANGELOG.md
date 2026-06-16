@@ -10,6 +10,90 @@ Each entry: date, prompt reference (if applicable), change, rationale.
 
 ## Entries
 
+## Chat 57 — B102 · Unbudgeted-order path (Gates 1–6) + cost-code-first pivot (design-deferred)
+
+Backend money-path pack. Ships the B102 unbudgeted-order escape route end to
+end across the PO and package line-create flows, verified file-by-file on
+origin/main (raw fetch + shallow clone — not Emergent self-report; the
+Gate 6 first push had not landed, the second did, test file at the correct
+backend/tests/ path).
+
+Migration
+
+
+0049_unbudgeted_order_lines (on 0048_package_kind_3value_links) —
+additively adds six columns to budget_lines: is_unbudgeted,
+unbudgeted_reason, unbudgeted_source, unbudgeted_created_by,
+unbudgeted_cleared_by, unbudgeted_cleared_at. New alembic head.
+
+
+RBAC
+
+
+budgets.clear_unbudgeted added to the catalogue (non-sensitive; director
+default). The acknowledgement endpoint requires this permission separately
+from budgets.edit, so finance/PM cannot silently clear an unbudgeted line a
+director hasn't sighted. Live permission count → 143 (142 → 143).
+
+
+Behaviour (Gates 1–6, all on main)
+
+
+A PO or package line raised against an unbudgeted code mints a flagged
+auto-line on the package's/PO's budget via
+create_unbudgeted_line(..., source=...). The line is is_unbudgeted=true,
+Red, and awaiting_ack; it carries the mandatory reason.
+Gate 5 (PO leg) and Gate 6 (package leg + award inheritance): the
+unbudgeted leg requires explicit qty + rate (defeats the £0 inheritance trap
+of _inherit_from_budget_line). Net = qty × rate, server-computed.
+Award path untouched — award_package reads budget_line_id off the
+package line generically, so the auto-line's id flows through to the
+downstream PO with no award-path edit. Awarding does NOT acknowledge; only
+clear_unbudgeted does.
+Draft-only guard still gates the branch; non-draft → 409 with rollback (no
+orphan auto-line committed).
+
+
+Known drift recorded (NOT fixed this chat — money-gate discipline)
+
+
+Stale permission-count assertions. tests/test_auth_rbac.py (asserts
+136) and tests/test_permissions_2_6.py (asserts 136) are out of date — the
+live count is 143. These are part of the long-standing 19-failure baseline
+that ran unchanged through every B102 gate. tests/test_packages_service.py
+is the authoritative one (asserts 143, updated for B102). The two stale
+assertions need a small follow-up to bring them to 143 + a comment-history
+catch-up — logged for a hardening pass, deliberately not touched inside the
+money gate.
+
+
+Deviations
+
+
+D-G5-1 / D-G6-2 — helper errors from create_unbudgeted_line
+(BudgetStateError / BudgetNotFoundError / BudgetValidationError) wrapped
+to ValueError so the router's existing ValueError → 422 map covers them;
+__cause__ preserved.
+D-G6-1 — explicit-amount rule applied only to the unbudgeted leg of
+PackageLineCreateBody (normal lines still inherit qty/rate from the budget
+line; back-compat proven by T11e).
+
+
+Pivot logged as backlog, NOT built (B105–B108)
+
+During Gate 7 (frontend) design, the model was reconsidered and a cleaner
+cost-code-first entry point was chosen (PO/package lines pick a cost code,
+not a budget line; the budget line materialises with a blank original column and
+the committed figure filled). Director acknowledgement is kept but moves from
+binary to threshold-gated (unbudgeted floor default £1000; committed-over-
+original-budget % reusing the red-variance threshold). This reworks the entry
+point of the Gate 5/6 endpoints, so it is design-first → Build Pack, not a
+quick edit. Gates 1–6 stay on main as the foundation (auto-line minting,
+columns, ack state, permission all survive). Gate 7 frontend shelved until the
+new backend lands. See backlog B105 (cost-code-first model), B106 (thresholds),
+B107 (shelved frontend gate), B108 (PO form never loads budget lines —
+pre-existing).
+
 ## Chat 55 — Build Pack B88 Pack 3.5 · Packages → 3-value kind vocabulary
 
 Backend + frontend pack. Splits `package.kind` from a 2-value vocab
