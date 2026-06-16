@@ -73,6 +73,16 @@ SEEDS: list[tuple[str, str, str, str, str, str]] = [
     ("budget.self_approval_threshold_gbp", "10000.00", "Decimal", "Budget",
      "super_admin", "GBP threshold at/above which a budget's creator may not "
      "self-activate (segregation of duties; Stage 1 single global threshold)"),
+    # B105/B106 — Unbudgeted Ack Floor (cost-code-first commercial line model).
+    # GBP floor at/above which an unbudgeted order line's committed spend
+    # requires director sign-off before the PO can be issued. Below the floor
+    # the line is flagged but non-blocking. Comparison is `>=` — at exactly
+    # the floor, sign-off IS required. Director-editable (mirror the
+    # self-approval threshold's authority model).
+    ("budget.unbudgeted_ack_floor_gbp", "1000.00", "Decimal", "Budget",
+     "director", "GBP floor at/above which an unbudgeted order line's "
+     "committed spend requires director sign-off before the PO can be "
+     "issued"),
     # Security
     ("security.session_idle_timeout_minutes", "60", "Integer", "Security",
      "super_admin", "Session idle timeout in minutes"),

@@ -117,11 +117,41 @@ def _compute_line_totals(
     """Return (quantity, unit_rate, vat_rate, net_amount, vat_amount, gross).
 
     All values quantized to the column's scale (4 / 4 / 2 / 2 / 2 / 2).
+
+    B105/B106 — Draft tolerance: under the cost-code-first model a PO
+    DRAFT may have incomplete lines (quantity/unit_rate may be None or
+    blank). When either is missing we persist the line with
+    quantity=0, unit_rate=0, net=vat=gross=0 and DO NOT raise. The
+    completeness gate at submit (§3.8) is what enforces real numbers
+    before money moves; the variance/commitment paths never see a
+    real net on an incomplete draft because submit blocks first.
+    Real values, when present, are bound-checked as before
+    (quantity > 0, unit_rate >= 0, vat_rate 0..100).
     """
-    qty = _q(line_payload.get("quantity"))
+    qty_raw = line_payload.get("quantity")
+    rate_raw = line_payload.get("unit_rate")
+    # B105/B106 draft tolerance — when either is missing, persist with
+    # qty=1 (DB CHECK constraint forbids 0) and rate=0 so net stays £0.
+    # The submit completeness gate (§3.8) refuses the line when its
+    # NEEDED fields are missing (description, cost_code, vat_rate).
+    # A line that legitimately wants £0 (free item) is permitted at
+    # submit because qty=1, rate=0 satisfies the gate; that's
+    # consistent with the spec ("unit_rate>=0").
+    if qty_raw is None or rate_raw is None:
+        vat_rate = _q(line_payload.get("vat_rate", Decimal("20.00")))
+        if vat_rate < 0 or vat_rate > 100:
+            raise ValueError("Line vat_rate must be between 0 and 100")
+        zero2 = Decimal("0.00")
+        one4 = Decimal("1.0000")
+        zero4 = Decimal("0.0000")
+        return (
+            one4, zero4, vat_rate.quantize(Decimal("0.01")),
+            zero2, zero2, zero2,
+        )
+    qty = _q(qty_raw)
     if qty <= 0:
         raise ValueError("Line quantity must be > 0")
-    rate = _q(line_payload.get("unit_rate"))
+    rate = _q(rate_raw)
     if rate < 0:
         raise ValueError("Line unit_rate must be >= 0")
     vat_rate = _q(line_payload.get("vat_rate", Decimal("20.00")))
@@ -298,58 +328,139 @@ def create_po(
 
     line_payloads = list(payload["lines"])
 
-    # ── B102 Gate 5 — RESOLVE BEFORE VALIDATE ──
-    # Walk every line payload and, for each `unbudgeted=true` entry,
-    # create the flagged £0 auto-line on THIS budget and substitute its
-    # id back into the payload. After this single pass every line
-    # payload carries a real `budget_line_id`, so the existing
-    # _validate_budget_lines invariant ("all belong to this budget")
-    # holds unchanged — the auto-line was just created on
-    # budget.id and is the most recent member of the set.
+    # ── B105/B106 — RESOLVE-OR-MINT (replaces the B102 unbudgeted pre-pass) ──
+    # Walk every line payload and determine the cost code (priority:
+    # cost_code_id > derived from supplied budget_line_id > deprecated
+    # unbudgeted_cost_code_id). Then resolve the (budget, cost_code,
+    # subcategory) triple via find_line_for_code: if a line exists,
+    # allocate into it; otherwise mint a £0 unbudgeted line (neutral
+    # markers — force_flag=False; Gate A decides Red/attention at
+    # submit). The back-compat alias `budget_line_id`, if supplied
+    # alongside `cost_code_id`, must agree with the resolved line —
+    # mismatch → 422 (router maps the ValueError).
     #
-    # The Active-budget guard already ran at _validate_budget(~267)
-    # above — a non-Active budget never reaches this loop, so the
-    # whole PO (including any auto-line attempts) is rejected with
+    # After this single pass every payload carries a real
+    # `budget_line_id`, so the existing `_validate_budget_lines`
+    # invariant ("all belong to this budget") holds unchanged.
+    #
+    # The Active-budget guard already ran at _validate_budget(~) above —
+    # a non-Active budget never reaches this loop, so the whole PO
+    # (including any auto-line attempts) is rejected with
     # po/budget-not-active and nothing is persisted.
     #
     # Lock re-entrancy: create_unbudgeted_line → create_line
     # re-acquires SELECT ... FOR UPDATE on the budget row that
     # _validate_budget already touched. PostgreSQL row locks are
-    # re-entrant within a single transaction, so no hang / deadlock.
-    # T7 exercises this end-to-end against the live API.
+    # re-entrant within a single transaction, so no hang/deadlock.
     #
     # Rollback safety: this loop runs inside create_po's caller-owned
     # transaction. The router commits at the end; if a later line
     # payload (or numbering, or PO insert) raises, the session is
     # rolled back by the request-scoped get_db fixture, so any
-    # half-created auto-line vanishes with the rest of the PO. T10c
-    # proves this against the live path.
+    # half-created auto-line vanishes with the rest of the PO.
+    #
+    # Mint race: two requests minting the same code concurrently hit
+    # `uq_budget_lines_budget_cost_subcat` on the second flush →
+    # IntegrityError. We catch it and surface as ValueError (router 422)
+    # — caller may retry; the resolve pass on retry will find the
+    # winner's line and allocate into it.
+    deprecation_warned_this_request = False
     for lp in line_payloads:
-        if lp.get("unbudgeted"):
-            cc_id = uuid.UUID(str(lp["unbudgeted_cost_code_id"]))
-            subcat_raw = lp.get("unbudgeted_subcategory_id")
-            subcat_id = uuid.UUID(str(subcat_raw)) if subcat_raw else None
+        cc_raw = lp.get("cost_code_id")
+        sub_raw = lp.get("cost_code_subcategory_id")
+        alias_raw = lp.get("budget_line_id")
+
+        # Deprecated-cluster fallback (B105/B106 §3.10). Only honoured
+        # when cost_code_id is absent. Single warning per request.
+        if cc_raw is None and lp.get("unbudgeted_cost_code_id") is not None:
+            cc_raw = lp.get("unbudgeted_cost_code_id")
+            if not deprecation_warned_this_request:
+                import logging as _logging
+                _logging.getLogger("syhomes.deprecation").warning(
+                    "PO line uses deprecated unbudgeted_* fields "
+                    "(unbudgeted_cost_code_id / unbudgeted_subcategory_id "
+                    "/ unbudgeted_reason); switch to cost_code_id + "
+                    "cost_code_subcategory_id. Cluster will be removed "
+                    "next release."
+                )
+                deprecation_warned_this_request = True
+        if sub_raw is None and lp.get("unbudgeted_subcategory_id") is not None:
+            sub_raw = lp.get("unbudgeted_subcategory_id")
+
+        # Back-compat alias-only path: derive the cost code from the
+        # supplied budget line.
+        if cc_raw is None and alias_raw is not None:
             try:
-                auto = bl_svc.create_unbudgeted_line(
-                    db,
-                    budget_id=budget.id,
-                    user=user,
-                    perms=perms,
-                    cost_code_id=cc_id,
-                    cost_code_subcategory_id=subcat_id,
-                    entity_id=None,  # helper defaults from project primary entity
-                    reason=str(lp["unbudgeted_reason"]),
-                    source="purchase_order",
+                alias_uuid = uuid.UUID(str(alias_raw))
+            except (TypeError, ValueError) as e:
+                raise ValueError(f"budget_line_id is not a valid UUID: {e}") from e
+            bl = db.get(BudgetLine, alias_uuid)
+            if bl is None or bl.budget_id != budget.id:
+                raise ValueError(
+                    f"budget_line_id {alias_uuid} does not belong to "
+                    f"budget {budget.id}"
+                )
+            cc_raw = bl.cost_code_id
+            sub_raw = bl.cost_code_subcategory_id
+
+        if cc_raw is None:
+            raise ValueError("cost_code_id is required")
+
+        try:
+            cc_id = uuid.UUID(str(cc_raw))
+        except (TypeError, ValueError) as e:
+            raise ValueError(f"cost_code_id is not a valid UUID: {e}") from e
+        sub_id: Optional[uuid.UUID] = None
+        if sub_raw is not None:
+            try:
+                sub_id = uuid.UUID(str(sub_raw))
+            except (TypeError, ValueError) as e:
+                raise ValueError(
+                    f"cost_code_subcategory_id is not a valid UUID: {e}"
+                ) from e
+
+        existing = bl_svc.find_line_for_code(
+            db, budget_id=budget.id,
+            cost_code_id=cc_id, cost_code_subcategory_id=sub_id,
+        )
+        if existing is not None:
+            line = existing
+        else:
+            # Mint. Prefer an explicit deprecated reason if present,
+            # else a deterministic default (no user-facing reason
+            # field now — D3).
+            raw_reason = lp.get("unbudgeted_reason")
+            reason = (str(raw_reason).strip() if raw_reason else "") \
+                or "Auto-created: order raised against an unbudgeted cost code"
+            try:
+                line = bl_svc.create_unbudgeted_line(
+                    db, budget_id=budget.id, user=user, perms=perms,
+                    cost_code_id=cc_id, cost_code_subcategory_id=sub_id,
+                    entity_id=None,
+                    reason=reason, source="purchase_order",
+                    force_flag=False,
                 )
             except (BudgetStateError, BudgetNotFoundError,
                     BudgetValidationError) as e:
-                # Surface service-layer rejections as 422 at the router
-                # (mirrors the existing ValueError→422 mapping below).
-                # E.g. unknown cost_code_id, subcat mismatch.
                 raise ValueError(str(e)) from e
-            lp["budget_line_id"] = auto.id
-            # leave lp["unbudgeted"] etc. in place; downstream reads
-            # `budget_line_id` only.
+
+        # Alias agreement check (back-compat): if BOTH cost_code_id
+        # and budget_line_id were supplied, they must agree with the
+        # resolved/minted line. Service is the single arbiter.
+        if alias_raw is not None:
+            try:
+                alias_uuid = uuid.UUID(str(alias_raw))
+            except (TypeError, ValueError) as e:
+                raise ValueError(f"budget_line_id is not a valid UUID: {e}") from e
+            if alias_uuid != line.id:
+                raise ValueError(
+                    "budget_line_id does not match the resolved cost-code line"
+                )
+
+        # Stamp the resolved id + cost_code_id back so downstream code
+        # (validation, totals, labelling, audit) reads it.
+        lp["budget_line_id"] = line.id
+        lp["cost_code_id"] = cc_id
 
     budget_line_ids = [
         uuid.UUID(str(lp["budget_line_id"])) for lp in line_payloads
@@ -673,6 +784,25 @@ def issue_po(
     po.updated_at = datetime.now(timezone.utc)
     db.flush()
     recompute_for_po(db, po.id)
+    # B105/B106 — Gate A on the approved → issued path. An auto-approved
+    # within-budget PO carrying an unbudgeted-over-floor line must not
+    # reach 'issued' without director sign-off. Raises
+    # UnbudgetedAckRequiredError → router 409; the request-scoped
+    # session rolls back the transition so the PO stays Approved.
+    from app.services.budget_lines import evaluate_unbudgeted_floor_gate
+    from app.services.budget_errors import UnbudgetedAckRequiredError
+    _po_blids = [
+        r[0] for r in db.execute(
+            select(PurchaseOrderLine.budget_line_id)
+            .where(PurchaseOrderLine.purchase_order_id == po.id)
+            .distinct()
+        ).all() if r[0] is not None
+    ]
+    _blocking = evaluate_unbudgeted_floor_gate(
+        db, budget_line_ids=_po_blids,
+    )
+    if _blocking:
+        raise UnbudgetedAckRequiredError(_blocking)
     after = _snap_po(po)
     record_audit(
         db, action="Status_Change",

@@ -31,13 +31,26 @@ class PackageUpdateBody(BaseModel):
 
 
 class PackageLineCreateBody(BaseModel):
-    # B102 — Unbudgeted-Order Handling. `budget_line_id` is optional at
-    # the schema level; XOR'd against `unbudgeted=true` by the after-
-    # validator. An unbudgeted package line MUST also carry an explicit
-    # quantity + budgeted_unit_rate — the £0 auto-line we'd otherwise
-    # inherit from would net the package line to zero (see
-    # _inherit_from_budget_line for a £0 source).
+    # B105/B106 — Cost-code-first commercial line model (mirrors
+    # POLineCreate). A line names `cost_code_id` (+ optional
+    # `cost_code_subcategory_id`); the service resolves whether the
+    # code already has a budget line (allocate) or mints one (the
+    # unbudgeted path). `budget_line_id` remains accepted as a
+    # validated back-compat alias. The legacy `unbudgeted*` cluster
+    # stays as DEPRECATED accepted-but-ignored fields used only as
+    # fallbacks for the cost code, with a one-shot deprecation
+    # warning at the service layer.
+    #
+    # Package lines REQUIRE quantity + budgeted_unit_rate up front
+    # (unlike PO drafts) because the package is the tender estimate
+    # — there is no "fill it in later" stage for a package line; a
+    # zero qty/rate would silently net to £0 via
+    # _inherit_from_budget_line. The PO submit completeness gate
+    # (§3.8) is PO-scoped and does NOT apply here.
+    cost_code_id: Optional[uuid.UUID] = None
+    cost_code_subcategory_id: Optional[uuid.UUID] = None
     budget_line_id: Optional[uuid.UUID] = None
+    # DEPRECATED — accept-but-ignore (see services.packages).
     unbudgeted: bool = False
     unbudgeted_cost_code_id: Optional[uuid.UUID] = None
     unbudgeted_subcategory_id: Optional[uuid.UUID] = None
@@ -51,33 +64,24 @@ class PackageLineCreateBody(BaseModel):
     model_config = {"extra": "forbid"}
 
     @model_validator(mode="after")
-    def _xor_budget_line(self):
-        """B102 XOR — exactly one of {budget_line_id, unbudgeted=true};
-        unbudgeted leg also demands explicit qty + rate so the line
-        doesn't silently net to £0 via _inherit_from_budget_line."""
-        if self.unbudgeted:
-            if self.budget_line_id is not None:
-                raise ValueError(
-                    "a line cannot be both unbudgeted and carry a budget_line_id"
-                )
-            if self.unbudgeted_cost_code_id is None:
-                raise ValueError(
-                    "unbudgeted_cost_code_id is required for an unbudgeted line"
-                )
-            if not (self.unbudgeted_reason and self.unbudgeted_reason.strip()):
-                raise ValueError(
-                    "unbudgeted_reason is required for an unbudgeted line"
-                )
-            if self.quantity is None or self.budgeted_unit_rate is None:
-                raise ValueError(
-                    "unbudgeted package lines require explicit quantity "
-                    "and budgeted_unit_rate"
-                )
-        else:
-            if self.budget_line_id is None:
-                raise ValueError(
-                    "budget_line_id is required unless unbudgeted=true"
-                )
+    def _require_resolvable_cost_code(self):
+        """B105/B106 — same resolve-or-derive rules as POLineCreate.
+
+        Cost code source priority (applied at the service layer):
+          1. `cost_code_id`.
+          2. `budget_line_id` alone → server derives the code.
+          3. Deprecated `unbudgeted_cost_code_id`.
+          4. None of the above → 422.
+
+        Package lines additionally require explicit `quantity` +
+        `budgeted_unit_rate` whenever the line resolves to a freshly
+        minted £0 unbudgeted line (otherwise inherit defaults to £0).
+        The service enforces that downstream check; here we only
+        enforce the cost-code resolvability.
+        """
+        cc = self.cost_code_id or self.unbudgeted_cost_code_id
+        if cc is None and self.budget_line_id is None:
+            raise ValueError("cost_code_id is required")
         return self
 
 

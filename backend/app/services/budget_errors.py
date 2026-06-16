@@ -58,3 +58,47 @@ class BudgetSelfApprovalError(BudgetError):
 
     Always 403 at the route layer.
     """
+
+
+class UnbudgetedAckRequiredError(BudgetError):
+    """B105/B106 Gate A — director sign-off required on at least one
+    un-cleared unbudgeted line.
+
+    Raised inside `submit_po_with_budget_gate` / `issue_po` immediately
+    after `recompute_for_po`, when one or more unbudgeted lines have
+    committed_not_invoiced >= the configured floor
+    (`budget.unbudgeted_ack_floor_gbp`). The PO MUST stay Draft (or
+    fail to issue) until a director clears the line(s) via the
+    existing `POST /budget-lines/{line_id}/clear-unbudgeted` action
+    (permission `budgets.clear_unbudgeted`).
+
+    Carries the blocking-line summary the router renders as the 409
+    response body. Always 409 at the route layer.
+    """
+
+    def __init__(self, blocking: list[dict]):
+        self.blocking = list(blocking or [])
+        super().__init__(
+            f"Director sign-off required on {len(self.blocking)} "
+            f"unbudgeted line(s)"
+        )
+
+
+class POLineIncompleteError(BudgetError):
+    """B105/B106 §3.8 — PO submit refused because one or more lines
+    are incomplete.
+
+    A PO line is complete when it has a resolved `budget_line_id`,
+    `cost_code` (non-empty), `quantity > 0`, `unit_rate >= 0`,
+    `vat_rate` present (0..100), and a non-empty `description`.
+    Drafts may persist incomplete (so AI/manual fill can fill them
+    progressively); submit applies this gate before any transition or
+    money path runs. Always 422 at the route layer.
+    """
+
+    def __init__(self, line_numbers: list[int]):
+        self.line_numbers = sorted(int(n) for n in (line_numbers or []))
+        super().__init__(
+            f"PO submit refused: incomplete line(s) "
+            f"{self.line_numbers}"
+        )

@@ -77,6 +77,14 @@ def evaluate_budget_overrun(
     ).all()
     overruns: list[dict[str, Any]] = []
     for bline in rows:
+        # B105/B106 option (ii) — Gate A owns unbudgeted lines.
+        # Use getattr() with safe defaults so unit-test mocks that
+        # don't construct the full SQLAlchemy attribute set (e.g.
+        # SimpleNamespace fixtures in test_po_approvals_unit.py) treat
+        # the line as a normal budgeted line by default.
+        if getattr(bline, "is_unbudgeted", False) and \
+                getattr(bline, "unbudgeted_cleared_at", None) is None:
+            continue
         po_net = by_line[bline.id]
         current_budget = Decimal(bline.current_budget or 0)
         committed = Decimal(bline.committed_value or 0)

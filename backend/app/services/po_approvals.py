@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Any, Optional
 
 from fastapi import HTTPException, Request, status
@@ -34,11 +35,13 @@ from sqlalchemy.orm import Session
 from app.auth.permissions import UserPermissions
 from app.models.notifications import Notification
 from app.models.po_approvals import PurchaseOrderApproval
-from app.models.purchase_orders import PurchaseOrder
+from app.models.purchase_orders import PurchaseOrder, PurchaseOrderLine
 from app.models.user import User
 from app.services import po_transitions
 from app.services.audit import field_diff, record_audit
 from app.services.budgets_reconciliation import recompute_for_po
+from app.services.budget_errors import UnbudgetedAckRequiredError
+from app.services.budget_lines import evaluate_unbudgeted_floor_gate
 from app.services.po_authz import PoNotFound, load_po_for_write
 from app.services.po_commitments import (
     build_budget_snapshot,
@@ -156,6 +159,33 @@ def submit_po_with_budget_gate(
             f"Submit only valid from 'draft'; current status={po.status!r}"
         )
 
+    # B105/B106 §3.8 — PO completeness check at submit. Drafts may
+    # persist incomplete (so AI/manual fill can fill them progressively
+    # — see _compute_line_totals draft tolerance). At SUBMIT, every
+    # line must carry: cost_code (non-empty), quantity > 0, unit_rate
+    # >= 0, vat_rate (0..100), and a non-empty description. Otherwise
+    # POLineIncompleteError → router 422 naming the offending line
+    # number(s); PO stays Draft.
+    from app.services.budget_errors import POLineIncompleteError as _POLineIncompleteError
+    _incomplete: list[int] = []
+    for _ln in po.lines:
+        _bad = False
+        if not (_ln.cost_code and str(_ln.cost_code).strip()):
+            _bad = True
+        elif _ln.quantity is None or Decimal(_ln.quantity) <= 0:
+            _bad = True
+        elif _ln.unit_rate is None or Decimal(_ln.unit_rate) < 0:
+            _bad = True
+        elif _ln.vat_rate is None or Decimal(_ln.vat_rate) < 0 \
+                or Decimal(_ln.vat_rate) > 100:
+            _bad = True
+        elif not (_ln.description and str(_ln.description).strip()):
+            _bad = True
+        if _bad:
+            _incomplete.append(int(_ln.line_number))
+    if _incomplete:
+        raise _POLineIncompleteError(_incomplete)
+
     overruns = evaluate_budget_overrun(db, po)
     over_budget = bool(overruns)
     snapshot = build_budget_snapshot(db, po)
@@ -176,6 +206,25 @@ def submit_po_with_budget_gate(
         po.updated_at = datetime.now(timezone.utc)
         db.flush()
         recompute_for_po(db, po.id)
+        # B105/B106 — Gate A (unbudgeted £-floor). Runs AFTER
+        # recompute_for_po has written committed_not_invoiced, under
+        # the parent-budget FOR UPDATE lock that recompute_for_line
+        # holds. Raises UnbudgetedAckRequiredError → router 409; the
+        # caller-owned transaction is rolled back by the request-scoped
+        # session, so the PO stays Draft (no auto-approve, no audit
+        # row from this branch).
+        _po_blids = [
+            r[0] for r in db.execute(
+                select(PurchaseOrderLine.budget_line_id)
+                .where(PurchaseOrderLine.purchase_order_id == po.id)
+                .distinct()
+            ).all() if r[0] is not None
+        ]
+        blocking = evaluate_unbudgeted_floor_gate(
+            db, budget_line_ids=_po_blids,
+        )
+        if blocking:
+            raise UnbudgetedAckRequiredError(blocking)
         after = _snap_po(po)
         record_audit(
             db, action="Status_Change",
@@ -221,6 +270,24 @@ def submit_po_with_budget_gate(
     po.updated_at = now
     db.flush()
     recompute_for_po(db, po.id)
+    # B105/B106 — Gate A also fires on the pending-approval / over-budget
+    # path: an unbudgeted-over-floor line must not slip into
+    # pending_approval (the gate is hard-block 409, PO stays Draft).
+    # The request-scoped session rolls back this branch's state changes
+    # on raise, so the PO does not transition and no approval row
+    # persists.
+    _po_blids = [
+        r[0] for r in db.execute(
+            select(PurchaseOrderLine.budget_line_id)
+            .where(PurchaseOrderLine.purchase_order_id == po.id)
+            .distinct()
+        ).all() if r[0] is not None
+    ]
+    blocking = evaluate_unbudgeted_floor_gate(
+        db, budget_line_ids=_po_blids,
+    )
+    if blocking:
+        raise UnbudgetedAckRequiredError(blocking)
     after = _snap_po(po)
     record_audit(
         db, action="Submit",

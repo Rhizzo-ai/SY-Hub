@@ -223,6 +223,8 @@ def add_line(
     try:
         svc.add_package_line(
             db, package_id,
+            cost_code_id=body.cost_code_id,
+            cost_code_subcategory_id=body.cost_code_subcategory_id,
             budget_line_id=body.budget_line_id,
             unbudgeted=body.unbudgeted,
             unbudgeted_cost_code_id=body.unbudgeted_cost_code_id,

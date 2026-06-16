@@ -472,7 +472,9 @@ def delete_package(
 
 def add_package_line(
     db: Session, package_id: uuid.UUID,
-    *, budget_line_id: Optional[uuid.UUID] = None,
+    *, cost_code_id: Optional[uuid.UUID] = None,
+    cost_code_subcategory_id: Optional[uuid.UUID] = None,
+    budget_line_id: Optional[uuid.UUID] = None,
     user: User, perms: UserPermissions,
     unbudgeted: bool = False,
     unbudgeted_cost_code_id: Optional[uuid.UUID] = None,
@@ -491,36 +493,103 @@ def add_package_line(
             f"Lines can be added only in draft status; current={p.status}"
         )
 
-    # B102 Gate 6 — unbudgeted branch. Mint the £0 auto-line on the
-    # package's budget FIRST, then fall through to the normal inherit
-    # path with `bline = auto`. The draft-only guard above protects
-    # this branch; a non-draft package can't acquire an unbudgeted
-    # auto-line because we never reach the create call. The whole
-    # mutation runs inside add_package_line's caller-owned transaction
-    # — if a later step raises, the request-scoped db rolls back and
-    # the auto-line vanishes with the package-line attempt (T11d).
-    if unbudgeted:
-        try:
-            bline = bl_svc.create_unbudgeted_line(
-                db, budget_id=p.budget_id, user=user, perms=perms,
-                cost_code_id=unbudgeted_cost_code_id,
-                cost_code_subcategory_id=unbudgeted_subcategory_id,
-                entity_id=None,  # helper defaults from project primary entity
-                reason=str(unbudgeted_reason),
-                source="package",
-            )
-        except (BudgetStateError, BudgetNotFoundError,
-                BudgetValidationError) as e:
-            # Same D-G5-1 pattern — surface as ValueError so the router
-            # maps to 422; preserve __cause__.
-            raise ValueError(str(e)) from e
-    else:
-        bline = db.get(BudgetLine, budget_line_id)
-        if bline is None or bline.budget_id != p.budget_id:
+    # ── B105/B106 — RESOLVE-OR-MINT (replaces the B102 unbudgeted branch) ──
+    # Determine the cost code (priority: cost_code_id > derived from
+    # supplied budget_line_id > deprecated unbudgeted_cost_code_id),
+    # resolve via find_line_for_code; mint if absent with neutral
+    # markers (force_flag=False, source="package"). Back-compat alias
+    # `budget_line_id`, if supplied alongside `cost_code_id`, must
+    # agree with the resolved line — mismatch → 422.
+    cc_raw = cost_code_id
+    sub_raw = cost_code_subcategory_id
+    if cc_raw is None and unbudgeted_cost_code_id is not None:
+        # Deprecated cluster fallback (B105/B106 §3.10).
+        import logging as _logging
+        _logging.getLogger("syhomes.deprecation").warning(
+            "Package line uses deprecated unbudgeted_* fields "
+            "(unbudgeted_cost_code_id / unbudgeted_subcategory_id "
+            "/ unbudgeted_reason); switch to cost_code_id + "
+            "cost_code_subcategory_id. Cluster will be removed next "
+            "release."
+        )
+        cc_raw = unbudgeted_cost_code_id
+        if sub_raw is None:
+            sub_raw = unbudgeted_subcategory_id
+
+    if cc_raw is None and budget_line_id is not None:
+        # Back-compat alias-only path: derive code from supplied line.
+        bl = db.get(BudgetLine, budget_line_id)
+        if bl is None or bl.budget_id != p.budget_id:
             raise ValueError(
                 f"budget_line_id {budget_line_id} does not belong to "
                 f"budget {p.budget_id}"
             )
+        cc_raw = bl.cost_code_id
+        sub_raw = bl.cost_code_subcategory_id
+
+    if cc_raw is None:
+        raise ValueError("cost_code_id is required")
+
+    try:
+        cc_id = uuid.UUID(str(cc_raw))
+    except (TypeError, ValueError) as e:
+        raise ValueError(f"cost_code_id is not a valid UUID: {e}") from e
+    sub_id: Optional[uuid.UUID] = None
+    if sub_raw is not None:
+        try:
+            sub_id = uuid.UUID(str(sub_raw))
+        except (TypeError, ValueError) as e:
+            raise ValueError(
+                f"cost_code_subcategory_id is not a valid UUID: {e}"
+            ) from e
+
+    existing = bl_svc.find_line_for_code(
+        db, budget_id=p.budget_id,
+        cost_code_id=cc_id, cost_code_subcategory_id=sub_id,
+    )
+    if existing is not None:
+        bline = existing
+    else:
+        raw_reason = unbudgeted_reason
+        reason = (str(raw_reason).strip() if raw_reason else "") \
+            or "Auto-created: order raised against an unbudgeted cost code"
+        try:
+            bline = bl_svc.create_unbudgeted_line(
+                db, budget_id=p.budget_id, user=user, perms=perms,
+                cost_code_id=cc_id, cost_code_subcategory_id=sub_id,
+                entity_id=None,
+                reason=reason, source="package",
+                force_flag=False,
+            )
+        except (BudgetStateError, BudgetNotFoundError,
+                BudgetValidationError) as e:
+            raise ValueError(str(e)) from e
+
+    # Alias agreement check (back-compat): mismatch → 422.
+    if budget_line_id is not None and budget_line_id != bline.id:
+        raise ValueError(
+            "budget_line_id does not match the resolved cost-code line"
+        )
+
+    # B105/B106 — guard the package_lines unique constraint
+    # `uq_package_lines_package_budget_line (package_id, budget_line_id)`.
+    # Under resolve-or-mint a caller can resolve to the SAME budget_line
+    # twice on the same package (e.g. two PO line payloads naming the
+    # same code); for packages the DB constraint legitimately rejects
+    # the duplicate. Catch the conflict cleanly and 409 it at the
+    # router rather than letting the IntegrityError bubble to 500.
+    _existing_pl = db.scalar(
+        select(PackageLine).where(
+            PackageLine.package_id == p.id,
+            PackageLine.budget_line_id == bline.id,
+        )
+    )
+    if _existing_pl is not None:
+        raise PackageStateError(
+            f"Package {p.reference} already has a line for this "
+            f"cost code (package_line_id={_existing_pl.id}); update "
+            f"that line via PATCH instead of adding a duplicate."
+        )
     # Inherit defaults from budget line + items (LD-P4).
     qty_inh, unit_inh, rate_inh, net_inh, notes_inh = (
         _inherit_from_budget_line(db, bline)

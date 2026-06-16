@@ -218,6 +218,41 @@ def create_line(
 
 
 # ----------------------------------------------------------------------
+# B105/B106 — Cost-code-first resolve helper.
+# Used by `create_po` / `add_package_line` to decide whether a payload
+# naming a cost code resolves to an existing budget line (allocate
+# into it) or needs to mint a new one (the unbudgeted path).
+# Matches `uq_budget_lines_budget_cost_subcat` exactly — at most one
+# row can satisfy the triple, so the platform never guesses.
+# ----------------------------------------------------------------------
+def find_line_for_code(
+    db: Session, *,
+    budget_id: uuid.UUID,
+    cost_code_id: uuid.UUID,
+    cost_code_subcategory_id: Optional[uuid.UUID] = None,
+) -> Optional[BudgetLine]:
+    """Return the single existing budget line for this
+    (budget_id, cost_code_id, cost_code_subcategory_id) triple, or None.
+
+    The triple matches the `uq_budget_lines_budget_cost_subcat` unique
+    constraint exactly, so at most one row can match. NULL
+    `cost_code_subcategory_id` is matched with `IS NULL` (not `= NULL`)
+    so a code with no subcategory resolves correctly.
+    """
+    stmt = select(BudgetLine).where(
+        BudgetLine.budget_id == budget_id,
+        BudgetLine.cost_code_id == cost_code_id,
+    )
+    if cost_code_subcategory_id is None:
+        stmt = stmt.where(BudgetLine.cost_code_subcategory_id.is_(None))
+    else:
+        stmt = stmt.where(
+            BudgetLine.cost_code_subcategory_id == cost_code_subcategory_id
+        )
+    return db.scalar(stmt)
+
+
+# ----------------------------------------------------------------------
 # B102 — Unbudgeted-Order Handling: helper used by PO + package flows
 # when a caller raises an order against a cost code with no existing
 # budget line. Single source of truth for the auto-line so both code
@@ -237,14 +272,32 @@ def create_unbudgeted_line(
     entity_id: Optional[uuid.UUID] = None,
     reason: str,
     source: str,
+    force_flag: bool = False,
 ) -> BudgetLine:
-    """Create a £0 budget line flagged as unbudgeted (B102).
+    """Create a £0 budget line flagged as unbudgeted (B102 + B105/B106).
 
     Used by the PO and package services when the caller raises an order
     against a cost code that has no existing budget line. The line is
-    forced Red + requires_attention=True and carries the raiser's reason
-    so a director can later acknowledge it via
-    `clear_unbudgeted` (Gate 4).
+    marked `is_unbudgeted=True` and carries the raiser's reason so a
+    director can later acknowledge it via `clear_unbudgeted` (Gate 4).
+
+    Under B105/B106 the mint-time forced-Red behaviour moved to a gate
+    that evaluates `committed_not_invoiced` at submit (see
+    `evaluate_unbudgeted_floor_gate`). To support that, mint is now
+    **neutral by default**:
+
+      - `force_flag=False` (the new default, used by the resolve-or-mint
+        pass): set `is_unbudgeted=True` + provenance fields, but DO NOT
+        force `variance_status="Red"` and DO NOT set
+        `requires_attention=True`. They keep whatever `create_line` →
+        `recompute_summary` produced (a £0 line lands Green / not
+        flagged). The Red/attention decision belongs to Gate A at
+        submit, once committed is real.
+      - `force_flag=True`: preserve the original B102 behaviour —
+        force `variance_status="Red"` + `requires_attention=True` at
+        mint. Kept for back-compat callers and to let the re-baselined
+        B102 tests pin the legacy assertion explicitly. No live caller
+        passes True after B105/B106.
 
     Trust boundary: the caller is responsible for permission gating
     (pos.create / packages.edit upstream). This helper does NOT itself
@@ -271,13 +324,14 @@ def create_unbudgeted_line(
         sneak through a blank.
       source: must be 'purchase_order' or 'package'. Anything else is
         a programmer error and raises BudgetStateError.
+      force_flag: legacy B102 mint-time forced-Red flag — see above.
 
     Returns:
       The persisted BudgetLine with `is_unbudgeted=True`,
-      `variance_status='Red'`, `requires_attention=True`,
       `unbudgeted_reason=reason.strip()`, `unbudgeted_source=source`,
-      `unbudgeted_created_by=user.id`, original_budget=0,
-      `unbudgeted_cleared_at=None`.
+      `unbudgeted_created_by=user.id`, `original_budget=0`,
+      `unbudgeted_cleared_at=None`. Variance markers depend on
+      `force_flag` (see above).
 
     Lock re-entrancy: `create_line` internally re-acquires
     SELECT ... FOR UPDATE on the budget row. PostgreSQL row locks are
@@ -342,20 +396,24 @@ def create_unbudgeted_line(
         notes=None,
     )
 
-    # Apply B102 markers AFTER create_line's internal recompute_summary
-    # has run. We deliberately do NOT call recompute_summary or
-    # db.refresh(line) again — that would re-derive variance_status from
-    # maths (which for a £0 line would land Green) and clobber the
-    # forced Red. The forced Red + requires_attention is the visual
-    # signal to the operator that this is an unbudgeted line awaiting
-    # director acknowledgement; its lifecycle is independent of the
-    # variance scan (D-E1).
+    # B102 / B105+B106 — Apply unbudgeted provenance markers AFTER
+    # create_line's internal recompute_summary has run. We deliberately
+    # do NOT call recompute_summary or db.refresh(line) again — that
+    # would re-derive variance_status from maths and clobber the
+    # forced Red when force_flag=True. The forced Red + requires_attention
+    # was the original B102 visual signal; under B105/B106 it is only
+    # applied when the caller explicitly requests it via force_flag
+    # (the resolve-or-mint pass passes force_flag=False so the line
+    # stays neutral until Gate A evaluates it at submit, see
+    # services.budget_lines.evaluate_unbudgeted_floor_gate). The
+    # unbudgeted lifecycle is independent of the variance scan (D-E1).
     line.is_unbudgeted = True
     line.unbudgeted_reason = reason.strip()
     line.unbudgeted_source = source
     line.unbudgeted_created_by = user.id
-    line.variance_status = "Red"
-    line.requires_attention = True
+    if force_flag:
+        line.variance_status = "Red"
+        line.requires_attention = True
     db.flush()
     return line
 
@@ -786,6 +844,128 @@ def delete_item(
         raise BudgetNotFoundError("Budget line item not found")
     db.delete(item)
     db.flush()
+
+
+# ----------------------------------------------------------------------
+# B105/B106 — Gate A: unbudgeted £-floor evaluation.
+# Called from PO submit/issue paths after `recompute_for_po` has
+# written `committed_not_invoiced`. Runs under the parent-budget
+# FOR UPDATE lock that `recompute_for_line` already holds in the same
+# transaction; no new lock is taken.
+# ----------------------------------------------------------------------
+def evaluate_unbudgeted_floor_gate(
+    db: Session, *,
+    budget_line_ids: list[uuid.UUID],
+) -> list[dict]:
+    """For each given line that is an un-cleared unbudgeted line, decide
+    whether its committed spend has crossed the sign-off floor.
+
+    Sets the operational marker on the line:
+      - committed_not_invoiced >= floor  → requires_attention=True,
+        variance_status='Red'   (ack-required; BLOCKS submit/issue)
+      - committed_not_invoiced <  floor  → requires_attention=False
+        (flagged non-blocking; ALLOWS submit/issue)
+
+    Budgeted lines (is_unbudgeted=False) and already-cleared unbudgeted
+    lines are skipped untouched.
+
+    Returns a list of blocking lines:
+      [{budget_line_id, cost_code, committed_not_invoiced, floor}, ...]
+    Empty list ⇒ nothing blocks.
+
+    MUST be called only AFTER `recompute_for_po` has written
+    `committed_not_invoiced`, and under the parent-budget FOR UPDATE
+    lock that `recompute_for_line` holds within the same transaction.
+
+    Audit (B105/B106): writes a `Update` audit row only when the
+    marker-state actually CHANGES (e.g. an un-cleared unbudgeted line
+    that was previously not flagged crosses the floor, or vice versa).
+    Steady-state evaluations on lines whose marker is already correct
+    do NOT write an audit row.
+    """
+    from decimal import Decimal as _Decimal
+    from app.models.cost_codes import CostCode as _CostCode
+    from app.services.system_config import get_unbudgeted_ack_floor
+    from app.services.audit import record_audit
+
+    if not budget_line_ids:
+        return []
+
+    floor = get_unbudgeted_ack_floor(db)
+    # Deduplicate while preserving order (helps deterministic audit).
+    seen: set[uuid.UUID] = set()
+    ordered: list[uuid.UUID] = []
+    for blid in budget_line_ids:
+        if blid in seen:
+            continue
+        seen.add(blid)
+        ordered.append(blid)
+
+    blocking: list[dict] = []
+    for blid in ordered:
+        line = db.get(BudgetLine, blid)
+        if line is None:
+            continue
+        # Gate A is for un-cleared unbudgeted lines only.
+        if not line.is_unbudgeted:
+            continue
+        if line.unbudgeted_cleared_at is not None:
+            continue
+
+        cni = _Decimal(str(line.committed_not_invoiced or 0))
+        crosses = cni >= floor
+
+        # Capture previous marker state for state-change audit gating.
+        prev_attention = bool(line.requires_attention)
+        prev_status = line.variance_status
+
+        if crosses:
+            new_attention = True
+            new_status = "Red"
+        else:
+            new_attention = False
+            new_status = prev_status  # leave non-blocking colour to scan/recompute
+
+        state_changed = (
+            new_attention != prev_attention
+            or (crosses and new_status != prev_status)
+        )
+
+        if crosses:
+            line.requires_attention = True
+            line.variance_status = "Red"
+        else:
+            line.requires_attention = False
+        db.flush()
+
+        if state_changed:
+            cc = db.get(_CostCode, line.cost_code_id)
+            record_audit(
+                db,
+                action="Update",
+                resource_type="budget_lines",
+                resource_id=line.id,
+                actor_user_id=None,
+                metadata={
+                    "event": "unbudgeted_floor_gate",
+                    "budget_line_id": str(line.id),
+                    "cost_code": (cc.code if cc is not None else "UNKNOWN"),
+                    "committed_not_invoiced": str(cni),
+                    "floor": str(floor),
+                    "blocking": bool(crosses),
+                },
+            )
+
+        if crosses:
+            cc = db.get(_CostCode, line.cost_code_id)
+            blocking.append({
+                "budget_line_id": str(line.id),
+                "cost_code": (cc.code if cc is not None else "UNKNOWN"),
+                "committed_not_invoiced": str(cni),
+                "floor": str(floor),
+            })
+
+    return blocking
 
 
 # ----------------------------------------------------------------------

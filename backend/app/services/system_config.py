@@ -57,6 +57,21 @@ BUDGET_SELF_APPROVAL_THRESHOLD_KEY = "budget.self_approval_threshold_gbp"
 DEFAULT_BUDGET_SELF_APPROVAL_THRESHOLD_GBP = Decimal("10000.00")
 
 
+# ---------------------------------------------------------------------------
+# B105/B106 — Unbudgeted Ack Floor (cost-code-first commercial line model)
+#
+# GBP floor at/above which an unbudgeted order line's committed spend
+# requires director sign-off before the PO can be issued. Below the floor
+# the line is flagged but non-blocking. Mirrors the self-approval threshold
+# pattern: key/value system_config row with in-code default fallback. The
+# row is seeded via seed_system_config (NOT an alembic data migration).
+# Comparison semantics at the call site are `>=` — at exactly the floor,
+# sign-off IS required.
+# ---------------------------------------------------------------------------
+UNBUDGETED_ACK_FLOOR_KEY = "budget.unbudgeted_ack_floor_gbp"
+DEFAULT_UNBUDGETED_ACK_FLOOR_GBP = Decimal("1000.00")
+
+
 def _parse(raw: str, value_type: str) -> Any:
     """Parse a stored string into its typed Python value.
 
@@ -322,3 +337,27 @@ def get_budget_self_approval_threshold(db: Optional[Session] = None) -> Decimal:
 def _query_count_for(key: str) -> int:
     """Internal — returns DB hit count for a key. Test diagnostic only."""
     return _db_query_count.get(key, 0)
+
+
+def get_unbudgeted_ack_floor(db: Optional[Session] = None) -> Decimal:
+    """Return the GBP floor at/above which an unbudgeted order line's
+    committed spend requires director sign-off before the PO can be
+    issued (B105/B106 Gate A).
+
+    Reads from `system_config` (key `budget.unbudgeted_ack_floor_gbp`,
+    value_type `Decimal`); falls back to the in-code default
+    `DEFAULT_UNBUDGETED_ACK_FLOOR_GBP` (£1,000.00) when the config row
+    is absent. This mirrors the self-approval threshold pattern.
+
+    Returns a `Decimal`. Comparison semantics at the call site are
+    `committed_not_invoiced >= floor` (`>=`, not `>`) — at exactly the
+    floor, sign-off IS required.
+    """
+    value = get_or_default(
+        UNBUDGETED_ACK_FLOOR_KEY,
+        DEFAULT_UNBUDGETED_ACK_FLOOR_GBP,
+        db=db,
+    )
+    if isinstance(value, Decimal):
+        return value
+    return Decimal(str(value))

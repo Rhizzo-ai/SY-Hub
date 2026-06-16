@@ -34,6 +34,9 @@ from app.auth.deps import Principal, get_current_principal
 from app.auth.permissions import UserPermissions, compute_effective_permissions
 from app.db import get_db
 from app.services import purchase_orders as svc
+from app.services.budget_errors import (
+    POLineIncompleteError, UnbudgetedAckRequiredError,
+)
 from app.services.po_authz import PoNotFound
 from app.services.po_numbering import NumberingError
 from app.services.po_transitions import TransitionError
@@ -48,20 +51,40 @@ router = APIRouter(tags=["purchase_orders"])
 
 class POLineCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    # B102 — Unbudgeted-Order Handling. `budget_line_id` is now optional
-    # at the schema level; XOR-enforced against `unbudgeted=true` by the
-    # after-validator. A normal line must still carry a budget_line_id;
-    # an unbudgeted line must carry cost code + reason and NO
-    # budget_line_id. Service layer (create_po) resolves the unbudgeted
-    # branch into a real auto-line BEFORE _validate_budget_lines runs.
+    # B105/B106 — Cost-code-first commercial line model.
+    #
+    # A line names a `cost_code_id` (+ optional `cost_code_subcategory_id`).
+    # The service (`create_po`) resolves whether that cost code already has
+    # a budget line on this budget (allocate into it) or not (mint one —
+    # the unbudgeted path). "Unbudgeted" is now a server outcome, NOT a
+    # caller assertion.
+    #
+    # `budget_line_id` remains accepted as a validated **back-compat
+    # alias**: if supplied without `cost_code_id`, the service derives the
+    # code from the line; if supplied alongside `cost_code_id`, the
+    # service 422s on mismatch. New frontend stops sending it.
+    #
+    # The legacy `unbudgeted*` cluster is kept as DEPRECATED
+    # accepted-but-ignored-for-routing fields so existing callers don't
+    # break with `extra="forbid"`. They are treated only as fallbacks for
+    # `cost_code_id` / `cost_code_subcategory_id` and emit a one-shot
+    # deprecation warning per request (services.purchase_orders).
+    #
+    # `description`, `quantity`, `unit_rate`, `vat_rate` are OPTIONAL at
+    # CREATE — drafts may be incomplete (so AI/manual fill happens
+    # progressively). A completeness gate enforces them at SUBMIT
+    # (see services.purchase_orders.submit completeness check, §3.8).
+    cost_code_id: Optional[uuid.UUID] = None
+    cost_code_subcategory_id: Optional[uuid.UUID] = None
     budget_line_id: Optional[uuid.UUID] = None
+    # DEPRECATED — accept-but-ignore (see services.purchase_orders).
     unbudgeted: bool = False
     unbudgeted_cost_code_id: Optional[uuid.UUID] = None
     unbudgeted_subcategory_id: Optional[uuid.UUID] = None
     unbudgeted_reason: Optional[str] = Field(None, max_length=2000)
-    description: str = Field(..., min_length=1, max_length=5000)
-    quantity: float = Field(..., gt=0)
-    unit_rate: float = Field(..., ge=0)
+    description: Optional[str] = Field(None, max_length=5000)
+    quantity: Optional[float] = Field(None, gt=0)
+    unit_rate: Optional[float] = Field(None, ge=0)
     vat_rate: float = Field(20.00, ge=0, le=100)
     cost_code: Optional[str] = Field(None, max_length=20)
     unit: Optional[str] = Field(None, max_length=20)
@@ -69,28 +92,31 @@ class POLineCreate(BaseModel):
     notes: Optional[str] = Field(None)
 
     @model_validator(mode="after")
-    def _xor_budget_line(self):
-        """B102 XOR — exactly one of {budget_line_id, unbudgeted=true}.
+    def _require_resolvable_cost_code(self):
+        """B105/B106 — a line MUST resolve to a cost code. Acceptable
+        inputs, in priority order (service applies them):
 
-        unbudgeted=true ⇒ cost_code_id + reason required, budget_line_id
-        forbidden. unbudgeted=false ⇒ budget_line_id required.
+          1. `cost_code_id` present.
+          2. `cost_code_id` absent + `budget_line_id` present (server
+             derives the code from the budget line — back-compat alias).
+          3. `cost_code_id` absent + deprecated
+             `unbudgeted_cost_code_id` present (treated as `cost_code_id`,
+             deprecation warning logged at service layer).
+          4. None of the above → 422.
+
+        If both `cost_code_id` and `budget_line_id` are present, the
+        service validates agreement under the lock and 422s on mismatch
+        — kept out of the schema so the "alias must agree" logic lives
+        in one place.
+
+        Field-level bounds (`> 0` for quantity if present, `>= 0` for
+        unit_rate if present, `0..100` for vat_rate) are enforced by
+        Field constraints above. Drafts may persist incomplete; submit
+        applies the completeness gate (§3.8).
         """
-        if self.unbudgeted:
-            if self.budget_line_id is not None:
-                raise ValueError(
-                    "a line cannot be both unbudgeted and carry a budget_line_id"
-                )
-            if self.unbudgeted_cost_code_id is None:
-                raise ValueError(
-                    "unbudgeted_cost_code_id is required for an unbudgeted line"
-                )
-            if not (self.unbudgeted_reason and self.unbudgeted_reason.strip()):
-                raise ValueError(
-                    "unbudgeted_reason is required for an unbudgeted line"
-                )
-        else:
-            if self.budget_line_id is None:
-                raise ValueError("budget_line_id is required unless unbudgeted=true")
+        cc = self.cost_code_id or self.unbudgeted_cost_code_id
+        if cc is None and self.budget_line_id is None:
+            raise ValueError("cost_code_id is required")
         return self
 
 
@@ -523,6 +549,26 @@ def _run_transition(
         po = fn(db, user=principal.user, perms=perms, **kwargs)
     except PoNotFound:
         raise HTTPException(status_code=404, detail="Purchase order not found")
+    except UnbudgetedAckRequiredError as e:
+        # B105/B106 Gate A — 409, body names the blocking line(s).
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "type": "unbudgeted_ack_required",
+                "title": "Director sign-off required on unbudgeted line(s)",
+                "lines": e.blocking,
+            },
+        )
+    except POLineIncompleteError as e:
+        # B105/B106 §3.8 — completeness at submit/issue, 422.
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "type": "po_line_incomplete",
+                "title": "PO line(s) incomplete",
+                "incomplete_line_numbers": e.line_numbers,
+            },
+        )
     except TransitionError as e:
         raise HTTPException(status_code=409, detail=str(e))
     except ValueError as e:
@@ -555,6 +601,26 @@ def submit_endpoint(
         )
     except PoNotFound:
         raise HTTPException(status_code=404, detail="Purchase order not found")
+    except UnbudgetedAckRequiredError as e:
+        # B105/B106 Gate A — 409, PO stays Draft.
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "type": "unbudgeted_ack_required",
+                "title": "Director sign-off required on unbudgeted line(s)",
+                "lines": e.blocking,
+            },
+        )
+    except POLineIncompleteError as e:
+        # B105/B106 §3.8 — incomplete PO line(s), 422; PO stays Draft.
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "type": "po_line_incomplete",
+                "title": "PO line(s) incomplete",
+                "incomplete_line_numbers": e.line_numbers,
+            },
+        )
     except TransitionError as e:
         raise HTTPException(status_code=409, detail=str(e))
     except ValueError as e:

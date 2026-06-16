@@ -41,14 +41,15 @@ def readonly_session():
 # =============================================================================
 
 class TestSeed:
-    def test_seed_creates_40_keys(self, admin_session):
+    def test_seed_creates_41_keys(self, admin_session):
         """38 keys from 1.7 seed + 1 from 2.3 C2 migration 0022
         (`appraisal_decisions_required_threshold`) + 1 from 2.4C
-        (`budget.self_approval_threshold_gbp`)."""
+        (`budget.self_approval_threshold_gbp`) + 1 from B105/B106
+        (`budget.unbudgeted_ack_floor_gbp`)."""
         r = admin_session.get(f"{BASE_URL}/api/v1/system-config")
         assert r.status_code == 200
         data = r.json()
-        assert data["count"] == 40
+        assert data["count"] == 41
 
     def test_seed_covers_expected_categories(self, admin_session):
         r = admin_session.get(f"{BASE_URL}/api/v1/system-config")
