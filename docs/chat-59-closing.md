@@ -152,6 +152,14 @@ All are stale baseline assertions (permission counts, alembic head expectations)
    (rate=0 is valid per §3.8); we accept this trade for not adding
    DDL. Full rationale in the docstring of `_compute_line_totals`.
 
+   **Backlog candidate (operator hand-adds to `docs/SY_Hub_Phase2_Backlog.md`):**
+   `B-DRAFT-FREEITEM` — distinguishing "intentional £0 free-item line"
+   from "never-completed draft submitted as-is" needs a non-nullable
+   boolean column on `purchase_order_lines` (e.g. `is_free_item` or
+   `is_draft_placeholder`) + a fresh alembic migration. Could fold
+   into the deprecation/hardening pass once the deprecated
+   `unbudgeted_*` cluster is removed.
+
 2. **Case 28b unreachable.** Same DB CHECK makes `qty<=0` impossible
    to persist via direct UPDATE. The gate's `quantity > 0` check is
    defensive defence-in-depth; we PIN the gate's intent by code

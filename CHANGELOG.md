@@ -72,6 +72,13 @@ deferred (§9). Three-pass audit and warm-DB pytest ×2 (1634 P / 19 stale F /
   NOT NULL with CHECK `quantity > 0` so `None` and `0` are physically
   impossible without DDL (forbidden by §0.2). Spirit preserved: incomplete
   drafts persist £0 net; submit completeness gate (§3.8) refuses them.
+  **Backlog candidate (operator hand-adds to `docs/SY_Hub_Phase2_Backlog.md`):**
+  `B-DRAFT-FREEITEM` — a never-completed draft submitted as-is becomes a
+  valid £0 free-item line because `qty=1, rate=0, description="...", cost_code="..."`
+  satisfies the completeness gate's `unit_rate >= 0` rule. Distinguishing
+  "intentional free item" from "incomplete draft" needs a non-nullable
+  boolean flag on `purchase_order_lines` + a fresh alembic migration
+  (could fold into the deprecation/hardening pass). Out of scope for B105/B106.
 - `app.services.purchase_orders.issue_po` — Gate A wired after
   `recompute_for_po`; raises `UnbudgetedAckRequiredError` (409) on cross.
 - `app.services.po_approvals.submit_po_with_budget_gate` — Gate A wired
