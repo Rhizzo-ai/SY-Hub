@@ -21,6 +21,13 @@
 import React, { useMemo, useState } from 'react';
 import { ChevronsUpDown } from 'lucide-react';
 
+// B107 FIX 1 — install the ResizeObserver loop guard (side-effect import).
+// Radix Popover + cmdk below drive the benign "ResizeObserver loop …"
+// notice that CRA escalates into a red overlay; this defers the observer
+// callback to the next frame so the loop never occurs. See the util for
+// the full rationale.
+import '@/lib/resizeObserverFix';
+
 import {
   Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList,
 } from '@/components/ui/command';

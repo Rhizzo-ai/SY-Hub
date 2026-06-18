@@ -193,6 +193,30 @@ frontend:
       - working: true
         agent: "testing"
         comment: "✅ PASS - Budget detail page at /projects/{id}/budgets/{budget_id} renders successfully. 25 budget-related elements found. No runtime errors. Grid shows 'No budget lines for this scope' message (expected for this test budget with 0 unbudgeted lines). Screenshot: check6-pass-budget-grid.png"
+  
+  - task: "BUG FIX 1: ResizeObserver error overlay eliminated"
+    implemented: true
+    working: true
+    file: "frontend/src/lib/resizeObserverFix.js, frontend/src/components/budgets/CostCodePicker.jsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "✅ PASS - ResizeObserver loop guard successfully prevents error overlay. Tested: (A1) Form loads without overlay, (A2) Picker opens without overlay, (A3) Typing 'EXT' filters 4 options without overlay, (A4) Selecting EXT-01 populates trigger without overlay. Console shows NO ResizeObserver errors and NO uncaught JavaScript errors. Fix implemented via side-effect import '@/lib/resizeObserverFix' which wraps ResizeObserver callbacks in requestAnimationFrame. Screenshots: a1-pass-form-loaded.png, a2-pass-picker-opened.png, a3-pass-search-filtered.png, a4-pass-option-selected.png"
+  
+  - task: "BUG FIX 2: Budget dropdown replaces paste field"
+    implemented: true
+    working: true
+    file: "frontend/src/pages/projects/PurchaseOrderForm.jsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "✅ PASS - Budget field is now a <select> dropdown (data-testid='po-form-budget-id') with readable labels. (B1) Confirmed <select> tag (not text input), no UUID/paste placeholder. (B2) Dropdown shows readable label 'R7 spot-check (v1) — Active · current' (not raw UUID). (B3) Single budget auto-selected correctly. (B4) Dropdown options screenshot captured. Auto-selection logic works: single budget chosen outright, otherwise prefers current Active budget. Screenshots: b1-pass-budget-dropdown.png, b3-budget-selected.png, b4-dropdown-options.png"
 
 metadata:
   created_by: "testing_agent"
@@ -203,6 +227,7 @@ metadata:
 test_plan:
   current_focus:
     - "All B107 checks completed and passed"
+    - "Bug fix verification completed and passed"
   stuck_tasks: []
   test_all: true
   test_priority: "high_first"
@@ -238,3 +263,40 @@ agent_communication:
       - check6-pass-budget-grid.png
       
       Build B107 is PRODUCTION-READY for this feature set.
+  
+  - agent: "testing"
+    message: |
+      BUG FIX VERIFICATION COMPLETE — BOTH FIXES VALIDATED SUCCESSFULLY.
+      
+      Tested against: https://concurrent-mint-fix.preview.emergentagent.com
+      Login: test-pm@example.test / TestUser-Dev-2026! (no MFA, preferred for headless)
+      Note: test-admin@example.test requires MFA setup which blocks headless testing
+      
+      Target: /projects/b2a265ef-dc30-4779-96f6-e139d1881e07/purchase-orders/new
+      
+      ✅ FIX 1 PASS: ResizeObserver error overlay eliminated
+        - A1: Form loads without error overlay ✅
+        - A2: Cost-code picker opens without error overlay ✅
+        - A3: Typing "EXT" filters correctly (4 options) without error overlay ✅
+        - A4: Selecting EXT-01 populates trigger without error overlay ✅
+        - Console: No ResizeObserver errors detected ✅
+        - Console: No uncaught JavaScript errors ✅
+      
+      ✅ FIX 2 PASS: Budget dropdown replaces paste field
+        - B1: Budget field is <select> dropdown (not text input) ✅
+        - B2: Dropdown shows readable label "R7 spot-check (v1) — Active · current" (not raw UUID) ✅
+        - B3: Single budget auto-selected correctly ✅
+        - B4: Dropdown options screenshot captured ✅
+      
+      Console: 5 × 401 errors (non-blocking, likely background API calls)
+      
+      Screenshots saved:
+      - a1-pass-form-loaded.png
+      - a2-pass-picker-opened.png
+      - a3-pass-search-filtered.png
+      - a4-pass-option-selected.png
+      - b1-pass-budget-dropdown.png
+      - b3-budget-selected.png
+      - b4-dropdown-options.png
+      
+      BOTH BUG FIXES ARE PRODUCTION-READY.

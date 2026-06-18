@@ -11,7 +11,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 
 import { useAuth } from '@/context/AuthContext';
 import { useCreatePO } from '@/hooks/purchaseOrders';
-import { useBudget } from '@/hooks/budgets';
+import { useBudget, useProjectBudgets } from '@/hooks/budgets';
 import { useUnbudgetedAckFloor } from '@/hooks/systemConfig';
 import { mapLinesToPayload } from '@/lib/poPayload';
 import { canCreatePO, canViewSensitivePO } from '@/lib/poCapability';
@@ -59,6 +59,25 @@ export default function PurchaseOrderForm() {
     : null;
   const { floor: unbudgetedFloor } = useUnbudgetedAckFloor();
 
+  // FIX 2 — budget picker (replaces the raw-UUID paste field). List the
+  // project's budgets and let the user select one; the payload still sends
+  // `budget_id: <uuid>` downstream.
+  const budgetsQuery = useProjectBudgets(projectId);
+  const budgets = budgetsQuery.data?.items ?? [];
+
+  // Auto-select: a single budget is chosen outright; otherwise prefer the
+  // current Active budget, then any current version. Never overrides an
+  // explicit user choice (guarded on `budgetId` already being set).
+  useEffect(() => {
+    if (budgetId) return;
+    const list = budgetsQuery.data?.items ?? [];
+    if (list.length === 0) return;
+    if (list.length === 1) { setBudgetId(list[0].id); return; }
+    const pick = list.find((b) => b.is_current && b.status === 'Active')
+      || list.find((b) => b.is_current);
+    if (pick) setBudgetId(pick.id);
+  }, [budgetsQuery.data, budgetId]);
+
   useEffect(() => {
     // Default issue_date to today.
     if (!issueDate) setIssueDate(new Date().toISOString().slice(0, 10));
@@ -80,7 +99,7 @@ export default function PurchaseOrderForm() {
     e.preventDefault();
     setError(null);
     if (!supplierId) { setError('Supplier required.'); return; }
-    if (!budgetId)   { setError('Budget id required (paste from budget URL for now).'); return; }
+    if (!budgetId)   { setError('Select a budget.'); return; }
     if (!lines.length) { setError('At least one line required.'); return; }
     // B107 §5.2 — cost-code-first: every line needs a cost code (the
     // resolve key). We send cost_code_id, never budget_line_id.
@@ -173,14 +192,30 @@ export default function PurchaseOrderForm() {
           />
         </label>
         <label className="block text-sm">
-          <span className="text-xs text-sy-grey-700">Budget id *</span>
-          <input
-            type="text"
-            className="w-full px-2 py-1 border rounded text-sm font-mono"
-            value={budgetId} onChange={(e) => setBudgetId(e.target.value)}
-            placeholder="Paste from /projects/{id}/budgets/{budget_id}"
+          <span className="text-xs text-sy-grey-700">Budget *</span>
+          <select
+            className="w-full px-2 py-1 border rounded text-sm bg-white"
+            value={budgetId}
+            onChange={(e) => setBudgetId(e.target.value)}
             data-testid="po-form-budget-id"
-          />
+          >
+            <option value="">
+              {budgetsQuery.isLoading ? 'Loading budgets…' : 'Select a budget'}
+            </option>
+            {budgets.map((b) => (
+              <option key={b.id} value={b.id}>
+                {`${b.version_label}`
+                  + `${b.version_number != null ? ` (v${b.version_number})` : ''}`
+                  + ` — ${b.status}`
+                  + `${b.is_current ? ' · current' : ''}`}
+              </option>
+            ))}
+          </select>
+          {!budgetsQuery.isLoading && budgets.length === 0 && (
+            <span className="mt-1 block text-xs text-amber-700">
+              This project has no budgets yet — create one before raising a PO.
+            </span>
+          )}
         </label>
       </div>
 
