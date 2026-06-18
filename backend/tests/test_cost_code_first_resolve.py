@@ -409,3 +409,95 @@ def test_10_null_subcat_resolves_via_is_null(engine, chain, db_session):
     )
     assert found is not None
     assert found.cost_code_subcategory_id is None
+
+
+# ----------------------------------------------------------------------
+# Case 4c — service-level race: a concurrent winner row exists but the
+#          resolve pass misses it (simulated by monkeypatching
+#          find_line_for_code → None), so the mint trips
+#          uq_budget_lines_budget_cost_subcat inside the SAVEPOINT and
+#          create_po surfaces BudgetLineRaceError with the right
+#          cost_code_id. Proves the §3.9 catch-and-translate wrapper.
+# ----------------------------------------------------------------------
+def test_04c_race_service_raises_BudgetLineRaceError(
+    engine, chain, db_session, monkeypatch
+):
+    import app.services.purchase_orders as po_mod
+    from app.services.budget_errors import BudgetLineRaceError
+
+    cc_id = _pick_extra_cc(engine, chain["budget_id"], 1)[0]
+
+    # 1) Seed the "winner" row in a SEPARATE committed transaction so it
+    #    physically exists on the (budget, cost_code, NULL subcat) triple.
+    _seed_budgeted_line(engine, chain, cc_id)
+
+    # 2) Force the resolve pass inside create_po to MISS that row, exactly
+    #    as a real cross-process race would (resolve ran before the other
+    #    process's insert committed). create_po then attempts a mint on a
+    #    triple that already exists → IntegrityError inside the SAVEPOINT
+    #    → translated to BudgetLineRaceError.
+    monkeypatch.setattr(
+        po_mod.bl_svc, "find_line_for_code",
+        lambda *a, **k: None,
+    )
+
+    payload = {
+        "supplier_id": _create_supplier_for_admin(_login(_ADMIN_EMAIL)),
+        "budget_id": chain["budget_id"],
+        "lines": [
+            {"cost_code_id": cc_id, "description": "case 4c race",
+             "quantity": 1, "unit_rate": "100", "vat_rate": 20},
+        ],
+    }
+    u, perms = _perms_for(db_session, chain["user_id"])
+
+    with pytest.raises(BudgetLineRaceError) as ei:
+        po_mod.create_po(
+            db_session, user=u, perms=perms,
+            project_id=uuid.UUID(chain["project_id"]),
+            payload=payload, request=None,
+        )
+    db_session.rollback()
+    assert ei.value.cost_code_id == cc_id
+    assert ei.value.cost_code_subcategory_id is None
+
+
+# ----------------------------------------------------------------------
+# Case 4b — HTTP companion. A true cross-process race cannot be staged
+#          in-process via the HTTP client (the monkeypatch in 4c patches
+#          the in-process service object, not the separate backend
+#          worker that serves the HTTP request). This test documents that
+#          limitation and asserts the 409 budget_line_race BODY SHAPE the
+#          router emits, by exercising the duplicate-triple path through
+#          the wire as closely as the harness allows: two PO requests for
+#          the same brand-new code where the first commits the mint and
+#          the second must NOT 500. The second resolves into the winner
+#          (201) under normal isolation; if the harness ever serialises
+#          such that the second races the mint, the router returns 409
+#          with the documented shape. Either outcome is acceptable; a 500
+#          is a failure.
+# ----------------------------------------------------------------------
+def test_04b_race_http(engine, chain):
+    _ensure_po_prefix(engine, chain["project_id"], chain["user_id"])
+    admin = _login(_ADMIN_EMAIL)
+    supplier_id = _create_supplier_for_admin(admin)
+    cc_id = _pick_extra_cc(engine, chain["budget_id"], 1)[0]
+
+    first = _post_po(admin, project_id=chain["project_id"],
+                     budget_id=chain["budget_id"], supplier_id=supplier_id,
+                     lines=[{"cost_code_id": cc_id, "description": "4b first",
+                             "quantity": 1, "unit_rate": "100", "vat_rate": 20}])
+    assert first.status_code == 201, first.text
+
+    second = _post_po(admin, project_id=chain["project_id"],
+                      budget_id=chain["budget_id"], supplier_id=supplier_id,
+                      lines=[{"cost_code_id": cc_id, "description": "4b second",
+                              "quantity": 1, "unit_rate": "100", "vat_rate": 20}])
+    # Must never 500. Normal isolation → 201 (resolves into winner).
+    # Genuine race → 409 with the documented body shape.
+    assert second.status_code in (201, 409), second.text
+    if second.status_code == 409:
+        body = second.json()
+        detail = body.get("detail", body)
+        assert detail.get("type") == "budget_line_race"
+        assert detail.get("cost_code_id") == cc_id
