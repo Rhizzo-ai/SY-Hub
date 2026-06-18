@@ -139,6 +139,17 @@ export async function deleteBudgetLine(lineId) {
 }
 
 // ──────────────────────────────────────────────────────────────────────
+// Endpoint 9d (B102 / B107 §4) — clear-unbudgeted (director sign-off).
+// Body-less POST (the endpoint takes NO note). Idempotent (200 both times).
+// Returns the updated, serialised line with all B102 marker fields.
+// Permission: budgets.clear_unbudgeted (enforced server-side).
+// ──────────────────────────────────────────────────────────────────────
+export async function clearUnbudgeted(lineId) {
+  const { data } = await api.post(`/v1/budget-lines/${lineId}/clear-unbudgeted`);
+  return data;  // serialised line; callers also invalidate the budget query
+}
+
+// ──────────────────────────────────────────────────────────────────────
 // Endpoint 9b (2.4A.1) — bulk reorder lines
 // Flat path: POST /budget-lines/reorder. Returns refreshed budget detail.
 // ──────────────────────────────────────────────────────────────────────

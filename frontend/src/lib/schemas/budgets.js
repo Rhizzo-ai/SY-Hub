@@ -115,6 +115,14 @@ export const BudgetLineSchema = z.object({
   // sees a concrete boolean instead of `undefined` (which inverted to
   // truthy and blocked every drawdown attempt).
   is_contingency: z.boolean().default(false),
+  // B102 / B107 — Unbudgeted-Order markers. The backend (budgets.py
+  // _serialise_line) always emits these on in-scope lines; declare them
+  // here so zod's default key-strip doesn't drop them before the grid's
+  // UnbudgetedPill rule (§3) can read them. `committed_not_invoiced`
+  // (already declared below) is the third input to the floor rule.
+  is_unbudgeted: z.boolean().optional().default(false),
+  unbudgeted_cleared_at: z.string().nullable().optional(),
+  unbudgeted_awaiting_ack: z.boolean().optional(),
   // Timestamps (added in backend 2.4A.2 for §R7 refetch-on-save banner)
   created_at: z.string().nullable().optional(),
   updated_at: z.string().nullable().optional(),

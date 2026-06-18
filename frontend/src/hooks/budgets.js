@@ -256,3 +256,21 @@ export function useRefreshAttention() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['budgets'] }),
   });
 }
+
+// B107 §4 — director clears an unbudgeted line. Body-less POST. On success
+// we invalidate the budget detail (so the grid refetches and the pill
+// disappears) plus the coarse ['budgets'] namespace, mirroring the
+// commitment-verb precedent. The endpoint returns the updated line, but we
+// invalidate rather than hand-patch for grid consistency (§1.3).
+export function useClearUnbudgeted(budgetId) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (lineId) => budgetsApi.clearUnbudgeted(lineId),
+    onSuccess: () => {
+      if (budgetId) {
+        qc.invalidateQueries({ queryKey: budgetsKeys.detail(budgetId) });
+      }
+      qc.invalidateQueries({ queryKey: ['budgets'] });
+    },
+  });
+}

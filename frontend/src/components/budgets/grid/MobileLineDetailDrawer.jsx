@@ -26,8 +26,12 @@ import {
 import { formatMoney, formatPercent } from '@/lib/format';
 import { useAuth } from '@/context/AuthContext';
 import { useCostCodes, buildCostCodeMap } from '@/hooks/costCodes';
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { VarianceBadge } from '../VarianceBadge';
+import { UnbudgetedPill, isBlockingUnbudgeted } from '../UnbudgetedPill';
+import { useUnbudgetedAckFloor } from '@/hooks/systemConfig';
+import { canClearUnbudgeted } from '@/lib/budgetCapability';
+import { ClearUnbudgetedDialog } from './ClearUnbudgetedDialog';
 import { NotesCell } from './NotesCell';
 import { BudgetLineExpandedRow }
   from './PerLineTransactionDrilldown/BudgetLineExpandedRow';
@@ -55,6 +59,9 @@ export function MobileLineDetailDrawer({
   // applies (read-only users can't edit on either platform).
   const canEditNotes = !!me?.permissions?.includes('budgets.edit');
   const canViewSensitive = !!me?.permissions?.includes('budgets.view_sensitive');
+  const canClear = canClearUnbudgeted(me);
+  const { floor: unbudgetedFloor } = useUnbudgetedAckFloor();
+  const [clearOpen, setClearOpen] = useState(false);
 
   const { data: costCodes = [] } = useCostCodes(projectId);
   const costCodeMap = useMemo(() => buildCostCodeMap(costCodes), [costCodes]);
@@ -150,6 +157,25 @@ export function MobileLineDetailDrawer({
                     testid="bg2-mobile-field-variance-pct"
                   />
                 )}
+                {line.is_unbudgeted && !line.unbudgeted_cleared_at && (
+                  <div
+                    className="flex items-center justify-between border-b border-slate-100 py-2 text-sm"
+                    data-testid="bg2-mobile-field-unbudgeted"
+                  >
+                    <span className="text-slate-500">Unbudgeted</span>
+                    <UnbudgetedPill row={line} floor={unbudgetedFloor} />
+                  </div>
+                )}
+                {isBlockingUnbudgeted(line, unbudgetedFloor) && canClear && (
+                  <button
+                    type="button"
+                    onClick={() => setClearOpen(true)}
+                    className="mt-3 w-full rounded border border-rose-300 px-3 py-2 text-sm font-medium text-rose-700 hover:bg-rose-50"
+                    data-testid={`clear-unbudgeted-btn-${line.id}`}
+                  >
+                    Clear (sign off)
+                  </button>
+                )}
               </div>
             </section>
 
@@ -177,6 +203,14 @@ export function MobileLineDetailDrawer({
                  * the 4-type breakdown. */
               />
             </section>
+
+            <ClearUnbudgetedDialog
+              open={clearOpen}
+              onOpenChange={setClearOpen}
+              line={line}
+              budgetId={budget.id}
+              codeLabel={code}
+            />
           </div>
         ) : (
           <div className="px-4 py-6 text-sm text-slate-500">

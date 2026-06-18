@@ -59,6 +59,8 @@ import POReceiptDialog from '@/components/po/POReceiptDialog';
 import POVoidDialog    from '@/components/po/POVoidDialog';
 import POEditDialog    from '@/components/po/POEditDialog';
 import PODeleteDialog  from '@/components/po/PODeleteDialog';
+import POSubmitErrorPanel from '@/components/po/POSubmitErrorPanel';
+import { canClearUnbudgeted } from '@/lib/budgetCapability';
 
 // Send-back is gated on `pos.edit OR pos.approve` (matches the backend
 // guard on POST /purchase-orders/{id}/send-back, R7.0b). Inlined here
@@ -97,14 +99,28 @@ export default function POActionButtons({ po }) {
   const [editOpen, setEditOpen]       = useState(false);
   const [deleteOpen, setDeleteOpen]   = useState(false);
 
+  // B107 §6 — structured submit-error surface. Set when a transition
+  // returns one of the three B105/B106 wire errors (object detail with a
+  // `type`). Holds the detail + a `retry` closure that re-fires the exact
+  // same transition (used by the budget_line_race one-click retry).
+  const [actionError, setActionError] = useState(null);
+
   const callTxn = async (m, body = {}, successMsg = 'Done') => {
+    setActionError(null);
     try {
       await m.mutateAsync(body);
       toast.success(successMsg);
     } catch (err) {
+      const detail = err?.response?.data?.detail;
+      // B107 §6 — branch on the structured detail.type BEFORE the string
+      // fallback. Never JSON.stringify an object at the user (§6.4).
+      if (detail && typeof detail === 'object' && detail.type) {
+        setActionError({ detail, retry: () => callTxn(m, body, successMsg) });
+        return;
+      }
       toast.error(
-        err?.response?.data?.detail?.message
-        ?? err?.response?.data?.detail
+        detail?.message
+        ?? (typeof detail === 'string' ? detail : null)
         ?? err?.message
         ?? 'Action failed',
       );
@@ -136,8 +152,26 @@ export default function POActionButtons({ po }) {
   const sendBackNotesTrimmed = sendBackNotes.trim();
   const rejectReasonTrimmed = rejectReason.trim();
 
+  // B107 §6.1 — direct a director to the budget grid to clear the
+  // blocking line(s). Best-effort deep link; plain budget link if the
+  // PO has no budget_id on hand.
+  const canClear = canClearUnbudgeted(me);
+  const budgetHref = po?.project_id
+    ? (po?.budget_id
+      ? `/projects/${po.project_id}/budgets/${po.budget_id}`
+      : `/projects/${po.project_id}/budgets`)
+    : null;
+
   return (
     <>
+      <POSubmitErrorPanel
+        error={actionError}
+        onRetry={() => actionError?.retry?.()}
+        onDismiss={() => setActionError(null)}
+        canClear={canClear}
+        budgetHref={budgetHref}
+      />
+
       <div className="flex flex-wrap gap-2" data-testid="po-actions">
 
         {/* ── Edit (header-only) — draft / approved → edit-btn ─── */}

@@ -124,3 +124,39 @@ describe('CostCodePicker — field-name regression', () => {
       .toBeInTheDocument();
   });
 });
+
+describe('CostCodePicker — type-to-search combobox (B107 §7.2)', () => {
+  test('filters on NAME (typing "land" surfaces "ACQ-01 — Land cost")', () => {
+    render(
+      <CostCodePicker projectId="proj-1" value="" onChange={() => {}} />,
+    );
+    fireEvent.click(screen.getByTestId('cost-code-picker-trigger'));
+    fireEvent.change(screen.getByTestId('cost-code-picker-search'), {
+      target: { value: 'land' },
+    });
+    expect(screen.getByTestId('cost-code-option-cc-target-2')).toBeInTheDocument();
+    expect(screen.queryByTestId('cost-code-option-cc-target-1')).toBeNull();
+  });
+
+  test('filters on CODE (typing "SUB" surfaces only SUB-01)', () => {
+    render(
+      <CostCodePicker projectId="proj-1" value="" onChange={() => {}} />,
+    );
+    fireEvent.click(screen.getByTestId('cost-code-picker-trigger'));
+    fireEvent.change(screen.getByTestId('cost-code-picker-search'), {
+      target: { value: 'SUB' },
+    });
+    expect(screen.getByTestId('cost-code-option-cc-target-1')).toBeInTheDocument();
+    expect(screen.queryByTestId('cost-code-option-cc-target-2')).toBeNull();
+  });
+
+  test('selecting an option emits the cost_code_id (NOT the mapping id)', () => {
+    const onChange = jest.fn();
+    render(
+      <CostCodePicker projectId="proj-1" value="" onChange={onChange} />,
+    );
+    fireEvent.click(screen.getByTestId('cost-code-picker-trigger'));
+    fireEvent.click(screen.getByTestId('cost-code-option-cc-target-1'));
+    expect(onChange).toHaveBeenCalledWith('cc-target-1');
+  });
+});

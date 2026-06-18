@@ -11,16 +11,22 @@ import { useNavigate, useParams } from 'react-router-dom';
 
 import { useAuth } from '@/context/AuthContext';
 import { useCreatePO } from '@/hooks/purchaseOrders';
+import { useBudget } from '@/hooks/budgets';
+import { useUnbudgetedAckFloor } from '@/hooks/systemConfig';
+import { mapLinesToPayload } from '@/lib/poPayload';
 import { canCreatePO, canViewSensitivePO } from '@/lib/poCapability';
 import SupplierSelect from '@/components/po/SupplierSelect';
 import POLineEditor from '@/components/po/POLineEditor';
 
 function blankLine() {
   return {
-    budget_line_id: '', description: '',
+    cost_code_id: '', cost_code_subcategory_id: '',
+    description: '',
     quantity: '', unit_rate: '', vat_rate: '20',
   };
 }
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export default function PurchaseOrderForm() {
   const { id: projectId } = useParams();
@@ -40,6 +46,18 @@ export default function PurchaseOrderForm() {
   const [lines, setLines] = useState([blankLine()]);
   const [error, setError] = useState(null);
   const create = useCreatePO(projectId);
+
+  // B107 §7.4 — fetch the budget's existing lines so the line editor can
+  // flag cost codes that will MINT a new (unbudgeted) line. Degrades
+  // gracefully: if the budget id isn't a valid UUID yet, or the fetch is
+  // forbidden/404, `existingCostCodeIds` stays null and the editor shows
+  // the generic mint hint instead of the precise per-line one.
+  const budgetLooksValid = UUID_RE.test((budgetId || '').trim());
+  const budgetQuery = useBudget((budgetId || '').trim(), { enabled: budgetLooksValid });
+  const existingCostCodeIds = budgetQuery.data?.lines
+    ? new Set(budgetQuery.data.lines.map((l) => l.cost_code_id))
+    : null;
+  const { floor: unbudgetedFloor } = useUnbudgetedAckFloor();
 
   useEffect(() => {
     // Default issue_date to today.
@@ -64,17 +82,18 @@ export default function PurchaseOrderForm() {
     if (!supplierId) { setError('Supplier required.'); return; }
     if (!budgetId)   { setError('Budget id required (paste from budget URL for now).'); return; }
     if (!lines.length) { setError('At least one line required.'); return; }
+    // B107 §5.2 — cost-code-first: every line needs a cost code (the
+    // resolve key). We send cost_code_id, never budget_line_id.
+    const missingCode = lines.findIndex((l) => !l.cost_code_id);
+    if (missingCode !== -1) {
+      setError(`Line ${missingCode + 1}: choose a cost code.`);
+      return;
+    }
     const payload = {
       supplier_id: supplierId,
       budget_id: budgetId,
       issue_date: issueDate || null,
-      lines: lines.map((l) => ({
-        budget_line_id: l.budget_line_id,
-        description: l.description || null,
-        quantity: Number(l.quantity),
-        unit_rate: Number(l.unit_rate),
-        vat_rate: Number(l.vat_rate ?? 20),
-      })),
+      lines: mapLinesToPayload(lines),
     };
     // Pack 3.5 §7.1 — attach the package_id only when the user
     // explicitly chose the "From a package" path AND provided one.
@@ -179,6 +198,9 @@ export default function PurchaseOrderForm() {
         <h2 className="text-sm font-medium mb-1">Lines</h2>
         <POLineEditor
           lines={lines} onChange={setLines}
+          projectId={projectId}
+          existingCostCodeIds={existingCostCodeIds}
+          floor={unbudgetedFloor}
           testid="po-form-lines"
         />
       </section>

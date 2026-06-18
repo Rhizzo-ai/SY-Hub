@@ -38,11 +38,13 @@ import {
 import { listBudgetPOs } from '@/lib/api/purchaseOrders';
 import { poKeys } from '@/hooks/purchaseOrders';
 import { useCostCodes, buildCostCodeMap } from '@/hooks/costCodes';
-import { isBudgetEditable, canEditLines } from '@/lib/budgetCapability';
+import { isBudgetEditable, canEditLines, canClearUnbudgeted } from '@/lib/budgetCapability';
+import { useUnbudgetedAckFloor } from '@/hooks/systemConfig';
 import { buildReorderedIds } from '@/lib/buildReorderedIds';
 import { groupLinesByCategory } from '@/lib/budgetCategoryGroup';
 
 import { LineDrawer } from '../LineDrawer';
+import { ClearUnbudgetedDialog } from './ClearUnbudgetedDialog';
 import { BudgetGridToolbar } from './BudgetGridToolbar';
 import { BudgetGridHeaderTiles } from './BudgetGridHeaderTiles';
 import { BudgetLineExpandedRow }
@@ -174,6 +176,11 @@ export function BudgetGridV2Desktop({ budget, projectId }) {
 
   const { data: costCodes = [] } = useCostCodes(projectId);
   const costCodeMap = useMemo(() => buildCostCodeMap(costCodes), [costCodes]);
+
+  // B107 §2/§4 — unbudgeted sign-off floor + gated clear action.
+  const { floor: unbudgetedFloor } = useUnbudgetedAckFloor();
+  const canClear = canClearUnbudgeted(me);
+  const [clearLine, setClearLine] = useState(null);
 
   // ----- Drawer (R3.1 — kept from v1, NOT removed) -----
   const [openLineId, setOpenLineId] = useState(null);
@@ -385,9 +392,12 @@ export function BudgetGridV2Desktop({ budget, projectId }) {
       costCodeMap, canEdit, canViewSensitive,
       budgetId: budget.id,
       onOpenDrawer: openDrawer,
+      floor: unbudgetedFloor,
+      canClearUnbudgeted: canClear,
+      onClearUnbudgeted: setClearLine,
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [costCodeMap, canEdit, canViewSensitive, budget.id],
+    [costCodeMap, canEdit, canViewSensitive, budget.id, unbudgetedFloor, canClear],
   );
 
   // ----- TanStack Table instance -----
@@ -685,6 +695,16 @@ export function BudgetGridV2Desktop({ budget, projectId }) {
         lineId={openLineId}
         focus={drawerFocus}
         onClose={() => { setOpenLineId(null); setDrawerFocus(null); }}
+      />
+
+      <ClearUnbudgetedDialog
+        open={!!clearLine}
+        onOpenChange={(o) => { if (!o) setClearLine(null); }}
+        line={clearLine}
+        budgetId={budget.id}
+        codeLabel={clearLine
+          ? (costCodeMap.get(clearLine.cost_code_id)?.code ?? '—')
+          : null}
       />
 
       <SaveViewDialog

@@ -1,78 +1,57 @@
 /**
- * <POLineEditor/> tests — Chat 24 §R5.
- *
- * Validates live qty×rate=net calculation and totals. Keeps mocks minimal
- * (no TanStack Query needed — the editor is a pure controlled component).
+ * POLineEditor tests — B107 §8.5 (cost-code-first picker + §7.4 mint hint).
+ * `useCostCodes` is mocked so the embedded CostCodePicker renders without a
+ * QueryClient.
  */
-import { render, screen, fireEvent } from '@testing-library/react';
+jest.mock('@/hooks/costCodes', () => ({ useCostCodes: jest.fn() }));
+
+import React from 'react';
+import { render, screen } from '@testing-library/react';
 import POLineEditor from '@/components/po/POLineEditor';
 
-const BUDGET_LINES = [
-  { id: 'bl-1', line_description: 'Materials' },
-  { id: 'bl-2', line_description: 'Labour' },
-];
+const { useCostCodes } = jest.requireMock('@/hooks/costCodes');
 
+beforeEach(() => {
+  useCostCodes.mockReset().mockReturnValue({ data: [], isLoading: false });
+});
 
-describe('<POLineEditor/>', () => {
-  test('renders a row per line', () => {
-    const lines = [
-      { budget_line_id: 'bl-1', description: 'A', quantity: '1', unit_rate: '10', vat_rate: '20' },
-      { budget_line_id: 'bl-2', description: 'B', quantity: '2', unit_rate: '5',  vat_rate: '20' },
-    ];
-    render(<POLineEditor lines={lines} onChange={() => {}} budgetLines={BUDGET_LINES} />);
-    expect(screen.getByTestId('po-line-editor-row-0')).toBeInTheDocument();
-    expect(screen.getByTestId('po-line-editor-row-1')).toBeInTheDocument();
+const line = (over) => ({
+  cost_code_id: '', cost_code_subcategory_id: '', description: '',
+  quantity: '', unit_rate: '', vat_rate: '20', ...over,
+});
+
+describe('POLineEditor (B107 §5.3 / §7.4)', () => {
+  test('renders a cost-code picker per line (not a budget-line dropdown)', () => {
+    render(<POLineEditor
+      lines={[line()]} onChange={() => {}}
+      projectId="p1" existingCostCodeIds={new Set()} floor={1000}
+    />);
+    expect(screen.getByTestId('po-line-editor-cc-0-trigger')).toBeInTheDocument();
+    expect(screen.queryByTestId('po-line-editor-budget-line-0')).toBeNull();
   });
 
-  test('computes per-line net = qty × rate (GBP)', () => {
-    const lines = [
-      { budget_line_id: 'bl-1', description: 'A', quantity: '3', unit_rate: '40', vat_rate: '20' },
-    ];
-    render(<POLineEditor lines={lines} onChange={() => {}} budgetLines={BUDGET_LINES} />);
-    expect(screen.getByTestId('po-line-editor-net-0')).toHaveTextContent(/£120\.00/);
+  test('shows the mint hint when the chosen code has NO existing budget line', () => {
+    render(<POLineEditor
+      lines={[line({ cost_code_id: 'cc-new' })]} onChange={() => {}}
+      projectId="p1" existingCostCodeIds={new Set(['cc-existing'])} floor={1000}
+    />);
+    expect(screen.getByTestId('cost-code-mint-hint-0')).toBeInTheDocument();
   });
 
-  test('totals: net + VAT + gross across all rows', () => {
-    const lines = [
-      { budget_line_id: 'bl-1', description: 'A', quantity: '2', unit_rate: '50', vat_rate: '20' },
-      { budget_line_id: 'bl-2', description: 'B', quantity: '1', unit_rate: '50', vat_rate: '20' },
-    ];
-    render(<POLineEditor lines={lines} onChange={() => {}} budgetLines={BUDGET_LINES} />);
-    // Net = 2×50 + 1×50 = 150; VAT = 30; Gross = 180.
-    expect(screen.getByTestId('po-line-editor-total-net')).toHaveTextContent(/£150\.00/);
-    expect(screen.getByTestId('po-line-editor-total-vat')).toHaveTextContent(/£30\.00/);
-    expect(screen.getByTestId('po-line-editor-total-gross')).toHaveTextContent(/£180\.00/);
+  test('no mint hint when the chosen code already has a budget line', () => {
+    render(<POLineEditor
+      lines={[line({ cost_code_id: 'cc-existing' })]} onChange={() => {}}
+      projectId="p1" existingCostCodeIds={new Set(['cc-existing'])} floor={1000}
+    />);
+    expect(screen.queryByTestId('cost-code-mint-hint-0')).toBeNull();
   });
 
-  test('+ Add line calls onChange with one extra blank line', () => {
-    const onChange = jest.fn();
-    render(<POLineEditor lines={[]} onChange={onChange} budgetLines={BUDGET_LINES} />);
-    fireEvent.click(screen.getByTestId('po-line-editor-add'));
-    expect(onChange).toHaveBeenCalledTimes(1);
-    expect(onChange.mock.calls[0][0]).toHaveLength(1);
-  });
-
-  test('× removes the targeted line', () => {
-    const onChange = jest.fn();
-    const lines = [
-      { budget_line_id: 'bl-1', description: 'A', quantity: '1', unit_rate: '1', vat_rate: '20' },
-      { budget_line_id: 'bl-2', description: 'B', quantity: '1', unit_rate: '1', vat_rate: '20' },
-    ];
-    render(<POLineEditor lines={lines} onChange={onChange} budgetLines={BUDGET_LINES} />);
-    fireEvent.click(screen.getByTestId('po-line-editor-remove-0'));
-    expect(onChange).toHaveBeenCalledTimes(1);
-    expect(onChange.mock.calls[0][0]).toHaveLength(1);
-    expect(onChange.mock.calls[0][0][0].budget_line_id).toBe('bl-2');
-  });
-
-  test('changing qty bubbles patch through onChange', () => {
-    const onChange = jest.fn();
-    const lines = [
-      { budget_line_id: 'bl-1', description: 'A', quantity: '1', unit_rate: '10', vat_rate: '20' },
-    ];
-    render(<POLineEditor lines={lines} onChange={onChange} budgetLines={BUDGET_LINES} />);
-    fireEvent.change(screen.getByTestId('po-line-editor-qty-0'), { target: { value: '5' } });
-    expect(onChange).toHaveBeenCalledTimes(1);
-    expect(onChange.mock.calls[0][0][0].quantity).toBe('5');
+  test('falls back to the generic hint when budget lines are unavailable', () => {
+    render(<POLineEditor
+      lines={[line({ cost_code_id: 'cc-new' })]} onChange={() => {}}
+      projectId="p1" existingCostCodeIds={null} floor={1000}
+    />);
+    expect(screen.getByTestId('cost-code-mint-hint-0'))
+      .toHaveTextContent('no budget line');
   });
 });

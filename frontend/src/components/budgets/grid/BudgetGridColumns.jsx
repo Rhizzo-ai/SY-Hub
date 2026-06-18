@@ -16,6 +16,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { MoneyCell } from './MoneyCell';
 import { VarianceCell } from './VarianceCell';
 import { NotesCell } from './NotesCell';
+import { UnbudgetedPill, isBlockingUnbudgeted } from '../UnbudgetedPill';
 
 const ch = createColumnHelper();
 
@@ -25,6 +26,10 @@ export function makeColumns({
   canViewSensitive,
   budgetId,
   onOpenDrawer,
+  // B107 §3/§4 — unbudgeted pill + gated clear action.
+  floor,
+  canClearUnbudgeted = false,
+  onClearUnbudgeted,
 }) {
   const cols = [
     ch.display({
@@ -114,7 +119,29 @@ export function makeColumns({
           );
         }
         if (row.original.isItem) return null;
-        return <span className="text-sm text-slate-700">{getValue() ?? '—'}</span>;
+        const line = row.original;
+        const showUnbudgeted = line.is_unbudgeted && !line.unbudgeted_cleared_at;
+        const blocking = isBlockingUnbudgeted(line, floor);
+        return (
+          <div className="flex flex-col gap-1">
+            <span className="text-sm text-slate-700">{getValue() ?? '—'}</span>
+            {showUnbudgeted && (
+              <div className="flex flex-wrap items-center gap-2">
+                <UnbudgetedPill row={line} floor={floor} />
+                {blocking && canClearUnbudgeted && (
+                  <button
+                    type="button"
+                    onClick={() => onClearUnbudgeted?.(line)}
+                    className="rounded border border-rose-300 px-2 py-0.5 text-xs font-medium text-rose-700 hover:bg-rose-50"
+                    data-testid={`clear-unbudgeted-btn-${line.id}`}
+                  >
+                    Clear (sign off)
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        );
       },
       size: 260,
     }),

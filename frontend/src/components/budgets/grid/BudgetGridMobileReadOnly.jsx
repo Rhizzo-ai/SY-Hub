@@ -30,12 +30,15 @@ import { useCostCodes, buildCostCodeMap } from '@/hooks/costCodes';
 import { useAuth } from '@/context/AuthContext';
 import { formatMoney } from '@/lib/format';
 import { VarianceBadge } from '../VarianceBadge';
+import { UnbudgetedPill } from '../UnbudgetedPill';
+import { useUnbudgetedAckFloor } from '@/hooks/systemConfig';
 import { BudgetGridHeaderTiles } from './BudgetGridHeaderTiles';
 import { MobileLineDetailDrawer } from './MobileLineDetailDrawer';
 
 export function BudgetGridMobileReadOnly({ budget, projectId }) {
   const { me } = useAuth();
   const canViewSensitive = !!me?.permissions?.includes('budgets.view_sensitive');
+  const { floor: unbudgetedFloor } = useUnbudgetedAckFloor();
 
   const { data: costCodes = [] } = useCostCodes(projectId);
   const costCodeMap = useMemo(() => buildCostCodeMap(costCodes), [costCodes]);
@@ -118,6 +121,7 @@ export function BudgetGridMobileReadOnly({ budget, projectId }) {
                       value={line.variance_value}
                       pct={line.variance_pct}
                     />
+                    <UnbudgetedPill row={line} floor={unbudgetedFloor} />
                   </div>
                 </button>
               </li>

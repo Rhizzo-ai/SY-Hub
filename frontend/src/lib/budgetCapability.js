@@ -62,6 +62,12 @@ export function canRefreshAttention(me) {
   return has(me, 'budgets.admin');
 }
 
+// B107 §4 — director sign-off on an unbudgeted line. Backend gate:
+// `budgets.clear_unbudgeted` (director + super_admin; finance default-OFF).
+export function canClearUnbudgeted(me) {
+  return has(me, 'budgets.clear_unbudgeted');
+}
+
 export function canEditLines(me, status) {
   // Line edits allowed on Draft + Active. Locked/Closed/Superseded are read-only.
   return (status === 'Draft' || status === 'Active') && has(me, 'budgets.edit');

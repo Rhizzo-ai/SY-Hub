@@ -55,6 +55,7 @@ jest.mock('@/hooks/budgets', () => ({
   useCreateLineItem: () => ({ mutate: jest.fn(), isPending: false }),
   usePatchLineItem: () => ({ mutate: jest.fn(), isPending: false }),
   useDeleteLineItem: () => ({ mutate: jest.fn(), isPending: false }),
+  useClearUnbudgeted: () => ({ mutateAsync: jest.fn(), isPending: false }),
 }));
 
 // Configurable cost-codes mock: tests set the rows + then import the

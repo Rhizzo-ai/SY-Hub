@@ -11,9 +11,11 @@
  */
 import React from 'react';
 import { computeNet, computeVat, fmtGBP } from '@/lib/poFormat';
+import { CostCodePicker } from '@/components/budgets/CostCodePicker';
 
 const BLANK_LINE = {
-  budget_line_id: '',
+  cost_code_id: '',
+  cost_code_subcategory_id: '',
   description: '',
   quantity: '',
   unit_rate: '',
@@ -21,7 +23,8 @@ const BLANK_LINE = {
 };
 
 export function POLineEditor({
-  lines, onChange, budgetLines = [], testid = 'po-line-editor',
+  lines, onChange, projectId, existingCostCodeIds = null, floor,
+  testid = 'po-line-editor',
 }) {
   const setLine = (idx, patch) => {
     const next = lines.map((l, i) => (i === idx ? { ...l, ...patch } : l));
@@ -42,12 +45,31 @@ export function POLineEditor({
   );
   const gross = totals.net + totals.vat;
 
+  // B107 §7.4 (full variant) — flag lines whose chosen cost code has no
+  // existing budget line on this budget (a mint will happen). When the
+  // budget's existing-line set isn't available (not loaded / forbidden),
+  // fall back to the lighter always-visible generic hint.
+  const floorLabel = fmtGBP(floor) ?? '£' + Number(floor ?? 1000).toLocaleString();
+  const mintHintFor = (line) => {
+    if (existingCostCodeIds instanceof Set) {
+      if (line.cost_code_id && !existingCostCodeIds.has(line.cost_code_id)) {
+        return `New cost code for this budget — a line will be created. `
+          + `If committed spend reaches the sign-off floor (${floorLabel}) `
+          + `it will need director approval before submit.`;
+      }
+      return null;
+    }
+    // Generic fallback (budget lines unavailable).
+    return 'Choosing a cost code with no budget line will create one '
+      + '(may need director sign-off if large).';
+  };
+
   return (
     <div className="space-y-2" data-testid={testid}>
       <table className="w-full text-sm border-collapse">
         <thead>
           <tr className="text-left text-xs text-sy-grey-700 border-b">
-            <th className="py-1 pr-2">Budget line</th>
+            <th className="py-1 pr-2">Cost code</th>
             <th className="py-1 pr-2">Description</th>
             <th className="py-1 pr-2 w-20">Qty</th>
             <th className="py-1 pr-2 w-24">Rate</th>
@@ -61,20 +83,21 @@ export function POLineEditor({
             const net = computeNet(line.quantity, line.unit_rate);
             return (
               <tr key={idx} data-testid={`${testid}-row-${idx}`}>
-                <td className="py-1 pr-2">
-                  <select
-                    className="w-full px-1 py-0.5 border rounded text-sm"
-                    value={line.budget_line_id ?? ''}
-                    onChange={(e) => setLine(idx, { budget_line_id: e.target.value })}
-                    data-testid={`${testid}-budget-line-${idx}`}
-                  >
-                    <option value="">— Select —</option>
-                    {budgetLines.map((bl) => (
-                      <option key={bl.id} value={bl.id}>
-                        {bl.line_description ?? bl.cost_code ?? bl.id.slice(0, 8)}
-                      </option>
-                    ))}
-                  </select>
+                <td className="py-1 pr-2 align-top" style={{ minWidth: 220 }}>
+                  <CostCodePicker
+                    projectId={projectId}
+                    value={line.cost_code_id}
+                    onChange={(v) => setLine(idx, { cost_code_id: v })}
+                    testid={`${testid}-cc-${idx}`}
+                  />
+                  {mintHintFor(line) && (
+                    <p
+                      className="mt-1 text-xs text-amber-700"
+                      data-testid={`cost-code-mint-hint-${idx}`}
+                    >
+                      {mintHintFor(line)}
+                    </p>
+                  )}
                 </td>
                 <td className="py-1 pr-2">
                   <input

@@ -1,72 +1,114 @@
 /**
- * CostCodePicker — Prompt 2.4B-i §R7.3.
+ * CostCodePicker — B107 §7 (was a shadcn Select; now a type-to-search
+ * combobox).
  *
- * shadcn Select wrapping the project's cost-code list. Filters to
- * `is_enabled` codes but always keeps the currently-selected code
- * visible even if it's been disabled (so the picker doesn't silently
- * lose state when an admin disables a code mid-edit).
+ * Grow-as-you-type combobox over the project's cost-code list, built on
+ * @/components/ui/command + @/components/ui/popover (the same pattern as
+ * <TradePicker/>). Filters CLIENT-SIDE over the already-fetched
+ * `useCostCodes` list — matching on BOTH `code` and `name` (typing
+ * "ground" surfaces "1500 — Groundworks").
  *
- * D13 / E5: `useCostCodes(projectId)` from `hooks/costCodes.js` —
- * returns `ProjectCostCodeRead` rows whose `id` is the
- * `project_cost_codes` mapping row id, NOT the underlying cost code
- * id. `BudgetLine.cost_code_id` references the underlying
- * `cost_codes.id`, so the picker MUST key on `cost_code_id` (not
- * `id`). Backend canonical field names:
+ * §0.4 TRAP (already solved here): `useCostCodes` returns
+ * `ProjectCostCodeRead` rows whose `id` is the project_cost_codes mapping
+ * row id. `budget_lines.cost_code_id` references the underlying
+ * `cost_codes.id` — exposed as the row's `cost_code_id` field. The picker
+ * MUST key on / emit `cost_code_id`, NEVER `id`.
  *
- *     id                  — project_cost_codes mapping row id (NOT used here)
- *     cost_code_id        — underlying cost_codes.id (FK target — use THIS)
- *     code                — short code string ("SUB-01")
- *     name                — long label
- *     is_enabled          — enabled-for-this-project flag
- *
- * B88 Pack 2 follow-up (Chat 51, Gate 2 re-eyeball Defect 1):
- *   The legacy picker compared `c.id === value` (wrong column) and
- *   `c.enabled` / `c.label` (wrong field names) — the dropdown was
- *   blank on every edit since inception. Fixed to canonical names.
- *
- * Loading: shows "Loading cost codes…" placeholder while fetch is
- * in-flight. Missing-label fallback: "Code <last-6>" (matches §R6 grid).
+ * Value contract unchanged from the Select era: value in / value out is a
+ * `cost_code_id`. Disabled (`is_enabled=false`) codes are hidden UNLESS
+ * they are the current value (so the picker never silently loses state).
  */
-import { useCostCodes } from '@/hooks/costCodes';
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from '@/components/ui/select';
+import React, { useMemo, useState } from 'react';
+import { ChevronsUpDown } from 'lucide-react';
 
-export function CostCodePicker({ projectId, value, onChange, disabled }) {
+import {
+  Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList,
+} from '@/components/ui/command';
+import {
+  Popover, PopoverContent, PopoverTrigger,
+} from '@/components/ui/popover';
+import { useCostCodes } from '@/hooks/costCodes';
+
+export function CostCodePicker({
+  projectId, value, onChange, disabled, testid = 'cost-code-picker',
+}) {
   const { data: codes = [], isLoading } = useCostCodes(projectId);
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+
   const selected = codes.find((c) => c.cost_code_id === value);
   const selectedLabel = selected
     ? `${selected.code} — ${selected.name}`
-    : value ? `Code ${value.slice(-6)}` : null;
+    : value ? `Code ${String(value).slice(-6)}` : null;
+
+  const lowered = query.trim().toLowerCase();
+  const options = useMemo(() => (
+    codes
+      .filter((c) => c.is_enabled || c.cost_code_id === value)
+      .filter((c) => {
+        if (!lowered) return true;
+        const hay = `${c.code ?? ''} ${c.name ?? ''}`.toLowerCase();
+        return hay.includes(lowered);
+      })
+  ), [codes, value, lowered]);
+
+  const choose = (ccId) => {
+    onChange?.(ccId);
+    setOpen(false);
+    setQuery('');
+  };
 
   return (
-    <Select
-      value={value || ''}
-      onValueChange={onChange}
-      disabled={disabled || isLoading}
-    >
-      <SelectTrigger data-testid="cost-code-picker-trigger">
-        <SelectValue
-          placeholder={
-            isLoading
-              ? 'Loading cost codes…'
-              : selectedLabel ?? 'Select a cost code'
-          }
-        />
-      </SelectTrigger>
-      <SelectContent>
-        {codes
-          .filter((c) => c.is_enabled || c.cost_code_id === value)
-          .map((c) => (
-            <SelectItem
-              key={c.cost_code_id}
-              value={c.cost_code_id}
-              data-testid={`cost-code-option-${c.cost_code_id}`}
-            >
-              {`${c.code} — ${c.name}`}
-            </SelectItem>
-          ))}
-      </SelectContent>
-    </Select>
+    <Popover open={open} onOpenChange={(o) => { setOpen(o); if (!o) setQuery(''); }}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          disabled={disabled || isLoading}
+          className="w-full inline-flex items-center justify-between gap-2 px-2 py-1 border rounded text-sm bg-white disabled:opacity-50"
+          data-testid={`${testid}-trigger`}
+          aria-haspopup="listbox"
+          aria-expanded={open}
+        >
+          <span className={selectedLabel ? 'truncate' : 'truncate text-slate-500'}>
+            {isLoading ? 'Loading cost codes…' : (selectedLabel ?? 'Select a cost code')}
+          </span>
+          <ChevronsUpDown size={14} className="shrink-0 text-slate-500" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent
+        align="start"
+        className="p-0 w-[--radix-popover-trigger-width] min-w-[260px]"
+        data-testid={`${testid}-content`}
+      >
+        <Command shouldFilter={false}>
+          <CommandInput
+            value={query}
+            onValueChange={setQuery}
+            placeholder="Search code or name…"
+            data-testid={`${testid}-search`}
+          />
+          <CommandList>
+            <CommandEmpty data-testid={`${testid}-empty`}>
+              No cost codes match.
+            </CommandEmpty>
+            <CommandGroup>
+              {options.map((c) => (
+                <CommandItem
+                  key={c.cost_code_id}
+                  value={`${c.code} ${c.name} ${c.cost_code_id}`}
+                  onSelect={() => choose(c.cost_code_id)}
+                  data-testid={`cost-code-option-${c.cost_code_id}`}
+                >
+                  <span className="mr-2 font-mono text-xs">{c.code}</span>
+                  <span className="truncate">{c.name}</span>
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
   );
 }
+
+export default CostCodePicker;
