@@ -16,6 +16,136 @@ Frontend / actuals / commitments / Xero are out of scope until later prompts.
   for list-time tenant filtering — see Chat 24 R2).
 - Audit append-only via `audit_log` + `audit_log_no_modify()` trigger.
 
+## Chat 59 — B105/B106 · Cost-code-first commercial line model
+
+**STATUS: GATE CLEARED on origin/main (operator verified via codeload tarball).**
+
+Backend money-path pack. Implements all 10 spec items of
+`docs/B105-B106-build-pack-v1.md` (§3.1–§3.10) with **zero new DDL** —
+alembic head stays at `0049_unbudgeted_order_lines`. Gate B
+(commitment-ack) formally cancelled per §0.1 (already satisfied by the
+2.5 over-budget approval gate). Closing doc: `docs/chat-59-closing.md`.
+
+### Hard boundaries honoured
+
+- No alembic migration (head `0049_unbudgeted_order_lines` unchanged).
+- No `commitment_ack_*` columns, no `acknowledge_commitment` endpoint.
+- No new permission, no new role grant. Reuses existing
+  `budgets.clear_unbudgeted` only.
+- `>=` floor semantics — at exactly £1,000 → blocks.
+- Audit row only on marker-state change (not on every evaluation).
+- Notifications wiring deferred (§9).
+
+### Money-path additions
+
+- **Gate A — unbudgeted £-floor.** Config key
+  `budget.unbudgeted_ack_floor_gbp` (default £1,000, Decimal, Budget,
+  director-editable). Evaluator
+  `services.budget_lines.evaluate_unbudgeted_floor_gate` reads
+  `committed_not_invoiced`, compares `>= floor`, flags
+  `requires_attention` + `variance_status="Red"` on cross, writes audit
+  only on state change. Wired after `recompute_for_po` in BOTH submit
+  branches and in `issue_po`. Raises
+  `UnbudgetedAckRequiredError` → router 409. Clear via the existing
+  `POST /budget-lines/{id}/clear-unbudgeted` (permission
+  `budgets.clear_unbudgeted`).
+- **§3.7a separation.** `evaluate_budget_overrun` skips
+  `is_unbudgeted AND unbudgeted_cleared_at IS NULL` lines (option ii)
+  so Gate A owns them.
+- **Resolve-or-mint** in `create_po` + `add_package_line`.
+  Priority `cost_code_id > derived from supplied budget_line_id >
+  deprecated unbudgeted_cost_code_id`. Mint via
+  `create_unbudgeted_line(force_flag=False)` (neutral; Gate A decides
+  Red later). Alias-mismatch → 422.
+- **Race handling (§3.9).** SAVEPOINT (`db.begin_nested()`) around the
+  mint; `IntegrityError` on `uq_budget_lines_budget_cost_subcat` or
+  `uq_budget_lines_no_subcat_unique` → `BudgetLineRaceError` →
+  router 409 (not 500). Caller may retry.
+- **Completeness gate (§3.8)** at submit: refuses lines missing
+  `cost_code`, `qty>0`, `unit_rate>=0`, `vat_rate (0..100)`, or
+  non-blank `description`. Raises `POLineIncompleteError` →
+  router 422. PO stays Draft.
+- **Schema collapse.** `POLineCreate` + `PackageLineCreateBody` XOR
+  validators dropped; cost-code-first input;
+  `unbudgeted_*` cluster kept as deprecated accept-but-ignore with
+  one-shot `syhomes.deprecation` warning per request.
+- **Draft tolerance.** `_compute_line_totals`: missing
+  qty/rate persists as `quantity=1, unit_rate=0, net=vat=gross=0`.
+
+### Accepted spec deviation (operator-approved)
+
+§3.4 step 5 literal text says `quantity=None`. DB CHECK
+`ck_pol_quantity_positive: quantity > 0` + NOT NULL at head 0049 +
+§0.2 no-DDL forbid this. Minimum constraint-satisfying value is
+`quantity=1, unit_rate=0 → net=0`. Spirit preserved (incomplete
+drafts persist £0 net; submit completeness gate refuses them).
+**Backlog candidate `B-DRAFT-FREEITEM`** (operator hand-adds to
+`docs/SY_Hub_Phase2_Backlog.md`): distinguishing intentional free-item
+from incomplete-draft needs a non-nullable boolean column +
+fresh alembic migration. Out of scope here.
+
+### Tests
+
+- **3 new test files** (Build Pack §6 minimum coverage list):
+  - `backend/tests/test_cost_code_first_resolve.py` — 12 tests
+    (cases 1–10 + 4b/4c race; 1 environmental skip).
+  - `backend/tests/test_unbudgeted_floor_gate.py` — 15 tests
+    (cases 11–24 + 32).
+  - `backend/tests/test_po_completeness_submit.py` — 4 tests
+    (cases 25–28; 28b documented unreachable).
+- **Re-baselined** `backend/tests/test_unbudgeted_orders.py`: T1
+  split into cases 29/30 (force_flag=True legacy vs default neutral);
+  T4/T13b add `force_flag=True`; T7/T9/T10/T11/T11b/T11c assertions
+  updated to cost-code-first contract. 29 of 29 pass.
+- **Direct impact** `test_system_config::test_seed_creates_40_keys` →
+  renamed `test_seed_creates_41_keys`.
+
+### Warm-DB pytest ×2
+
+| Run | Passed | Failed | Skipped | X-state |
+|---|---|---|---|---|
+| Run 1 | 1634 | 19 | 1 | 3 |
+| Run 2 | 1634 | 19 | 1 | 3 |
+
+Identical between runs. Failing-test name list IDENTICAL to baseline
+(commit `73aeb73`, pre-session). The 19 stale failures are previous
+sessions' permission-count and alembic-head expectations — NOT caused
+by this work.
+
+### Files touched (47 total on origin/main)
+
+12 substantive backend (services/routers/schemas/seed/errors),
+3 new test files, 2 re-baselined tests, 1 CHANGELOG, 3 new docs,
+26 platform URL-housekeeping (`emergent-build-77` → `money-path-build`
+auto-rewrites). Full manifest in `docs/chat-59-closing.md`.
+
+### Operator gate verification (cleared on origin/main)
+
+1. Alembic head = 0049, no new revision ✅
+2. Zero `commitment_ack_*` anywhere in backend ✅
+3. Permission count unchanged; 19-failure baseline name lists
+   identical pre/post ✅
+4. Seed row `budget.unbudgeted_ack_floor_gbp = "1000.00"`
+   Decimal/Budget/director; helper returns `Decimal("1000.00")` ✅
+5. Draft tolerance lands `net=vat=gross=0` (qty=1/rate=0 per
+   accepted DB-CHECK deviation) ✅
+6. Gate A reads `committed_not_invoiced`, `>= floor`, skips
+   budgeted+cleared, state-change-only audit, wired after
+   `recompute_for_po` in both submit branches + `issue_po` ✅
+7. Error arms correctly ordered; SAVEPOINT race catch →
+   `BudgetLineRaceError` → 409 in both paths ✅
+8. Option (ii) skip in `evaluate_budget_overrun`;
+   `scan_requires_attention` unchanged ✅
+
+### NOT touched (out of scope this session)
+
+- `docs/SY_Hub_Phase2_Backlog.md` (operator-owned).
+- Frontend.
+- Notifications (§9 deferred).
+- Any alembic migration; any new permission/role.
+
+
+
 ## Build Pack B88 Pack 3 — Packages (the tendering spine)
 
 **STATUS: Gate 1 (Backend) CLEARED on origin/main. Gate 2 (Frontend
