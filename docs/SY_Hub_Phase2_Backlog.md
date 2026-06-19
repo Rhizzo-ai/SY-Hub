@@ -1069,3 +1069,59 @@ triggers the feature should eventually fire, so notifications aren't a retrofit.
   already covers budgeted overruns. Operator decided NOT to duplicate it. Gate B is
   closed; the `commitment_ack_*` columns are never built. Recorded here so the
   decision is not revisited.
+
+### Chat 62 — findings (added 2026-06-19)
+
+- **NEW-BUG (frontend, ~High)** — Package "Add line" crashes with a React
+  "Objects are not valid as a React child (found: object with keys
+  {id, code, name})" runtime error. The package-line editor renders the
+  whole cost-code object instead of its label. Adding a package line is
+  currently fully broken. Root cause: package-line UI never received the
+  B107 cost-code-first picker fix (deferred to B107b). Likely fixed
+  together with B107b, but the CRASH should be confirmed dead as part of
+  that work — log explicitly so it isn't lost.
+
+- **NEW-BUG (frontend, ~High)** — Cannot add a line to a budget from the
+  budget grid. "Add budget line" path does not work. Needs investigation:
+  is the action wired, permission-gated, or missing a handler? TLC needed.
+
+- **NEW-UX (Medium, recurring)** — Navigation / discoverability. POs,
+  budgets, packages are reachable only by typing URLs
+  (e.g. /projects/:id/purchase-orders/new); there are no clear entry
+  buttons in the nav. Operator has flagged this more than once. Worth a
+  dedicated nav/entry-point pass.
+
+- **NOTE — B107 eyeball §10.6–10.9 still owed.** Blocked on seed data, not
+  a code defect: triggering the unbudgeted pill needs a cost code assigned
+  to the project but with no budget line, which the current seed lacks.
+  To test: assign one extra cost code to a project (no budget), raise a
+  £1,500 PO against it → red "Sign-off required" pill should appear.
+
+  ### Chat 62 — findings (added 2026-06-19)
+
+- **NEW-BUG (frontend, ~High)** — Package "Add line" crashes with a React
+  "Objects are not valid as a React child (found: object with keys
+  {id, code, name})" runtime error. The package-line editor renders the
+  whole cost-code object instead of its label. Adding a package line is
+  currently fully broken. Root cause: package-line UI never received the
+  B107 cost-code-first picker fix (deferred to B107b). Likely fixed
+  together with B107b, but the CRASH should be confirmed dead as part of
+  that work — log explicitly so it isn't lost.
+
+- **NEW-BUG (frontend, ~High)** — Cannot add a line to a budget from the
+  budget grid. "Add budget line" path does not work. Needs investigation:
+  is the action wired, permission-gated, or missing a handler? TLC needed.
+
+- **NEW-UX (Medium, recurring)** — Navigation / discoverability. POs,
+  budgets, packages are reachable only by typing URLs
+  (e.g. /projects/:id/purchase-orders/new); there are no clear entry
+  buttons in the nav. Operator has flagged this more than once. Worth a
+  dedicated nav/entry-point pass.
+
+- **NOTE — B107 eyeball §10.6–10.9 still owed.** Blocked on seed data, not
+  a code defect: triggering the unbudgeted pill needs a cost code assigned
+  to the project but with no budget line, which the current seed lacks.
+  To test: assign one extra cost code to a project (no budget), raise a
+  £1,500 PO against it → red "Sign-off required" pill should appear.
+
+  
