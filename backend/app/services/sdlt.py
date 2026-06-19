@@ -59,11 +59,12 @@ def calculate(
     Progressive: each band charges `rate_pct` on the portion of
     consideration that falls within (band_lower, band_upper].
 
-    Corporate_Flat_Rate bands are NOT progressive — that category uses a
-    single-band flat rate. The calc still works because the seed defines
-    Corporate_Flat_Rate with a single band (500,000+ → 17%), so the
-    progressive loop produces the same answer as a flat application on
-    the portion above the threshold.
+    Corporate_Flat_Rate is NOT progressive. It is a single-band FLAT charge:
+    when the consideration exceeds the band threshold (£500k in the seed),
+    the flat rate (17%) applies to the ENTIRE consideration — not just the
+    slice above the threshold. At or below the threshold the charge is £0.
+    This category is handled by a dedicated branch below, before the
+    progressive loop, so every other category is computed exactly as before.
     """
     if consideration < 0:
         raise ValueError("consideration must be >= 0")
@@ -73,8 +74,20 @@ def calculate(
             f"No active SDLT bands for category={category!r} on {reference_date}"
         )
 
-    total = Decimal("0")
     amount = Decimal(consideration)
+
+    # Corporate_Flat_Rate is a single-band FLAT charge — NOT progressive.
+    # Companies buying dwellings above the threshold pay the flat rate on the
+    # ENTIRE consideration, not just the slice above the threshold. Intercept
+    # it here, before the progressive loop, so no other category is affected.
+    if category == "Corporate_Flat_Rate":
+        band = bands[0]
+        threshold = Decimal(band.band_lower)
+        if amount <= threshold:
+            return Decimal("0.00")
+        return _round_penny(amount * (Decimal(band.rate_pct) / Decimal("100")))
+
+    total = Decimal("0")
 
     for b in bands:
         lo = Decimal(b.band_lower)

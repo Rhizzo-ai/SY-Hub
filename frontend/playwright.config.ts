@@ -16,7 +16,7 @@ import * as path from 'path';
 const PREVIEW_URL =
   process.env.REACT_APP_PREVIEW_URL
   || process.env.REACT_APP_BACKEND_URL
-  || 'https://concurrent-mint-fix.preview.emergentagent.com';
+  || 'https://sdlt-audit-fix.preview.emergentagent.com';
 
 const AUTH_DIR = path.resolve(__dirname, 'playwright/.auth');
 
