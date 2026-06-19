@@ -107,6 +107,10 @@ user_problem_statement: |
   against the running preview app. Test the cost-code picker (type-to-search
   combobox), line editor, and budget grid rendering. Login is cookie-based
   with test-pm@example.test credentials.
+  
+  NEW BUG FIX VERIFICATION: Blank quantity validation on PO create form.
+  A line with BLANK quantity must be BLOCKED on the form with a friendly
+  message (not silently submitted as a £0 line).
 
 backend:
   - task: "N/A - Frontend-only validation"
@@ -229,11 +233,23 @@ frontend:
       - working: true
         agent: "testing"
         comment: "✅ PASS - Purchase Order draft creation flow tested end-to-end. Form filled with: Supplier='TEST Supplier — B107' (via data-testid='po-form-supplier-select'), Budget='R7 spot-check (v1)' (auto-selected), Cost code='EXT-01 External drainage', Qty=1, Rate=100. Draft created successfully with PO number 'PO-0002'. Navigation to detail page successful (/purchase-orders/4ed0255d-02bd-44d7-9d41-f4cd4481509d). NO error about 'Project has no default po number prefix configured'. NO runtime error overlay. Form calculations correct (Net £100.00, VAT £20.00, Gross £120.00). Console: 4 × 401 auth errors (non-blocking). PO number prefix configuration is working correctly. Screenshots: po-form-filled.png, po-detail-page.png"
+  
+  - task: "BUG FIX 3: Blank quantity validation on PO form"
+    implemented: true
+    working: true
+    file: "frontend/src/lib/poPayload.js, frontend/src/pages/projects/PurchaseOrderForm.jsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "✅ PASS - Blank quantity validation working correctly. PART 1: Blank quantity field is BLOCKED with error message 'Line 1: quantity is required and must be greater than 0.' (data-testid='po-form-error'). Form does NOT navigate away, stays on /new URL. OPTIONAL: Quantity = 0 also correctly blocked with same error message. PART 2: Valid quantity (1) and unit rate (100) allows successful PO creation. Draft created with PO number 'PO-0001', navigated to detail page (/purchase-orders/dd3d7174-8fc1-4293-a9b6-fdf4cd00052b). Form calculations correct (Net £100.00, VAT £20.00, Gross £120.00). NO runtime error overlay at any point. Console: 4 × 401 auth errors (non-blocking). Validation logic in validatePoLines() function checks: qtyBlank || !Number.isFinite(qty) || qty <= 0. Screenshots: part1-before-submit-blank-qty.png, part1-validation-error-blank-qty.png, optional-validation-error-qty-zero.png, part2-before-submit-valid.png, part2-po-detail-page.png"
 
 metadata:
   created_by: "testing_agent"
-  version: "107.0"  # B107 validation
-  test_sequence: 1
+  version: "107.1"  # B107 validation + blank quantity bug fix
+  test_sequence: 2
   run_ui: true
 
 test_plan:
@@ -241,6 +257,7 @@ test_plan:
     - "All B107 checks completed and passed"
     - "Bug fix verification completed and passed"
     - "PO draft creation with number prefix - COMPLETED AND PASSED"
+    - "Blank quantity validation bug fix - COMPLETED AND PASSED"
   stuck_tasks: []
   test_all: true
   test_priority: "high_first"
@@ -346,3 +363,102 @@ agent_communication:
       - po-detail-page.png (PO-0002 detail page showing Draft status)
       
       CONCLUSION: PO number prefix configuration is working correctly. The missing prefix issue has been resolved.
+  
+  - agent: "testing"
+    message: |
+      BLANK QUANTITY VALIDATION BUG FIX VERIFICATION COMPLETE — ✅ ALL TESTS PASSED
+      
+      Tested against: https://concurrent-mint-fix.preview.emergentagent.com
+      Login: test-pm@example.test / TestUser-Dev-2026! (no MFA)
+      Target: /projects/b2a265ef-dc30-4779-96f6-e139d1881e07/purchase-orders/new
+      
+      ═══════════════════════════════════════════════════════════════════════════
+      PART 1: BLANK QUANTITY IS BLOCKED ✅ PASS
+      ═══════════════════════════════════════════════════════════════════════════
+      
+      TEST STEPS:
+      1. ✅ Selected supplier: "TEST Supplier — B107"
+      2. ✅ Budget auto-selected: "R7 spot-check (v1) — Active · current"
+      3. ✅ Selected cost code: "EXT-01 — External drainage (private)"
+      4. ✅ LEFT quantity field BLANK (empty string)
+      5. ✅ LEFT unit rate field BLANK
+      6. ✅ Clicked "Create draft" button
+      
+      RESULTS:
+      ✅ Form submission BLOCKED (no navigation occurred)
+      ✅ Error message displayed (data-testid="po-form-error"):
+         "Line 1: quantity is required and must be greater than 0."
+      ✅ URL remained on /new form (did not navigate away)
+      ✅ No PO was created (confirmed by staying on form)
+      ✅ Error message is user-friendly and clear
+      
+      ═══════════════════════════════════════════════════════════════════════════
+      OPTIONAL TEST: QUANTITY = 0 IS BLOCKED ✅ PASS
+      ═══════════════════════════════════════════════════════════════════════════
+      
+      TEST STEPS:
+      1. ✅ Set quantity = 0 (explicitly)
+      2. ✅ Clicked "Create draft" button
+      
+      RESULTS:
+      ✅ Form submission BLOCKED
+      ✅ Same error message displayed:
+         "Line 1: quantity is required and must be greater than 0."
+      ✅ Validation correctly treats qty=0 as invalid (must be > 0)
+      
+      ═══════════════════════════════════════════════════════════════════════════
+      PART 2: VALID QUANTITY ALLOWS SUBMISSION ✅ PASS
+      ═══════════════════════════════════════════════════════════════════════════
+      
+      TEST STEPS:
+      1. ✅ Set quantity = 1
+      2. ✅ Set unit rate = 100
+      3. ✅ Clicked "Create draft" button
+      
+      RESULTS:
+      ✅ Draft created successfully
+      ✅ Navigation to PO detail page: /purchase-orders/dd3d7174-8fc1-4293-a9b6-fdf4cd00052b
+      ✅ PO Number assigned: PO-0001
+      ✅ Status: Draft
+      ✅ Line details correct: Qty 1.0000, Rate £100.00, VAT 20.00%
+      ✅ Form calculations correct: Net £100.00, VAT £20.00, Gross £120.00
+      ✅ NO error messages on detail page
+      ✅ NO runtime error overlay at any point
+      
+      ═══════════════════════════════════════════════════════════════════════════
+      TECHNICAL VALIDATION
+      ═══════════════════════════════════════════════════════════════════════════
+      
+      Validation Logic (frontend/src/lib/poPayload.js):
+      - validatePoLines() function checks:
+        • qtyBlank: quantity === '' || quantity === null || quantity === undefined
+        • !Number.isFinite(qty): ensures numeric value
+        • qty <= 0: ensures positive quantity
+      - Error message format: "Line {N}: quantity is required and must be greater than 0."
+      - Form-level validation in PurchaseOrderForm.jsx (line 114-115):
+        • const lineError = validatePoLines(lines);
+        • if (lineError) { setError(lineError); return; }
+      
+      Console Analysis:
+      ✅ No JavaScript runtime errors
+      ✅ No error overlay at any point
+      ⚠️ 4 × 401 auth errors (non-blocking, expected background polling)
+      
+      Screenshots saved:
+      - part1-before-submit-blank-qty.png (form with blank quantity)
+      - part1-validation-error-blank-qty.png (error message displayed)
+      - optional-validation-error-qty-zero.png (qty=0 blocked)
+      - part2-before-submit-valid.png (form with valid data)
+      - part2-po-detail-page.png (PO-0001 detail page)
+      
+      ═══════════════════════════════════════════════════════════════════════════
+      CONCLUSION: BUG FIX IS PRODUCTION-READY
+      ═══════════════════════════════════════════════════════════════════════════
+      
+      The blank quantity validation is working perfectly:
+      • Blank quantities are blocked with a clear, friendly error message
+      • Zero quantities are also blocked (qty must be > 0)
+      • Valid quantities allow successful PO creation
+      • No silent £0 lines can be created
+      • Form UX is correct (stays on form when validation fails)
+      • No runtime errors or overlays

@@ -13,7 +13,7 @@ import { useAuth } from '@/context/AuthContext';
 import { useCreatePO } from '@/hooks/purchaseOrders';
 import { useBudget, useProjectBudgets } from '@/hooks/budgets';
 import { useUnbudgetedAckFloor } from '@/hooks/systemConfig';
-import { mapLinesToPayload } from '@/lib/poPayload';
+import { mapLinesToPayload, validatePoLines } from '@/lib/poPayload';
 import { canCreatePO, canViewSensitivePO } from '@/lib/poCapability';
 import SupplierSelect from '@/components/po/SupplierSelect';
 import POLineEditor from '@/components/po/POLineEditor';
@@ -108,6 +108,11 @@ export default function PurchaseOrderForm() {
       setError(`Line ${missingCode + 1}: choose a cost code.`);
       return;
     }
+    // B107 §10.5 — block incomplete lines on the form: a blank quantity or
+    // unit price is MISSING, never a silent £0. Mirrors the backend rule
+    // (quantity > 0, unit_rate >= 0) so no phantom zero line can be created.
+    const lineError = validatePoLines(lines);
+    if (lineError) { setError(lineError); return; }
     const payload = {
       supplier_id: supplierId,
       budget_id: budgetId,
