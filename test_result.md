@@ -217,6 +217,18 @@ frontend:
       - working: true
         agent: "testing"
         comment: "✅ PASS - Budget field is now a <select> dropdown (data-testid='po-form-budget-id') with readable labels. (B1) Confirmed <select> tag (not text input), no UUID/paste placeholder. (B2) Dropdown shows readable label 'R7 spot-check (v1) — Active · current' (not raw UUID). (B3) Single budget auto-selected correctly. (B4) Dropdown options screenshot captured. Auto-selection logic works: single budget chosen outright, otherwise prefers current Active budget. Screenshots: b1-pass-budget-dropdown.png, b3-budget-selected.png, b4-dropdown-options.png"
+  
+  - task: "PO Draft Creation with Number Prefix"
+    implemented: true
+    working: true
+    file: "frontend/src/pages/projects/PurchaseOrderForm.jsx, frontend/src/components/po/SupplierSelect.jsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "✅ PASS - Purchase Order draft creation flow tested end-to-end. Form filled with: Supplier='TEST Supplier — B107' (via data-testid='po-form-supplier-select'), Budget='R7 spot-check (v1)' (auto-selected), Cost code='EXT-01 External drainage', Qty=1, Rate=100. Draft created successfully with PO number 'PO-0002'. Navigation to detail page successful (/purchase-orders/4ed0255d-02bd-44d7-9d41-f4cd4481509d). NO error about 'Project has no default po number prefix configured'. NO runtime error overlay. Form calculations correct (Net £100.00, VAT £20.00, Gross £120.00). Console: 4 × 401 auth errors (non-blocking). PO number prefix configuration is working correctly. Screenshots: po-form-filled.png, po-detail-page.png"
 
 metadata:
   created_by: "testing_agent"
@@ -228,6 +240,7 @@ test_plan:
   current_focus:
     - "All B107 checks completed and passed"
     - "Bug fix verification completed and passed"
+    - "PO draft creation with number prefix - COMPLETED AND PASSED"
   stuck_tasks: []
   test_all: true
   test_priority: "high_first"
@@ -300,3 +313,36 @@ agent_communication:
       - b4-dropdown-options.png
       
       BOTH BUG FIXES ARE PRODUCTION-READY.
+  
+  - agent: "testing"
+    message: |
+      PO DRAFT CREATION TEST COMPLETE — ✅ PASS
+      
+      Tested: Purchase Order draft creation with PO number prefix configuration
+      URL: /projects/b2a265ef-dc30-4779-96f6-e139d1881e07/purchase-orders/new
+      Login: test-pm@example.test / TestUser-Dev-2026! (no MFA)
+      
+      TEST STEPS EXECUTED:
+      1. ✅ Supplier selected: "TEST Supplier — B107" (via data-testid="po-form-supplier-select")
+      2. ✅ Budget auto-selected: "R7 spot-check (v1) — Active · current"
+      3. ✅ Cost code selected: "EXT-01 — External drainage (private)"
+      4. ✅ Quantity entered: 1
+      5. ✅ Unit rate entered: 100
+      6. ✅ Form submitted via "Create draft" button
+      
+      RESULTS:
+      ✅ Draft created successfully
+      ✅ Navigation to PO detail page: /purchase-orders/4ed0255d-02bd-44d7-9d41-f4cd4481509d
+      ✅ PO Number assigned: PO-0002
+      ✅ NO error about "Project has no default 'po' number prefix configured"
+      ✅ NO runtime error overlay at any point
+      ✅ Form calculations correct: Net £100.00, VAT £20.00, Gross £120.00
+      
+      Console: 4 × 401 errors (auth/me, auth/refresh - non-blocking background polling)
+      No JavaScript runtime errors detected.
+      
+      Screenshots saved:
+      - po-form-filled.png (form with all fields populated)
+      - po-detail-page.png (PO-0002 detail page showing Draft status)
+      
+      CONCLUSION: PO number prefix configuration is working correctly. The missing prefix issue has been resolved.
