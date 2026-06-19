@@ -10,6 +10,68 @@ Each entry: date, prompt reference (if applicable), change, rationale.
 
 ## Entries
 
+## C3 — Corporate SDLT flat-rate undercharge fix
+
+Critical money bug from the full-platform audit **2026-06-19, finding C3
+(CONFIRMED)**. **Backend bugfix only — no migration, no seed change, no
+frontend, no API-shape change, no permission change.** Backlog
+(`docs/SY_Hub_Phase2_Backlog.md`) left untouched (operator-only). Closing doc:
+`docs/chat-summaries/C3-closing.md`.
+
+**Verification status at push:** MONEY-GATE PROOF CAPTURED AND OPERATOR-CLEARED
+against the **live seeded Postgres** (postmaster start 21:25:09Z, no recycle
+during capture). Live echo + 16-test pytest run + regression guard all green.
+
+### The bug
+
+`app/services/sdlt.py::calculate()` computed `Corporate_Flat_Rate` through the
+generic **progressive** band loop. Corporate_Flat_Rate is a single-band **FLAT**
+charge: above the £500k threshold the 17% rate applies to the **entire**
+consideration, not just the slice above £500k. The progressive loop charged
+17% only on the slice — a material undercharge.
+
+Blast radius: `appraisal_classification.classify()` auto-routes
+`Residential_Surcharge` + no developer relief + price > £500k →
+`Corporate_Flat_Rate`, so any company dwelling purchase above £500k was
+undercharged. Example: £600k purchase computed **£17,000** instead of the
+correct **£102,000** — an **£85,000** undercharge per appraisal.
+
+### The fix
+
+- `app/services/sdlt.py`: special-case `Corporate_Flat_Rate` **before** the
+  progressive loop (immediately after `amount = Decimal(consideration)`). At or
+  below the band threshold returns `Decimal("0.00")`; above it returns
+  `_round_penny(amount * rate_pct / 100)` — flat rate on the whole amount.
+  Reuses the existing `_round_penny` (ROUND_HALF_UP) and reads `band.band_lower`
+  / `band.rate_pct` from the live seed (single-band assumption is safe).
+- Corrected the misleading docstring (was: "the progressive loop produces the
+  same answer as a flat application") to describe the dedicated flat branch.
+- The fix intercepts **only** `Corporate_Flat_Rate`; every other category
+  computes exactly as before (regression-protected by the new tests).
+
+### Tests
+
+- New `backend/tests/test_sdlt_corporate.py` (16 tests, live Postgres):
+  - Flat cases: £600k→£102,000.00, £500k→£0.00, £500,001→£85,000.17, £400k→£0.00.
+  - **Flat ≠ slice** regression: asserts £600k = £102,000, **not** the buggy
+    £17,000 slice figure.
+  - **Other categories unchanged:** Residential_Standard (£500k→£15,000;
+    £600k→£20,000), Residential_Surcharge (£500k→£40,000), Non_Residential
+    (£250k→£2,000; £600k→£19,500) all still progressive.
+  - Classification routing (`classify`) + end-to-end classify→calculate path.
+- No pre-existing test asserted the buggy £17,000 figure, so **no existing test
+  required updating**. Existing `test_reference_data.py` SDLT calc + seed suites
+  remain green.
+
+### Money-gate proof (live, operator-cleared)
+
+```
+calculate(600000, "Corporate_Flat_Rate") = 102000.00
+calculate(500001, "Corporate_Flat_Rate") = 85000.17
+tests/test_sdlt_corporate.py ................  16 passed
+tests/test_reference_data.py (SDLT calc + seed)  9 passed
+```
+
 ## Chat 60 — B107 · Cost-code-first commercial frontend
 
 Frontend companion to the B105/B106 money-path (Chat 59). Migrates the PO
