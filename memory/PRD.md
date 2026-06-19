@@ -16,6 +16,60 @@ Frontend / actuals / commitments / Xero are out of scope until later prompts.
   for list-time tenant filtering — see Chat 24 R2).
 - Audit append-only via `audit_log` + `audit_log_no_modify()` trigger.
 
+## Chat 60 — B107 · Cost-code-first commercial frontend
+
+**STATUS: PUSHED for a stable audit base. Live-verification PARTIAL — eyeball
+§10.6–10.9 (budget-grid pills + director-clear) PENDING on a stable preview.**
+
+Frontend companion to the B105/B106 money-path (Chat 59). **Frontend only — no
+backend file, no migration, no Python change.** Closing doc:
+`docs/chat-summaries/chat-60-closing.md`.
+
+### What shipped
+
+- **PO create form → cost-code-first.** Each line sends `cost_code_id` (the
+  underlying cost_codes.id, §0.4), never `budget_line_id`; subcategory always
+  `null` (cost-code-only, §7.3). `lib/poPayload.js` maps payload (blank
+  qty/rate omitted, never `Number('')===0`).
+- **Searchable cost-code picker.** `CostCodePicker` upgraded from shadcn
+  `Select` to a type-to-search combobox (Popover + cmdk), filtering on code +
+  name; same `cost_code_id` value contract.
+- **Unbudgeted budget-grid pills.** `UnbudgetedPill` (display-only mirror of
+  the server gate): RED "Sign-off required" (`committed_not_invoiced >= floor`),
+  AMBER "Unbudgeted" (below floor), on desktop + mobile.
+- **Director clear action.** `ClearUnbudgetedDialog` →
+  `POST /budget-lines/{id}/clear-unbudgeted` (body-less), gated on
+  `budgets.clear_unbudgeted`, shown only on RED lines. Hooks:
+  `useClearUnbudgeted`, `useUnbudgetedAckFloor`.
+- **Structured submit errors.** `POSubmitErrorPanel` branches on `detail.type`
+  for `unbudgeted_ack_required` / `po_line_incomplete` / `budget_line_race`
+  (one-click retry). No raw `JSON.stringify` at the user.
+- **Zod plumbing.** `BudgetLineSchema` gained `is_unbudgeted`,
+  `unbudgeted_cleared_at`, `unbudgeted_awaiting_ack` (zod was stripping the
+  pill fields the backend already serialises).
+- **Live-fixes during §10:** ResizeObserver overlay guard
+  (`lib/resizeObserverFix.js`, rAF-wrap + scoped benign-message catch);
+  budget **dropdown** replaces the raw-UUID paste field (`useProjectBudgets`,
+  auto-select); blank-qty **validation** (`validatePoLines`) blocks silent £0
+  lines on the form.
+
+### Verification
+
+- **Live-verified:** PO create form, cost-code picker (type-to-search +
+  select), qty/rate validation (blank/0 blocked), budget dropdown auto-select,
+  PO draft creation (after seeding a `po` number prefix), error panels.
+- **Pending (component-tested only):** budget-grid AMBER/RED pills, the
+  director clear action, the permission-gate negative, and mobile pills —
+  blocked by frequent preview recycling. To finish on a stable preview.
+- FE suite **891 tests, 890 pass / 1 fail** (the failure is the pre-existing
+  `PackagesList.test.jsx`, unrelated). B107 added +25 tests, no regressions.
+
+### Hard boundaries honoured
+
+- No backend file / migration / Python change. Frontend only.
+- `docs/SY_Hub_Phase2_Backlog.md` untouched.
+- No git writes from the agent (lands via "Save to GitHub").
+
 ## Chat 59 — B105/B106 · Cost-code-first commercial line model
 
 **STATUS: GATE CLEARED on origin/main (operator verified via codeload tarball).**

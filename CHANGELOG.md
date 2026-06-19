@@ -10,6 +10,157 @@ Each entry: date, prompt reference (if applicable), change, rationale.
 
 ## Entries
 
+## Chat 60 — B107 · Cost-code-first commercial frontend
+
+Frontend companion to the B105/B106 money-path (Chat 59). Migrates the PO
+create form from budget-line-first to **cost-code-first**, adds the two
+unbudgeted budget-grid pills + a permission-gated director clear action, and
+surfaces the three B105/B106 wire error shapes gracefully. **Frontend only —
+no backend file, no migration, no Python change.** Backlog left untouched per
+guardrails. Closing doc: `docs/chat-summaries/chat-60-closing.md`.
+
+**Verification status at push:** PO create form, cost-code picker, qty/rate
+validation, budget dropdown, and the submit-error panels are **live-verified**
+on the preview. The budget-grid pills + director-clear action (eyeball §10.6–10.9)
+pass **component tests** but are **NOT yet live-verified** — the preview kept
+recycling mid-test. Pushed now for a stable base ahead of a full code audit;
+6–9 to be finished on the stable preview.
+
+### PO create form — cost-code-first migration
+
+- `pages/projects/PurchaseOrderForm.jsx` + `components/po/POLineEditor.jsx`:
+  `blankLine()` now carries `cost_code_id` / `cost_code_subcategory_id`
+  (was `budget_line_id`). The per-line budget-line `<select>` is replaced by
+  the reused `CostCodePicker`. Payload sends `cost_code_id` (the underlying
+  cost_codes.id — §0.4), **never** `budget_line_id`; `cost_code_subcategory_id`
+  always `null` for B107 (cost-code-only, §7.3).
+- `lib/poPayload.js` (new) — `mapLinesToPayload` (blank qty/rate **omitted**,
+  never coerced to 0) + `validatePoLines` (see §10.5 below).
+- **§7.4 mint hint (FULL variant):** the form fetches the budget
+  (`useBudget`) and passes a `Set` of existing `cost_code_id`s so the editor
+  shows a precise per-line "new cost code → will mint (floor £X)" hint; falls
+  back to a generic always-visible hint when the budget isn't loadable.
+
+### Searchable cost-code picker
+
+- `components/budgets/CostCodePicker.jsx`: shadcn `Select` → type-to-search
+  combobox (Popover + cmdk `Command`, the established `TradePicker` pattern).
+  Client-side filter on BOTH `code` and `name`. **Same value contract**
+  (`cost_code_id` in/out); disabled codes still hidden unless current.
+  Optional per-instance `testid` so multi-line PO forms get unique pickers.
+
+### Budget-grid unbudgeted pills + gated clear
+
+- `components/budgets/UnbudgetedPill.jsx` (new) — display-only mirror of the
+  server gate: RED "Sign-off required" when
+  `is_unbudgeted && !cleared && committed_not_invoiced >= floor`, AMBER
+  "Unbudgeted" when below floor, nothing otherwise. Pure helpers
+  `isBlockingUnbudgeted` / `isFlaggedUnbudgeted`.
+- Rendered on desktop (`grid/BudgetGridColumns.jsx`) and mobile
+  (`grid/BudgetGridMobileReadOnly.jsx` card + `grid/MobileLineDetailDrawer.jsx`).
+- `grid/ClearUnbudgetedDialog.jsx` (new) — body-less
+  `POST /budget-lines/{id}/clear-unbudgeted` (§1.3), gated on
+  `budgets.clear_unbudgeted` (`canClearUnbudgeted`), shown only on a RED line.
+  Wired into the desktop grid (`BudgetGridV2Desktop.jsx`) and mobile drawer.
+- `hooks/budgets.js` `useClearUnbudgeted` + `lib/api/budgets.js`
+  `clearUnbudgeted` + `lib/budgetCapability.js` `canClearUnbudgeted`.
+
+### Structured submit-error surface
+
+- `components/po/POSubmitErrorPanel.jsx` (new) — branches on `detail.type`:
+  `unbudgeted_ack_required` (names blocking cost code(s) + amount + floor,
+  links to the grid for clear-holders), `po_line_incomplete` (names the
+  1-based line numbers), `budget_line_race` (one-click Retry that re-fires the
+  same submit). **Never** `JSON.stringify`s an object at the user; unknown /
+  string details fall through to the existing toast.
+- `components/po/POActionButtons.jsx` `callTxn` extended to set this panel
+  before the string fallback. B112 notification-trigger comments left at the
+  ack-required surface and the clear-success handler (§9 — not wired).
+
+### Config hook + schema plumbing
+
+- `hooks/systemConfig.js` `useUnbudgetedAckFloor()` — reads
+  `budget.unbudgeted_ack_floor_gbp` (£1,000 fallback), mirroring the
+  self-approval-threshold hook.
+- `lib/schemas/budgets.js` — **required plumbing:** added `is_unbudgeted`,
+  `unbudgeted_cleared_at`, `unbudgeted_awaiting_ack` to `BudgetLineSchema`.
+  Zod strips unknown keys, so without these the pill fields were being
+  dropped before the grid could read them (the backend already serialises
+  them; `committed_not_invoiced` was already declared).
+
+### Live-fix follow-ups (found during §10 testing)
+
+- **ResizeObserver overlay (FIX 1):** `lib/resizeObserverFix.js` (new,
+  imported by the picker) wraps the `ResizeObserver` callback in
+  `requestAnimationFrame` so the benign "ResizeObserver loop…" notice the
+  Popover/cmdk combobox triggers is never produced (root-cause), plus a
+  narrowly-scoped capture-phase listener that stops ONLY the two benign RO
+  strings from reaching CRA's dev overlay. Not a global error swallow.
+- **Budget dropdown (FIX 2):** the free-text "Budget id" paste field is
+  replaced by a `<select>` fed by `useProjectBudgets` (readable
+  `version_label (vN) — status · current` labels). Auto-selects a single
+  budget, else the current Active one. Removes the URL-paste 422 footgun.
+- **Blank-qty £0 line (FIX 3 / §10.5):** `validatePoLines` blocks Create
+  draft when a line's quantity is blank/≤0 or unit price is blank/negative,
+  with an inline message naming the line. A blank qty is treated as MISSING
+  (never `Number('')===0`), so no silent £0 line can be created via the UI;
+  the backend `po_line_incomplete` path stays intact as the server net.
+
+### Tests
+
+- New FE suites: `UnbudgetedPill`, `poPayload` (incl. `validatePoLines`),
+  `POSubmitErrorPanel`, `ClearUnbudgetedDialog`, `BudgetGridColumns.unbudgeted`
+  (clear-gating via direct cell render), `POLineEditor` (picker + mint hint);
+  `CostCodePicker.test.jsx` extended with type-to-search + value-emission cases.
+- Three existing grid suites had `useClearUnbudgeted` added to their
+  `@/hooks/budgets` mocks (the grid now renders `ClearUnbudgetedDialog`).
+- FE suite: **866 → 891 tests (+25), 890 pass / 1 fail.** The single failure
+  is the **pre-existing** `pages/admin/__tests__/PackagesList.test.jsx`
+  (unrelated to B107); B107 added no regressions. Lint clean.
+
+### Discipline guardrails honoured
+
+- No git writes from the agent (this commit lands via "Save to GitHub").
+- No backend file / migration / Python change. Frontend only.
+- `docs/SY_Hub_Phase2_Backlog.md` untouched.
+
+### Files touched
+
+```
+frontend/src/components/budgets/CostCodePicker.jsx                         (M)
+frontend/src/components/budgets/UnbudgetedPill.jsx                         (A)
+frontend/src/components/budgets/grid/BudgetGridColumns.jsx                 (M)
+frontend/src/components/budgets/grid/BudgetGridV2Desktop.jsx               (M)
+frontend/src/components/budgets/grid/BudgetGridMobileReadOnly.jsx          (M)
+frontend/src/components/budgets/grid/MobileLineDetailDrawer.jsx            (M)
+frontend/src/components/budgets/grid/ClearUnbudgetedDialog.jsx             (A)
+frontend/src/components/po/POLineEditor.jsx                               (M)
+frontend/src/components/po/POActionButtons.jsx                            (M)
+frontend/src/components/po/POSubmitErrorPanel.jsx                         (A)
+frontend/src/pages/projects/PurchaseOrderForm.jsx                        (M)
+frontend/src/hooks/systemConfig.js                                       (M)
+frontend/src/hooks/budgets.js                                            (M)
+frontend/src/lib/api/budgets.js                                          (M)
+frontend/src/lib/budgetCapability.js                                     (M)
+frontend/src/lib/schemas/budgets.js                                      (M)
+frontend/src/lib/poPayload.js                                            (A)
+frontend/src/lib/resizeObserverFix.js                                    (A)
+frontend/src/components/budgets/__tests__/UnbudgetedPill.test.jsx          (A)
+frontend/src/components/budgets/__tests__/CostCodePicker.test.jsx          (M)
+frontend/src/components/budgets/grid/__tests__/ClearUnbudgetedDialog.test.jsx          (A)
+frontend/src/components/budgets/grid/__tests__/BudgetGridColumns.unbudgeted.test.jsx   (A)
+frontend/src/components/budgets/__tests__/BudgetGridV2-CostCodeRender.test.jsx          (M)
+frontend/src/components/budgets/__tests__/BudgetGridV2-R6.test.jsx         (M)
+frontend/src/components/budgets/__tests__/BudgetGridMobile-R8.test.jsx     (M)
+frontend/src/components/po/__tests__/POSubmitErrorPanel.test.jsx           (A)
+frontend/src/components/po/__tests__/POLineEditor.test.jsx                 (A)
+frontend/src/lib/__tests__/poPayload.test.js                              (A)
+docs/chat-summaries/chat-60-closing.md                                    (A)
+memory/PRD.md                                                             (M)
+CHANGELOG.md                                                              (M)
+```
+
+
 ## Chat 59 — B105/B106 · Cost-code-first commercial line model
 
 Backend money-path pack. Implements §3.1–§3.10 of `B105-B106-build-pack-v1.md`
