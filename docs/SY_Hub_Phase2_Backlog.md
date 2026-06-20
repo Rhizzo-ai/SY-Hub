@@ -1097,3 +1097,14 @@ triggers the feature should eventually fire, so notifications aren't a retrofit.
   To test: assign one extra cost code to a project (no budget), raise a
   £1,500 PO against it → red "Sign-off required" pill should appear.
 
+### Chat 62 — additional item (added 2026-06-20)
+
+- **NEW (Phase-2, tenant binding)** — `app/deps.py::get_current_tenant_id`
+  is hard-coded to always return the default "SY Homes" tenant regardless of
+  the authenticated user (its own docstring notes Phase-2 will fix this).
+  Surfaced during the NEW-CRIT-1/H1 role-assignment fix: the last-super_admin
+  count is tenant-scoped and correct/future-proof, but always evaluates
+  against the default tenant until this is fixed. Not a bug today (single
+  live tenant); log for when multi-tenant goes live — wire real per-request
+  tenant resolution (subdomain / header / org-id claim), then the tenant
+  scoping in role management and elsewhere becomes meaningful.
