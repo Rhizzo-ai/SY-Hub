@@ -10,7 +10,82 @@ Each entry: date, prompt reference (if applicable), change, rationale.
 
 ## Entries
 
+## NEW-CRIT-1 + H1 — Role-assignment privilege-escalation fix
+
+SECURITY fix (Critical-fix plan, item 2). **Backend only — one production file
+(`app/routers/users.py`) + one new test file. No migration, no new permission,
+no model change, no frontend.** Backlog (`docs/SY_Hub_Phase2_Backlog.md`) left
+untouched (operator-only). Closing doc:
+`docs/chat-summaries/NEW-CRIT-1-H1-closing.md`.
+
+**Verification status at push:** SECURITY-GATE PROOF CAPTURED AND
+OPERATOR-CLEARED against live Postgres (`/api/health` 200; postmaster
+continuous, no recycle during capture).
+
+### The vulnerability
+
+`POST /{user_id}/roles` (assign_role) and `DELETE /{user_id}/roles/{id}`
+(revoke_role) were gated only by `require_permission("users.edit", ...)`.
+assign_role's sole escalation guard blocked granting **super_admin** only —
+every other role (director, finance, …) could be granted by any `users.edit`
+holder, so a non-director could grant themselves or anyone else **director**
+(budget approval, appraisal sign-off, `budgets.clear_unbudgeted`) or
+**finance** — privilege escalation. revoke_role had **no** guard at all: any
+`users.edit` holder could strip any role from anyone, including removing the
+last super_admin → total administrative lockout.
+
+### The fix (three rules — `app/routers/users.py`)
+
+1. **Superset on grant.** A user may grant a role only if they personally hold
+   every permission that role grants. Self-maintaining; subsumes and replaces
+   the old super_admin-only special-case. (Centralised in
+   `_assert_can_manage_role`; empty-permission roles are grantable — they
+   confer no power to escalate to.)
+2. **No self-assignment.** A user may never assign a role to their own account,
+   regardless of permissions held. Flat block, fired before the superset check.
+3. **Superset on revoke + last-super_admin protection.** Same superset test on
+   revoke, plus a refusal (409) to revoke the last remaining active super_admin
+   in the tenant. `UserRole` has no `tenant_id`, so the count joins through
+   `User.tenant_id`.
+
+Every blocked grant/revoke writes a `Permission_Change` audit row
+(`kind=role_assignment_denied` / `role_revocation_denied`, with `rule` =
+`self_assignment` | `superset` | `last_super_admin`), committed before the 4xx
+so the trail survives the rejected request; auditing is defensively wrapped and
+can never swallow the security denial. The existing `require_permission`
+dependencies and success-path audit are unchanged (layered, not replaced).
+
+### Tests — `backend/tests/test_role_assignment_escalation.py` (new, 19)
+
+Live Postgres, asserting HTTP status AND `user_roles` / `audit_log` DB state:
+grant superset (×6, incl. super_admin via the generic rule + zero-permission
+role), self-assignment (×2), revoke superset (×2), last-super_admin (×3, incl.
+tenant-scoping proven end-to-end via a second tenant), denial + success audit
+(×3), and regression guards (×3: dependency still 403s without `users.edit`,
+idempotent re-revoke, entity_scope 422 still fires ahead of the new checks).
+
+### Security-gate evidence (live, operator-cleared)
+
+```
+new tests:    19 passed (live Postgres)
+regression:   tests/test_role_permissions_admin.py + test_auth_rbac.py + test_user_edit.py
+              80 collected → 78 passed, 2 failed
+              (both failures pre-existing: super_admin perm count 143 vs hard-coded 136 — baseline, untouched here)
+live echo:    POST /api/users/{id}/roles  role=director
+              users.edit-only actor → 403 "Cannot grant role 'director': you do not hold all of its permissions."
+              super_admin actor      → 201 role_code=director
+```
+
+### Flagged (not absorbed)
+
+`app/deps.py::get_current_tenant_id` is hard-coded Phase-1 single-tenant
+(always resolves the default tenant regardless of the authenticated user). The
+last-super_admin count is therefore evaluated against the default tenant. The
+fix's tenant-scoped join is correct and future-proof; the Phase-2 tenant
+binding is a separate backlog item (surfaced for the operator).
+
 ## C3 — Corporate SDLT flat-rate undercharge fix
+
 
 Critical money bug from the full-platform audit **2026-06-19, finding C3
 (CONFIRMED)**. **Backend bugfix only — no migration, no seed change, no
