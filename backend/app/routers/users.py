@@ -17,7 +17,8 @@ from app.db import get_db
 from app.deps import get_current_tenant_id
 from app.models.user import User, USER_TYPES, USER_STATUSES
 from app.models.rbac import (
-    Role, UserRole, user_role_entities, user_role_projects,
+    Role, UserRole, Permission, role_permissions,
+    user_role_entities, user_role_projects,
     ENTITY_SCOPES, PROJECT_SCOPES,
 )
 from app.auth import (
@@ -25,6 +26,7 @@ from app.auth import (
     hash_token,
     get_current_user,
     require_permission,
+    compute_effective_permissions,
 )
 from app.services.audit import record_audit, field_diff
 
@@ -571,6 +573,96 @@ def scrub_user_pii(
 
 
 # ---------- Role assignment ----------
+#
+# SECURITY (NEW-CRIT-1 + H1) — privilege-escalation guards on role grant/revoke.
+# Three rules, layered INSIDE the handlers in addition to the existing
+# require_permission(...) dependencies (never replacing them):
+#   1. Superset on grant   — actor may grant a role only if they personally
+#                            hold every permission that role grants.
+#   2. No self-assignment  — actor may never assign a role to their own account.
+#   3. Superset on revoke  — same superset test, plus a refusal to revoke the
+#                            last remaining active super_admin in the tenant.
+# Every blocked attempt is audited (see _audit_role_denial) before the 4xx.
+
+
+def _role_permission_codes(db: Session, role: Role) -> set[str]:
+    """All permission codes a role grants (unscoped catalogue codes)."""
+    return set(
+        db.execute(
+            select(Permission.code)
+            .join(role_permissions, role_permissions.c.permission_id == Permission.id)
+            .where(role_permissions.c.role_id == role.id)
+        ).scalars().all()
+    )
+
+
+def _assert_can_manage_role(
+    db: Session,
+    current: User,
+    tenant_id: uuid.UUID,
+    role: Role,
+    *,
+    action: str,  # "grant" or "revoke" — for the error message only
+) -> set[str]:
+    """Superset rule: the actor may grant/revoke `role` only if they hold
+    every permission the role grants. Returns the (always-empty-on-success)
+    set of role perm codes the actor is MISSING, for caller symmetry.
+
+    Raises HTTPException(403) if the actor is missing any of the role's
+    permissions. compute_effective_permissions is called exactly once.
+    """
+    current_perms = compute_effective_permissions(db, current.id, tenant_id)
+    role_codes = _role_permission_codes(db, role)
+    missing = role_codes - current_perms.all_permissions
+    if missing:
+        raise HTTPException(
+            403,
+            f"Cannot {action} role '{role.code}': you do not hold all of its "
+            f"permissions.",
+        )
+    return missing  # always empty on success; kept for symmetry
+
+
+def _audit_role_denial(
+    db: Session,
+    *,
+    request: Request,
+    actor: User,
+    resource_id: uuid.UUID,
+    role: Optional[Role],
+    kind: str,   # "role_assignment_denied" | "role_revocation_denied"
+    reason: str,
+    rule: str,   # "self_assignment" | "superset" | "last_super_admin"
+) -> None:
+    """Persist an audit row for a blocked grant/revoke, then COMMIT it so the
+    trail survives the rejected request. Defensive: an audit failure is logged
+    and never allowed to swallow the security denial — the caller always raises
+    immediately after calling this.
+    """
+    try:
+        record_audit(
+            db,
+            action="Permission_Change",
+            resource_type="users",
+            resource_id=resource_id,
+            actor_user_id=actor.id,
+            metadata={
+                "kind": kind,
+                "role_code": role.code if role else None,
+                "role_id": str(role.id) if role else None,
+                "reason": reason,
+                "rule": rule,
+            },
+            request=request,
+        )
+        db.commit()
+    except Exception:  # pragma: no cover — defensive only
+        log.exception("Failed to write role-denial audit (rule=%s)", rule)
+        try:
+            db.rollback()
+        except Exception:
+            log.exception("Rollback after audit failure also failed")
+
 
 @router.post("/{user_id}/roles", response_model=RoleAssignmentOut, status_code=201)
 def assign_role(
@@ -594,11 +686,29 @@ def assign_role(
     if role is None:
         raise HTTPException(404, "Role not found")
 
-    # Prevent granting super_admin without users.admin
-    from app.auth import compute_effective_permissions
-    current_perms = compute_effective_permissions(db, current.id, tenant_id)
-    if role.code == "super_admin" and not current_perms.has("users.admin"):
-        raise HTTPException(403, "Only super_admin can grant super_admin")
+    # Rule 2 — No self-assignment. Flat block, regardless of permissions held.
+    # Fires before the superset check (cheaper, clearer message for the self
+    # case).
+    if u.id == current.id:
+        reason = "You cannot assign roles to your own account."
+        _audit_role_denial(
+            db, request=request, actor=current, resource_id=u.id, role=role,
+            kind="role_assignment_denied", reason=reason, rule="self_assignment",
+        )
+        raise HTTPException(403, reason)
+
+    # Rule 1 — Superset on grant. Actor must personally hold every permission
+    # the role grants. This subsumes and replaces the old super_admin-only
+    # special-case (super_admin only passes for an actor holding the full
+    # catalogue).
+    try:
+        _assert_can_manage_role(db, current, tenant_id, role, action="grant")
+    except HTTPException as exc:
+        _audit_role_denial(
+            db, request=request, actor=current, resource_id=u.id, role=role,
+            kind="role_assignment_denied", reason=str(exc.detail), rule="superset",
+        )
+        raise
 
     ur = UserRole(
         user_id=u.id, role_id=role.id,
@@ -662,10 +772,55 @@ def revoke_role(
         raise HTTPException(404, "Assignment not found")
     if ur.status == "Revoked":
         return
+
+    # Load the role up-front so the security checks below can inspect it
+    # (single binding — reused by the success-path audit further down).
+    role = db.get(Role, ur.role_id)
+    if role is None:
+        raise HTTPException(404, "Role not found")
+
+    # Rule 3a — Superset on revoke. Actor must personally hold every
+    # permission the role grants.
+    try:
+        _assert_can_manage_role(db, current, tenant_id, role, action="revoke")
+    except HTTPException as exc:
+        _audit_role_denial(
+            db, request=request, actor=current, resource_id=user_id, role=role,
+            kind="role_revocation_denied", reason=str(exc.detail), rule="superset",
+        )
+        raise
+
+    # Rule 3b — Last-super_admin protection. Refuse to revoke the final active
+    # super_admin assignment in the tenant (total admin lockout). UserRole has
+    # no tenant_id column, so the tenant filter joins through User.
+    if role.code == "super_admin":
+        remaining = db.scalar(
+            select(func.count())
+            .select_from(UserRole)
+            .join(Role, Role.id == UserRole.role_id)
+            .join(User, User.id == UserRole.user_id)
+            .where(
+                Role.code == "super_admin",
+                UserRole.status == "Active",
+                User.tenant_id == tenant_id,
+                UserRole.id != ur.id,   # exclude the one being revoked
+            )
+        )
+        if not remaining:
+            reason = (
+                "Cannot revoke the last super_admin. "
+                "Assign another super_admin first."
+            )
+            _audit_role_denial(
+                db, request=request, actor=current, resource_id=user_id,
+                role=role, kind="role_revocation_denied", reason=reason,
+                rule="last_super_admin",
+            )
+            raise HTTPException(409, reason)
+
     ur.status = "Revoked"
     ur.revoked_at = datetime.now(timezone.utc)
     ur.revoked_by_user_id = current.id
-    role = db.get(Role, ur.role_id)
     record_audit(
         db,
         action="Permission_Change", resource_type="users", resource_id=user_id,
