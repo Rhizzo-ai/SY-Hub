@@ -99,7 +99,7 @@ jobs:
       # verbatim from backend/.env. CORS is never exercised in CI (pytest
       # speaks to the backend server-to-server via requests, no browser
       # preflight) — this just satisfies the startup guard.
-      CORS_ORIGINS: "https://sdlt-audit-fix.preview.emergentagent.com"
+      CORS_ORIGINS: "https://audit-lock.preview.emergentagent.com"
       # Fernet key for MFA secret/backup-code envelope encryption.
       # app/auth/mfa.py:_get_fernet() requires this; with no default it
       # raises RuntimeError → 500 on every mfa/enroll/confirm call (CI run

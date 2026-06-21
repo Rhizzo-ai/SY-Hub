@@ -78,7 +78,8 @@ from app.services import budget_lines as line_svc
 from app.services import cost_code_scope as scope_svc
 from app.services.audit import record_audit
 from app.services.budget_errors import (
-    BudgetCreationError, BudgetNotFoundError, BudgetSelfApprovalError,
+    BudgetCreationError, BudgetNotFoundError, BudgetSealedError,
+    BudgetSelfApprovalError,
     BudgetStateError, BudgetValidationError,
 )
 
@@ -1020,6 +1021,7 @@ def clear_unbudgeted_line(
 
     404 if the line does not exist or is out of the caller's scope.
     422 if the line is not an unbudgeted line in the first place.
+    409 if the budget is Superseded or Closed (sealed — use a new version).
     403 if the caller lacks `budgets.clear_unbudgeted`.
     """
     try:
@@ -1030,6 +1032,10 @@ def clear_unbudgeted_line(
         # Pattern α — out-of-scope and not-found both return 404 with
         # the same generic phrasing; we do not leak existence.
         raise HTTPException(404, "Budget line not found")
+    except BudgetSealedError as exc:
+        # C2 B-variant: terminal-sealed budget (Superseded/Closed) — 409,
+        # consistent with every other frozen-state refusal in the codebase.
+        raise HTTPException(409, str(exc))
     except BudgetStateError as exc:
         # "line is not an unbudgeted line" — 422 (semantic).
         raise HTTPException(422, str(exc))

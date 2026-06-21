@@ -10,7 +10,74 @@ Each entry: date, prompt reference (if applicable), change, rationale.
 
 ## Entries
 
-## NEW-CRIT-1 + H1 — Role-assignment privilege-escalation fix
+## C2 — Seal the Illusory Budget Freeze (B-variant)
+
+Critical money-adjacent bug fix (Chat 63, decision locked by Rhys: **B-variant**).
+**Backend only — one new error class, one service guard + comment/metadata
+change (`app/services/budget_lines.py::clear_unbudgeted`), one route mapping
+line (`app/routers/budgets.py::clear_unbudgeted_line`), plus one new test file.
+No migration, no model column, no frontend.** Backlog
+(`docs/SY_Hub_Phase2_Backlog.md`) left untouched (operator-only). Closing doc:
+`docs/chat-summaries/chat-63-closing.md`.
+
+**Verification status at push:** HARD-STOP GATE CAPTURED AND OPERATOR-CLEARED
+against live Postgres (`/api/health` 200; alembic head unchanged at
+`0049_unbudgeted_order_lines`; full pytest run TWICE on a warm DB — second run
+`19 failed, 1683 passed, 1 skipped, 3 xpassed, 0 errors`, matching the standing
+19-failure baseline with the new test file 12/12 green; single continuous
+postmaster, no recycle during the gate run).
+
+### The hole
+
+`clear_unbudgeted` (the director "acknowledge unbudgeted spend" path, B102)
+**deliberately bypassed the freeze.** It took a raw
+`select(Budget)...with_for_update()` directly instead of going through the
+`_load_budget_for_write` gatekeeper, with an inline comment asserting the
+acknowledgement "should still be possible" even on a Locked/Closed budget. So a
+**Closed** ("sealed") budget could still be mutated through this one path — an
+inline judgement call by the original author, never an actual decision.
+
+### The fix (B-variant)
+
+`clear_unbudgeted` now blocks on `TERMINAL_BUDGET_STATUSES`
+(`{Superseded, Closed}`) only — **not** the full `LINE_FROZEN_BUDGET_STATUSES`.
+This asymmetry is intentional and is the whole point of B-variant:
+
+- **Locked → ALLOWED.** Locked is a soft freeze (it has an unlock transition),
+  so a director signing off real spend is reasonable and reversible. The audit
+  row now explicitly flags it: `on_frozen_budget: true`,
+  `budget_status_at_clear: "Locked"`.
+- **Superseded / Closed → BLOCKED.** Terminal sealed states. The new
+  `BudgetSealedError` (subclass of `BudgetStateError`) raises and the route maps
+  it to **409** (caught before the generic `BudgetStateError → 422` branch).
+  Late spend must go onto a NEW budget version, never a quiet edit to sealed
+  history.
+- **Draft / Active → ALLOWED, unchanged.** Not frozen; audit records
+  `on_frozen_budget: false`.
+
+### HTTP contract
+
+| Budget status        | clear-unbudgeted result            |
+|----------------------|------------------------------------|
+| Draft / Active       | 200 (unchanged; not frozen)        |
+| Locked               | 200, audited `on_frozen_budget:true`|
+| Superseded / Closed  | **409** (sealed — use a new version)|
+| not an unbudgeted line | 422 (unchanged semantic)         |
+| missing / out-of-scope | 404 (unchanged)                  |
+| caller lacks `budgets.clear_unbudgeted` | 403 (gate fires first) |
+
+### Files touched
+
+- `app/services/budget_errors.py` — new `BudgetSealedError(BudgetStateError)`.
+- `app/services/budget_lines.py` — terminal-seal guard in `clear_unbudgeted`,
+  stale comment replaced, audit metadata gains `budget_status_at_clear` +
+  `on_frozen_budget`.
+- `app/routers/budgets.py` — `except BudgetSealedError → 409` before the 422
+  branch; import + docstring line.
+- `tests/test_c2_unbudgeted_freeze.py` — NEW, 12 tests (status matrix,
+  idempotency, HTTP status codes, permission regression).
+
+
 
 SECURITY fix (Critical-fix plan, item 2). **Backend only — one production file
 (`app/routers/users.py`) + one new test file. No migration, no new permission,
@@ -4366,7 +4433,7 @@ with two new issues. Both fixed in-place; no new Build Pack.
   incompatible with a wildcard CORS_ORIGINS. ... Currently CORS_ORIGINS=''`.
   The CI env block hadn't set `CORS_ORIGINS` — locally it lives in
   `backend/.env`. Added `CORS_ORIGINS:
-  "https://sdlt-audit-fix.preview.emergentagent.com"` to the backend
+  "https://audit-lock.preview.emergentagent.com"` to the backend
   job env block in `.github/workflows/ci.yml` (value copied verbatim from
   `backend/.env`) plus a 6-line explanatory comment noting that CORS is
   never exercised in CI (pytest speaks server-to-server, no browser

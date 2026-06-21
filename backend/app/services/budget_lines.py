@@ -28,7 +28,8 @@ from app.models.entity import Entity
 from app.models.projects import Project
 from app.models.user import User
 from app.services.budget_errors import (
-    BudgetNotFoundError, BudgetStateError, BudgetValidationError,
+    BudgetNotFoundError, BudgetSealedError, BudgetStateError,
+    BudgetValidationError,
 )
 from app.services.budgets import (
     _scope_check_project, _load_budget_for_write, recompute_summary,
@@ -486,22 +487,13 @@ def clear_unbudgeted(
     if line.unbudgeted_cleared_at is not None:
         return line
 
-    # Lock the parent budget for the recompute. This:
-    #   - serialises concurrent directors hitting the same line
-    #   - is the canonical money-path lock pattern in this codebase
-    #     (mirrors update_line / create_item / delete_line).
-    # _load_budget_for_write checks LINE_FROZEN_BUDGET_STATUSES, but
-    # we tolerate that: if a budget went Locked/Closed between the
-    # line being created and the director acknowledging it, the
-    # acknowledgement should still be possible — the line's spend is
-    # already real and someone needs to sign it off. We pass
-    # allow_frozen=True so the helper does not block.
-    #
-    # ⚠ _load_budget_for_write may not currently support
-    # allow_frozen; if it does not, we re-lock by hand via a SELECT
-    # FOR UPDATE on the budget row. Inspected at HEAD — the helper
-    # raises on frozen statuses with no override. We therefore use
-    # the row-lock directly rather than the helper.
+    # Lock the parent budget for the recompute. This serialises concurrent
+    # directors hitting the same line and is the canonical money-path lock
+    # pattern in this codebase. We lock the row directly (not via
+    # _load_budget_for_write) because clear_unbudgeted intentionally permits
+    # acknowledgement on a Locked budget (B-variant, C2) — the helper would
+    # reject all LINE_FROZEN statuses including Locked. The terminal-seal
+    # guard below enforces the one status class we DO block: Superseded/Closed.
     budget = db.execute(
         select(Budget).where(Budget.id == line.budget_id).with_for_update()
     ).scalar_one()
@@ -513,6 +505,19 @@ def clear_unbudgeted(
     ])
     if line.unbudgeted_cleared_at is not None:
         return line
+
+    # ── C2 B-variant seal guard ──────────────────────────────────────────
+    # Locked is a soft freeze: a director may still acknowledge real
+    # unbudgeted spend (audited as frozen — see metadata below). But
+    # Superseded/Closed are terminal sealed states; late spend belongs on a
+    # NEW budget version, not a quiet edit to sealed history.
+    if budget.status in TERMINAL_BUDGET_STATUSES:
+        raise BudgetSealedError(
+            f"This budget is {budget.status} and is sealed. Unbudgeted spend "
+            f"cannot be acknowledged on a sealed budget — create a new budget "
+            f"version and acknowledge it there."
+        )
+    # ─────────────────────────────────────────────────────────────────────
 
     # ── Mutation ──
     before = {
@@ -566,6 +571,8 @@ def clear_unbudgeted(
             "event": "clear_unbudgeted",
             "budget_id": str(budget.id),
             "unbudgeted_source": line.unbudgeted_source,
+            "budget_status_at_clear": budget.status,
+            "on_frozen_budget": budget.status in LINE_FROZEN_BUDGET_STATUSES,
         },
         request=request,
     )

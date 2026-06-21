@@ -29,6 +29,22 @@ class BudgetStateError(BudgetError):
     """
 
 
+class BudgetSealedError(BudgetStateError):
+    """Acknowledgement (clear_unbudgeted) attempted on a terminally-sealed
+    budget (Superseded / Closed).
+
+    B-variant (C2, Chat 63): Locked is a soft freeze and clear_unbudgeted is
+    still permitted there; Superseded/Closed are terminal and sealed — late
+    unbudgeted spend must go onto a NEW budget version, never a quiet edit to
+    sealed history.
+
+    Subclasses BudgetStateError so any existing broad
+    `except BudgetStateError` still catches it, but the clear-unbudgeted route
+    maps it specifically to 409 (sealed-state violation) rather than 422
+    (not-an-unbudgeted-line). Always 409 at the route layer.
+    """
+
+
 class BudgetCreationError(BudgetError):
     """Bad source data when creating a budget from an appraisal (B5 guards).
 
