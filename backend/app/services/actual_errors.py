@@ -46,6 +46,16 @@ class BudgetLineNotInProjectError(ActualError):
     code = "budget_line_project_mismatch"
 
 
+class CommitmentLinkError(ActualError):
+    """A bill's linked_commitment_id is invalid — it does not reference an
+    existing PurchaseOrderLine, or that PO line sits on a different budget line
+    than the bill. Mapped to 422 (validation error), consistent with other
+    actuals validation failures (Chat 63 / C1-back)."""
+
+    http_status = 422
+    code = "commitment_link_invalid"
+
+
 class DuplicateExternalIdError(ActualError):
     http_status = 409
     code = "duplicate_external_id"

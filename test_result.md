@@ -267,7 +267,7 @@ agent_communication:
     message: |
       B107 "cost-code-first PO form" validation COMPLETE — ALL 6 CHECKS PASSED.
       
-      Tested against: https://audit-lock.preview.emergentagent.com
+      Tested against: https://sy-production-qa.preview.emergentagent.com
       Login: test-pm@example.test / TestUser-Dev-2026! (cookie-based, no MFA)
       
       Project ID: b2a265ef-dc30-4779-96f6-e139d1881e07
@@ -298,7 +298,7 @@ agent_communication:
     message: |
       BUG FIX VERIFICATION COMPLETE — BOTH FIXES VALIDATED SUCCESSFULLY.
       
-      Tested against: https://audit-lock.preview.emergentagent.com
+      Tested against: https://sy-production-qa.preview.emergentagent.com
       Login: test-pm@example.test / TestUser-Dev-2026! (no MFA, preferred for headless)
       Note: test-admin@example.test requires MFA setup which blocks headless testing
       
@@ -368,7 +368,7 @@ agent_communication:
     message: |
       BLANK QUANTITY VALIDATION BUG FIX VERIFICATION COMPLETE — ✅ ALL TESTS PASSED
       
-      Tested against: https://audit-lock.preview.emergentagent.com
+      Tested against: https://sy-production-qa.preview.emergentagent.com
       Login: test-pm@example.test / TestUser-Dev-2026! (no MFA)
       Target: /projects/b2a265ef-dc30-4779-96f6-e139d1881e07/purchase-orders/new
       

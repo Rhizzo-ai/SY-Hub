@@ -22,7 +22,7 @@ from tests.conftest import login_with_auto_enroll, plain_login
 
 BASE_URL = (
     os.environ.get("REACT_APP_BACKEND_URL", "").rstrip("/")
-    or "https://audit-lock.preview.emergentagent.com"
+    or "https://sy-production-qa.preview.emergentagent.com"
 )
 TEST_PASSWORD = "TestUser-Dev-2026!"
 READONLY_EMAIL = "test-readonly@example.test"

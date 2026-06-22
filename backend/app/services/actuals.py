@@ -34,11 +34,12 @@ from app.models.actuals import (
 from app.models.budgets import Budget, BudgetLine, TERMINAL_BUDGET_STATUSES
 from app.models.entity import Entity
 from app.models.projects import Project
+from app.models.purchase_orders import PurchaseOrderLine
 from app.models.rbac import UserRole, user_role_projects
 from app.models.user import User
 from app.services.actual_errors import (
     ActualError, ActualNotFoundError, BudgetLineLockedError,
-    BudgetLineNotInProjectError, DuplicateExternalIdError,
+    BudgetLineNotInProjectError, CommitmentLinkError, DuplicateExternalIdError,
     ImmutableFieldError, InvalidTransitionError, MissingRequiredFieldError,
 )
 from app.services.audit import record_audit
@@ -139,6 +140,34 @@ def _validate_budget_line_belongs_to_project(
     return line
 
 
+def _validate_linked_commitment(
+    db: Session, *, budget_line_id: uuid.UUID,
+    linked_commitment_id: Optional[uuid.UUID],
+) -> None:
+    """If a bill links to a commitment, that commitment must be a
+    PurchaseOrderLine sitting on the SAME budget line as the bill (Chat 63 /
+    C1-back, Option A).
+
+    NULL is allowed (standalone cost). A non-existent PO line, or a PO line on
+    a different budget line, is rejected — otherwise the derived
+    invoiced-against-commitment maths in budgets_reconciliation would silently
+    drop the link and we'd be back to a double-count.
+    """
+    if linked_commitment_id is None:
+        return
+    po_line = db.get(PurchaseOrderLine, linked_commitment_id)
+    if po_line is None:
+        raise CommitmentLinkError(
+            "linked_commitment_id does not reference an existing PO line.",
+        )
+    if po_line.budget_line_id != budget_line_id:
+        raise CommitmentLinkError(
+            "The linked PO line is on a different budget line than this bill. "
+            "A bill can only be linked to a commitment on its own budget line.",
+        )
+
+
+
 # ----------------------------------------------------------------------
 # Auto-calc helpers
 # ----------------------------------------------------------------------
@@ -226,6 +255,13 @@ def create_actual(
 
     _validate_budget_line_belongs_to_project(
         db, payload.budget_line_id, payload.project_id,
+    )
+    # Chat 63 / C1-back: a linked commitment must be a PO line on the SAME
+    # budget line as this bill (or NULL). Validated BEFORE the row is flushed.
+    _validate_linked_commitment(
+        db,
+        budget_line_id=payload.budget_line_id,
+        linked_commitment_id=payload.linked_commitment_id,
     )
 
     entity = db.get(Entity, payload.entity_id)
@@ -348,6 +384,19 @@ def update_draft_actual(
     if "budget_line_id" in data:
         _validate_budget_line_belongs_to_project(
             db, a.budget_line_id, a.project_id,
+        )
+
+    # Chat 63 / C1-back: re-validate the commitment link against the FINAL
+    # row state whenever EITHER the budget line OR the link itself changed.
+    # Validating on either-field-change closes the "move-line trap": a bill
+    # moved to a new budget line while its existing linked_commitment_id still
+    # points at a PO line on the OLD line would otherwise leave a foreign link
+    # that the derived maths drops — re-creating a (smaller) double-count.
+    if "budget_line_id" in data or "linked_commitment_id" in data:
+        _validate_linked_commitment(
+            db,
+            budget_line_id=a.budget_line_id,
+            linked_commitment_id=a.linked_commitment_id,
         )
 
     # Recompute derived

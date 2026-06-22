@@ -54,6 +54,40 @@ PO_COMMITTED_STATUSES = (
 )
 
 
+def _invoiced_against_commitment_for_line(
+    db: Session, line: BudgetLine,
+) -> Decimal:
+    """Sum of counted-status bills on THIS budget line whose
+    linked_commitment_id points at a PurchaseOrderLine that also sits on
+    THIS budget line.
+
+    This is the portion of the line's PO commitments that has actually been
+    invoiced. Derived fresh each recompute (NOT a stored running tally) so it
+    self-corrects on every actual post/void/dispute/pay — all of which already
+    call recompute_for_line.
+
+    Bills with linked_commitment_id IS NULL (standalone costs — receipts,
+    expenses) are intentionally NOT counted here: they add to actuals only and
+    reduce no commitment. Bills linked to a PO line on a DIFFERENT budget line
+    are also excluded (the create/update validation in services/actuals.py
+    prevents that state, but the join condition enforces it defensively
+    regardless).
+    """
+    invoiced = db.execute(
+        select(
+            func.coalesce(func.sum(Actual.net_amount), 0)
+        ).select_from(Actual).join(
+            PurchaseOrderLine,
+            PurchaseOrderLine.id == Actual.linked_commitment_id,
+        ).where(
+            Actual.budget_line_id == line.id,
+            Actual.status.in_(COUNTED_STATUSES),
+            PurchaseOrderLine.budget_line_id == line.id,
+        )
+    ).scalar()
+    return Decimal(invoiced or 0)
+
+
 def _po_committed_not_invoiced_for_line(
     db: Session, line: BudgetLine,
 ) -> Decimal:
@@ -78,8 +112,17 @@ def _po_committed_not_invoiced_for_line(
         )
     ).scalar()
     committed_d = Decimal(committed or 0)
-    invoiced_d = Decimal(line.invoiced_against_commitment or 0)
-    return committed_d - invoiced_d
+    # Chat 63 / C1-back: the invoiced-against-commitment figure is now DERIVED
+    # fresh from the linked bills (NOT read off the stored column, which was a
+    # default-0 lie that produced the £20k double-count). See
+    # _invoiced_against_commitment_for_line.
+    invoiced_d = _invoiced_against_commitment_for_line(db, line)
+    # Clamp the PO term at zero: a fully- or over-invoiced PO contributes 0 to
+    # committed-not-invoiced (the excess shows up in actuals only). Before this
+    # fix invoiced_d was always 0 so the term could never go negative; deriving
+    # it for real introduces the over-PO case and an unclamped negative would
+    # silently mask genuine remaining commitment elsewhere on the line.
+    return max(committed_d - invoiced_d, Decimal("0"))
 
 
 def recompute_for_line(db: Session, budget_line_id: uuid.UUID) -> Optional[Decimal]:
@@ -145,6 +188,14 @@ def recompute_for_line(db: Session, budget_line_id: uuid.UUID) -> Optional[Decim
     po_committed_not_invoiced = _po_committed_not_invoiced_for_line(db, line)
 
     line.actuals_to_date = actuals_to_date
+    # Chat 63 / C1-back: persist the derived invoiced-against-commitment so the
+    # stored column matches reality. The column is now a cache of the derived
+    # value, written ONLY here (single-writer), never hand-tallied by the
+    # actuals transitions. Read-side consumers (reports, Xero later) now see
+    # the truth instead of a perpetual 0.
+    line.invoiced_against_commitment = _invoiced_against_commitment_for_line(
+        db, line
+    ).quantize(Decimal("0.01"))
     # Chat 39 §R2 A1: single-writer formula.
     # committed_not_invoiced = retention pending (money committed by contract,
     # not yet released for cash) + PO committed-not-invoiced (purchase orders
