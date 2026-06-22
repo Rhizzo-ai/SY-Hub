@@ -10,6 +10,78 @@ Each entry: date, prompt reference (if applicable), change, rationale.
 
 ## Entries
 
+## C1-back — Budget Double-Counts Committed Cost (backend + backfill)
+
+Critical money-accuracy bug fix + one-off data backfill (Chat 63; decisions
+locked by Rhys). **Backend only — one new derive helper + two edits in
+`app/services/budgets_reconciliation.py`; one validation helper + its call on
+the create AND update paths in `app/services/actuals.py`; one new error class
+`CommitmentLinkError` in `app/services/actual_errors.py` (auto-mapped to 422 by
+the existing generic `_raise_for` in `app/routers/actuals.py`); one new backfill
+Alembic migration `0050_backfill_invoiced_commit`; one new test file. No
+frontend.** Backlog (`docs/SY_Hub_Phase2_Backlog.md`) left untouched
+(operator-only). Closing doc: `docs/chat-summaries/chat-63-closing.md`.
+
+**Verification status at push:** HARD-STOP GATE CAPTURED AND OPERATOR-CLEARED
+against live Postgres (`/api/health` 200; alembic head advanced to
+`0050_backfill_invoiced_commit`, migration round-trips `downgrade -1`/`upgrade
+head` cleanly; full pytest run TWICE on a warm DB — second run
+`20 failed, 1698 passed, 1 skipped, 3 xpassed` with the new
+`test_c1_committed_double_count.py` **16/16 green**; the +1 vs the standing
+19-failure baseline was the mechanical head-pin in
+`tests/test_packages_service.py` which was bumped 0049→0050 in this same commit,
+returning the suite to the clean 19-failure baseline; single continuous
+postmaster, no recycle during the gate run).
+
+### The bug — the double-count
+
+`committed_not_invoiced = retention_pending + (po_committed −
+invoiced_against_commitment)`. But **nothing ever wrote
+`BudgetLine.invoiced_against_commitment`** — it defaulted to 0 and stayed 0, so
+the PO bucket never decreased as bills arrived. A £10k PO (committed £10k) plus
+its £10k bill (actuals £10k) read as **£20k of spend/forecast** — the same £10k
+counted twice. Forecast-final-cost and remaining-budget were inflated.
+
+### The fix — derive, don't tally; link at PO-line level
+
+- `invoiced_against_commitment` is now a **DERIVED** figure computed fresh inside
+  `recompute_for_line` (new helper `_invoiced_against_commitment_for_line`): the
+  sum of counted-status bills on the line whose `linked_commitment_id` points at
+  a `PurchaseOrderLine` on that **same** budget line. It is then **persisted**
+  back onto the cached column (single-writer, written only in
+  `recompute_for_line`, never hand-tallied by the actuals transitions — every
+  transition already calls `recompute_for_line`, so the figure self-corrects on
+  post/void/dispute/pay).
+- The PO term is **clamped at zero** (`max(committed − invoiced, 0)`): a
+  fully/over-invoiced PO contributes 0 to committed-not-invoiced and the excess
+  shows up in actuals only, instead of producing a negative that could mask
+  genuine remaining commitment elsewhere on the line.
+- **Link integrity validated** on actual create AND update
+  (`_validate_linked_commitment`): a `linked_commitment_id` must reference an
+  existing PO line on the bill's own budget line (NULL allowed = standalone
+  cost). The update path validates whenever EITHER `budget_line_id` OR
+  `linked_commitment_id` changes — closing the "move-line trap" (a bill moved to
+  a new line while its link still points at the old line).
+
+### Backfill
+
+`0050_backfill_invoiced_commit` is a **data-only** migration that reuses
+`recompute_for_line` verbatim (Session bound to the migration connection) to
+recompute every existing budget line — so backfill and live path cannot drift.
+Naturally idempotent (re-deriving gives the same answer); `downgrade()` is a
+documented no-op (cached aggregates are re-derivable; no schema change).
+
+### Tests + live proof
+
+`tests/test_c1_committed_double_count.py` (16, all DB-level assertions): core
+maths (full PO, linked-bill-reduces-committed, partial, over-invoice clamp,
+standalone NULL-link, multi-PO/multi-bill), lifecycle (void restores, dispute
+counts, retention composes), link validation (nonexistent/foreign rejected 422,
+NULL allowed, update re-link + move-line trap rejected 422), and backfill
+(fixes pre-existing double-count, idempotent, matches live recompute). Live
+echo on real rows confirmed **£20k → £10k** correction, NULL-link bill leaving
+committed untouched, and a backfill run fixing a seeded broken line.
+
 ## C2 — Seal the Illusory Budget Freeze (B-variant)
 
 Critical money-adjacent bug fix (Chat 63, decision locked by Rhys: **B-variant**).

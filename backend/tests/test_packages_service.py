@@ -88,19 +88,19 @@ def budget(admin, db_engine, project):
 # T-M : migration + schema
 # ==========================================================================
 
-def test_TM_1_alembic_head_is_0049(db_engine):
-    """Pack 3.5 — alembic head reports 0049 and all 6 tables exist.
+def test_TM_1_alembic_head_is_0050(db_engine):
+    """Pack 3.5 — alembic head reports 0050 and all 6 tables exist.
 
-    Bumped from 0048 → 0049 as part of B102 (Unbudgeted-Order Handling).
-    Migration 0049 adds six columns on `budget_lines` and extends the
-    `permission_action` enum; the package tables introduced in 0047/0048
-    are untouched.
+    Bumped from 0049 → 0050 as part of C1-back (Budget Double-Counts Committed
+    Cost): migration 0050_backfill_invoiced_commit is a data-only backfill that
+    recomputes invoiced_against_commitment / committed_not_invoiced on existing
+    budget lines. The package tables introduced in 0047/0048 are untouched.
     """
     with db_engine.connect() as c:
         head = c.execute(text(
             "SELECT version_num FROM alembic_version"
         )).scalar()
-    assert head == "0049_unbudgeted_order_lines", head
+    assert head == "0050_backfill_invoiced_commit", head
     expected_tables = {
         "packages", "package_lines", "package_bids", "package_bid_lines",
         "package_awards", "package_award_lines",
