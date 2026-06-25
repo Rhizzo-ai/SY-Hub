@@ -23,3 +23,17 @@ Password (all accounts): from `backend/.env::TEST_USER_PASSWORD` — currently `
 | `test-archived@example.test`   | `read_only`      | Archived. Login should fail.           |
 
 For Pack 3.5 screenshot proofs (Gates 5/6/7), use `test-pm@example.test`. For LIVE-API award proofs (Gates 3/4), `test-admin@example.test` works after MFA reset.
+
+
+## C1-front (Chat 64) demo data — live click-through pre-check
+Seed: `backend/scripts/seed_c1front_demo.py` (re-run after any DB reset; makes a
+NEW uuid-suffixed project under the Shrewsbury entity each run, visible to
+`test-pm`). Use **test-pm@example.test** for the browser flow (has
+`pos.view_sensitive` + `actuals.create`, no MFA).
+
+Latest run:
+- New-actual screen: `/projects/d2a3729a-7ec4-408a-95d5-783520d5ff97/actuals/new`
+- "Groundworks": two PO lines — one selectable "£6,000.00 remaining of
+  £10,000.00", one greyed "(fully invoiced)" £0.00.
+- "Roofing": one PO line "£8,000.00 remaining of £8,000.00".
+- "Landscaping": NO POs (empty/standalone case).

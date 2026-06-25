@@ -245,15 +245,28 @@ frontend:
       - working: true
         agent: "testing"
         comment: "✅ PASS - Blank quantity validation working correctly. PART 1: Blank quantity field is BLOCKED with error message 'Line 1: quantity is required and must be greater than 0.' (data-testid='po-form-error'). Form does NOT navigate away, stays on /new URL. OPTIONAL: Quantity = 0 also correctly blocked with same error message. PART 2: Valid quantity (1) and unit rate (100) allows successful PO creation. Draft created with PO number 'PO-0001', navigated to detail page (/purchase-orders/dd3d7174-8fc1-4293-a9b6-fdf4cd00052b). Form calculations correct (Net £100.00, VAT £20.00, Gross £120.00). NO runtime error overlay at any point. Console: 4 × 401 auth errors (non-blocking). Validation logic in validatePoLines() function checks: qtyBlank || !Number.isFinite(qty) || qty <= 0. Screenshots: part1-before-submit-blank-qty.png, part1-validation-error-blank-qty.png, optional-validation-error-qty-zero.png, part2-before-submit-valid.png, part2-po-detail-page.png"
+  
+  - task: "BILL-ENTRY UI: Force-the-choice PO validation (7 test items)"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/components/actuals/CommitmentLinePicker.jsx, frontend/src/components/actuals/CreateActualSheet.jsx, frontend/src/components/actuals/BudgetLinePicker.jsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "testing"
+        comment: "❌ ENVIRONMENT/DATA SETUP ISSUE - Testing BLOCKED. Project d2a3729a-7ec4-408a-95d5-783520d5ff97 has NO active or locked budget. Login successful (test-pm@example.test, no MFA). Form loaded successfully. Budget line picker shows amber warning: 'No active or locked budget on this project. Create or activate a budget before posting actuals.' Cannot test any of the 7 items (GATE, REMAINING DISPLAY, STANDALONE, EMPTY CASE, RESET, SUBMIT PAYLOADS, FULLY-INVOICED) because budget line selection is prerequisite. CODE REVIEW: ✅ CommitmentLinePicker.jsx correctly implements force-the-choice logic with proper data-testids. ✅ CreateActualSheet.jsx validation gate (lines 127-136) correctly blocks submit without PO choice. ✅ BudgetLinePicker.jsx correctly shows empty state when no budget exists. All required data-testids present. REQUIRED ACTION: Activate budget on project with budget lines 'Groundworks' (2 PO lines: £6,000 remaining + £0 fully-invoiced), 'Roofing' (1 PO line: £8,000 remaining), 'Landscaping' (0 PO lines). OR provide different project ID with correct test data. This is test data issue, NOT code defect. Screenshots: 01-form-loaded.png (amber warning visible), error-screenshot.png (form state)."
 
 metadata:
   created_by: "testing_agent"
-  version: "107.1"  # B107 validation + blank quantity bug fix
-  test_sequence: 2
+  version: "107.2"  # B107 validation + blank quantity bug fix + bill-entry UI pre-check
+  test_sequence: 3
   run_ui: true
 
 test_plan:
   current_focus:
+    - "Bill-entry UI testing BLOCKED - awaiting test data setup"
     - "All B107 checks completed and passed"
     - "Bug fix verification completed and passed"
     - "PO draft creation with number prefix - COMPLETED AND PASSED"
@@ -286,6 +299,45 @@ agent_communication:
       
       NOTE: This is an environment configuration issue, not a feature failure. The bill-entry UI code
       (CommitmentLinePicker.jsx, CreateActualSheet.jsx) appears correctly implemented based on code review.
+  
+  - agent: "testing"
+    message: |
+      ❌ ENVIRONMENT/DATA SETUP ISSUE: Bill-entry UI testing BLOCKED - No active budget on test project
+      
+      PROBLEM: Project d2a3729a-7ec4-408a-95d5-783520d5ff97 has NO active or locked budget
+      
+      DETAILS:
+      - Login: test-pm@example.test / TestUser-Dev-2026! ✅ SUCCESS (no MFA)
+      - Navigation: /projects/d2a3729a-7ec4-408a-95d5-783520d5ff97/actuals/new ✅ SUCCESS
+      - Form loaded: "Create Draft actual" sheet opened ✅ SUCCESS
+      - Budget line picker: Shows amber warning "No active or locked budget on this project. Create or activate a budget before posting actuals."
+      - Expected: Budget lines "Groundworks", "Roofing", "Landscaping" with configured PO lines
+      - Actual: NO budget lines available (no active/locked budget exists)
+      
+      IMPACT:
+      - Cannot test any of the 7 test items (all require selecting a budget line first)
+      - Budget line picker does NOT render dropdown when no budget exists (by design, see BudgetLinePicker.jsx lines 48-57)
+      - Purchase order section shows "Select a budget line first." (cannot proceed)
+      
+      CODE REVIEW FINDINGS:
+      ✅ CommitmentLinePicker.jsx: Correctly implements force-the-choice logic with proper data-testids
+      ✅ CreateActualSheet.jsx: Validation gate at lines 127-136 correctly blocks submit without PO choice
+      ✅ BudgetLinePicker.jsx: Correctly shows empty state when no active/locked budget exists
+      ✅ All required data-testids present: commitment-picker, commitment-picker-empty, commitment-picker-line-{id}, commitment-picker-standalone, commitment-picker-error, commitment-reset-note
+      
+      REQUIRED ACTION:
+      1. Activate a budget on project d2a3729a-7ec4-408a-95d5-783520d5ff97 with budget lines:
+         - "Groundworks" with 2 PO lines (one selectable £6,000 remaining, one fully-invoiced £0)
+         - "Roofing" with 1 PO line (£8,000 remaining)
+         - "Landscaping" with 0 PO lines (empty case)
+      2. OR provide a different project ID that has the correct test data setup
+      3. OR manually set up the test data as specified in the review request
+      
+      SCREENSHOT EVIDENCE:
+      - 01-form-loaded.png: Shows amber warning "No active or locked budget on this project"
+      - error-screenshot.png: Shows form state when budget picker cannot render
+      
+      NOTE: This is a test data/environment setup issue, NOT a code defect. The bill-entry UI code appears correctly implemented based on code review.
       
   - agent: "testing"
     message: |

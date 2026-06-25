@@ -87,8 +87,12 @@ def main():
     user = db.get(User, admin.id)
     perms = _perms(user)
     entity_id = db.execute(text(
-        "SELECT id FROM entities WHERE tenant_id=:t ORDER BY created_at LIMIT 1"
+        "SELECT id FROM entities WHERE tenant_id=:t AND legal_name LIKE '%Shrewsbury%' LIMIT 1"
     ), {"t": admin.tenant_id}).scalar()
+    if entity_id is None:
+        entity_id = db.execute(text(
+            "SELECT id FROM entities WHERE tenant_id=:t ORDER BY created_at LIMIT 1"
+        ), {"t": admin.tenant_id}).scalar()
     cc = db.execute(text(
         "SELECT id, code FROM cost_codes ORDER BY code LIMIT 1"
     )).first()
@@ -165,8 +169,9 @@ def main():
     supplier_id = uuid.uuid4()
     db.execute(text("""
         INSERT INTO suppliers (id, tenant_id, name, created_by, updated_by)
-        VALUES (:id, :t, 'Demo Supplier', :u, :u)
-    """), {"id": supplier_id, "t": admin.tenant_id, "u": admin.id})
+        VALUES (:id, :t, :nm, :u, :u)
+    """), {"id": supplier_id, "t": admin.tenant_id, "u": admin.id,
+           "nm": f"Demo Supplier {sfx}"})
     db.commit()
 
     # PO-DEMO-A: two lines on Groundworks
