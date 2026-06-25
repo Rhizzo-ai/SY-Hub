@@ -265,6 +265,30 @@ test_plan:
 agent_communication:
   - agent: "testing"
     message: |
+      ❌ ENVIRONMENT ISSUE: Cannot proceed with "force-the-choice" bill-entry UI testing
+      
+      PROBLEM: test-finance@example.test user has MFA (Two-Factor Authentication) enabled
+      
+      DETAILS:
+      - Review request specifies: "LOGIN (cookie-based, no MFA): email = test-finance@example.test"
+      - Expected: User should NOT require MFA for headless testing
+      - Actual: After successful login POST, app redirects to "Two-factor verification" page
+      - Screenshot evidence: 00-login-filled.png shows credentials entered, error-screenshot.png shows MFA prompt
+      
+      IMPACT:
+      - Cannot complete any of the 7 test items for the bill-entry UI
+      - Headless Playwright testing cannot proceed past MFA screen (requires manual TOTP code entry)
+      
+      REQUIRED ACTION:
+      1. Disable MFA for test-finance@example.test user in the preview environment, OR
+      2. Provide alternative test credentials with finance permissions and no MFA, OR
+      3. Provide MFA bypass mechanism for automated testing
+      
+      NOTE: This is an environment configuration issue, not a feature failure. The bill-entry UI code
+      (CommitmentLinePicker.jsx, CreateActualSheet.jsx) appears correctly implemented based on code review.
+      
+  - agent: "testing"
+    message: |
       B107 "cost-code-first PO form" validation COMPLETE — ALL 6 CHECKS PASSED.
       
       Tested against: https://prod-property-hub.preview.emergentagent.com
