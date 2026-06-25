@@ -1129,3 +1129,37 @@ triggers the feature should eventually fire, so notifications aren't a retrofit.
   the £ overrun clearly, record it, let it through. Deliberately deferred from
   C1-back to keep the money fix isolated. Candidate notify-the-PM/director
   trigger when notifications land.
+
+## Chat 64 addition (2026-06-25)
+
+### B-BUDGET-DRILLDOWN — budget line → underlying POs / bills / invoices (design-TBD)
+
+Logged Chat 64 (operator, during C1-front eyeball). The budget screen
+currently shows summary figures per line only (committed, actuals,
+committed-not-invoiced, FTC, FFC, variance). There is no way to click a
+line and see the underlying transactions that make up those totals — the
+POs behind "committed", the bills/actuals behind "actuals to date", etc.
+
+Operator expectation surfaced live: the budget should be interrogable, not
+a static figures grid — mirrors Buildertrend's job-costing drill-down.
+
+**Status: design-first, NOT yet specced.** Presentation undecided
+(inline expandable row vs side panel vs click-a-figure-see-that-slice).
+Resolve the UX shape at the start of its own session before any Build Pack.
+
+**Likely scope when picked up:**
+- Per-line PO list (the C1-front `remaining_amount` serialiser + the
+  budget-line PO endpoint already exist and can be reused).
+- Per-line actuals/bills list (actuals are already queryable by budget
+  line — `useActualsForBudgetLine` exists frontend-side).
+- A drill-down surface on the budget grid (BudgetLinesGrid). Pairs with
+  the existing HIGH-PRIORITY "BudgetLinesGrid v2 (BT-style)" backlog item —
+  check whether this folds into that work rather than duplicating it.
+- Permission-gate sensitive money behind `budgets.view_sensitive` /
+  `pos.view_sensitive` as the rest of the stack does.
+
+**Dependencies / reuse:** C1-back (committed/invoiced netting), C1-front
+(`remaining_amount`), existing budget-line PO + actuals endpoints. No new
+backend data expected — this is read/aggregation + UI.
+
+Notification trigger: none.
