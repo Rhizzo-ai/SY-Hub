@@ -26,6 +26,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from app.auth.permissions import UserPermissions
+from app.models.actuals import Actual
 from app.models.budgets import Budget, BudgetLine
 from app.models.purchase_orders import (
     PurchaseOrder,
@@ -44,7 +45,7 @@ from app.services.budget_errors import (
     BudgetStateError,
     BudgetValidationError,
 )
-from app.services.budgets_reconciliation import recompute_for_po
+from app.services.budgets_reconciliation import COUNTED_STATUSES, recompute_for_po
 from app.services.po_authz import (
     EditPermission,
     PoNotFound,
@@ -1024,6 +1025,53 @@ def get_po(
 # Serialisation
 # ─────────────────────────────────────────────────────────────────────────
 
+def remaining_by_line(
+    db: Session, lines: Iterable[PurchaseOrderLine],
+) -> dict[str, str]:
+    """Map ``{po_line_id (str): remaining (str, 2dp)}`` for the given PO lines.
+
+    C1-front (Chat 64) §R3.1. For each passed PO line::
+
+        remaining = po_line.net_amount
+                    − Σ Actual.net_amount for counted-status bills whose
+                      linked_commitment_id == po_line.id
+
+    clamped at zero (an over-invoiced line reports ``"0.00"``, never negative —
+    mirrors the C1-back clamp). Draft / Void bills do NOT reduce remaining:
+    ``COUNTED_STATUSES`` (Posted / Paid / Disputed) is *imported* from
+    budgets_reconciliation, never re-declared here, so the remaining figure and
+    the budget engine's "invoiced against commitment" can never drift.
+
+    A SINGLE aggregated query (``GROUP BY linked_commitment_id``) covers every
+    passed line id — never one query per line.
+    """
+    lines_by_id: dict[uuid.UUID, PurchaseOrderLine] = {ln.id: ln for ln in lines}
+    if not lines_by_id:
+        return {}
+    rows = db.execute(
+        select(
+            Actual.linked_commitment_id,
+            func.coalesce(func.sum(Actual.net_amount), 0),
+        )
+        .where(
+            Actual.linked_commitment_id.in_(list(lines_by_id.keys())),
+            Actual.status.in_(COUNTED_STATUSES),
+        )
+        .group_by(Actual.linked_commitment_id)
+    ).all()
+    invoiced_by_id: dict[uuid.UUID, Decimal] = {
+        row[0]: Decimal(row[1] or 0) for row in rows
+    }
+    result: dict[str, str] = {}
+    for line_id, line in lines_by_id.items():
+        invoiced = invoiced_by_id.get(line_id, Decimal("0"))
+        remaining = Decimal(line.net_amount) - invoiced
+        if remaining < 0:
+            remaining = Decimal("0")
+        result[str(line_id)] = str(remaining.quantize(Decimal("0.01")))
+    return result
+
+
 # Fields gated behind `pos.view_sensitive` (pricing).
 _HEADER_SENSITIVE: frozenset[str] = frozenset({
     "subtotal_amount", "vat_amount", "total_amount",
@@ -1031,10 +1079,16 @@ _HEADER_SENSITIVE: frozenset[str] = frozenset({
 
 _LINE_SENSITIVE: frozenset[str] = frozenset({
     "unit_rate", "net_amount", "vat_amount", "gross_amount",
+    # C1-front (Chat 64) §R3.2 — derived per-line remaining is sensitive
+    # exactly like net_amount: nulled for callers without pos.view_sensitive.
+    "remaining_amount",
 })
 
 
-def _ser_line(line: PurchaseOrderLine, *, include_sensitive: bool) -> dict[str, Any]:
+def _ser_line(
+    line: PurchaseOrderLine, *, include_sensitive: bool,
+    remaining_by_line_id: dict[str, str] | None = None,
+) -> dict[str, Any]:
     base: dict[str, Any] = {
         "id": str(line.id),
         "budget_line_id": str(line.budget_line_id),
@@ -1055,6 +1109,15 @@ def _ser_line(line: PurchaseOrderLine, *, include_sensitive: bool) -> dict[str, 
             "vat_amount": str(line.vat_amount),
             "gross_amount": str(line.gross_amount),
         })
+        # C1-front §R3.2 — derived, read-only. Present only when the caller
+        # supplied a remaining map AND it contains this line; otherwise null
+        # (all ~9 legacy serialise() callers pass no map → emit null,
+        # preserving backward-compat). Sensitivity nulling (the else branch
+        # below) takes precedence for callers without pos.view_sensitive.
+        base["remaining_amount"] = (
+            remaining_by_line_id.get(str(line.id))
+            if remaining_by_line_id is not None else None
+        )
     else:
         for k in _LINE_SENSITIVE:
             base[k] = None
@@ -1063,8 +1126,14 @@ def _ser_line(line: PurchaseOrderLine, *, include_sensitive: bool) -> dict[str, 
 
 def serialise(
     po: PurchaseOrder, *, include_sensitive: bool,
+    remaining_by_line_id: dict[str, str] | None = None,
 ) -> dict[str, Any]:
-    """JSON-safe header + lines projection."""
+    """JSON-safe header + lines projection.
+
+    ``remaining_by_line_id`` (C1-front §R3.2) is an optional ``{po_line_id:
+    remaining}`` map forwarded to each line. Defaults to ``None`` so every
+    existing call site keeps working and emits ``remaining_amount: null``.
+    """
     base: dict[str, Any] = {
         "id": str(po.id),
         "tenant_id": str(po.tenant_id),
@@ -1118,7 +1187,10 @@ def serialise(
         "created_at": po.created_at.isoformat() if po.created_at else None,
         "updated_at": po.updated_at.isoformat() if po.updated_at else None,
         "lines": [
-            _ser_line(line, include_sensitive=include_sensitive)
+            _ser_line(
+                line, include_sensitive=include_sensitive,
+                remaining_by_line_id=remaining_by_line_id,
+            )
             for line in sorted(po.lines, key=lambda ln: ln.line_number)
         ],
     }

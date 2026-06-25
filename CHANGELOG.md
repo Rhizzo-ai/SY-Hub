@@ -10,6 +10,51 @@ Each entry: date, prompt reference (if applicable), change, rationale.
 
 ## Entries
 
+## C1-front — Force-the-Choice Bill-Entry UI (frontend + 1 read-only backend field)
+
+Frontend partner to C1-back (Chat 64; decisions locked by Rhys). Makes the
+bill-entry commitment link **explicit and mandatory**: a bill on a budget line
+must either pick one of that line's open PO lines or tick **"No PO available"**.
+**Scope — frontend-led with ONE additive, read-only backend field. NO
+migration, NO permission, NO enum, NO change to actuals money maths / budget
+recompute / PO lifecycle / `_validate_linked_commitment`.** Alembic head
+unchanged at `0050_backfill_invoiced_commit`.
+
+- **Backend:** derived `remaining_amount` on PO lines —
+  `app/services/purchase_orders.py` gains `remaining_by_line()` (single
+  `GROUP BY` query; `net_amount − Σ counted-status linked bills`, clamped at 0;
+  `COUNTED_STATUSES` **imported** from `budgets_reconciliation`, never
+  re-declared). `_ser_line`/`serialise` gain an optional `remaining_by_line_id`
+  kwarg (default `None`); `remaining_amount` added to `_LINE_SENSITIVE` (nulled
+  without `pos.view_sensitive`, like `net_amount`). All ~9 existing callers emit
+  `remaining_amount: null` (backward-compatible). `routers/purchase_orders.py`'s
+  `GET /v1/budget-lines/{line_id}/purchase-orders` builds + threads the map for
+  lines on that budget line; route signature / permission / Pattern-α /
+  envelope unchanged. Other endpoints emit `null`.
+- **Frontend:** new `usePurchaseOrdersForBudgetLine` hook; new
+  `CommitmentLinePicker` (radio-group of eligible PO lines + "No PO available";
+  client-side eligibility by `PO_COMMITTED_STATUSES` + `budget_line_id`;
+  empty→auto-standalone+note; fully-invoiced greyed; `formatMoney`, no
+  "£null"). `CreateActualSheet` wires the gate (block-on-submit with inline
+  error), the budget-line-change reset note, and the submit payload (standalone
+  omits `linked_commitment_id`; a chosen line sends it).
+- **Tests:** `backend/tests/test_po_line_remaining.py` (11),
+  `frontend/.../__tests__/CommitmentLinePicker.test.jsx` (9) and
+  `CreateActualSheet.commitment.test.jsx` (4).
+
+**Verification status at push:** new backend tests **11/11 green** on live
+Postgres (money proofs: £10k − £4k Posted → `"6000.00"`; over-invoice → clamp
+`"0.00"`; null without `pos.view_sensitive`; api endpoint → `"150.00"` /
+read-only `null`). Affected backend suites regression-clean (PO api/unit +
+reconciliation = 76; actuals service/routes = 74). New frontend RTL **13/13
+green**; `webpack compiled successfully`. Full-suite 19-failure baseline is the
+operator's CI figure (the Emergent container ships no Postgres and its writable
+layer is periodically wiped; PG was stood up locally to run the above). Live
+click-through is the operator's gate. Closing doc:
+`docs/chat-summaries/chat-64-closing.md`. Backlog
+(`docs/SY_Hub_Phase2_Backlog.md`) left untouched (operator-only). Forward hooks
+logged: `B-OVER-PO-WARN` and an edit-existing-bill PO re-link UI.
+
 ## C1-back — Budget Double-Counts Committed Cost (backend + backfill)
 
 Critical money-accuracy bug fix + one-off data backfill (Chat 63; decisions
@@ -4505,7 +4550,7 @@ with two new issues. Both fixed in-place; no new Build Pack.
   incompatible with a wildcard CORS_ORIGINS. ... Currently CORS_ORIGINS=''`.
   The CI env block hadn't set `CORS_ORIGINS` — locally it lives in
   `backend/.env`. Added `CORS_ORIGINS:
-  "https://sy-production-qa.preview.emergentagent.com"` to the backend
+  "https://prod-property-hub.preview.emergentagent.com"` to the backend
   job env block in `.github/workflows/ci.yml` (value copied verbatim from
   `backend/.env`) plus a 6-line explanatory comment noting that CORS is
   never exercised in CI (pytest speaks server-to-server, no browser

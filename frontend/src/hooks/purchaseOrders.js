@@ -130,6 +130,25 @@ export function useBudgetLinePOs(lineId, { enabled = true } = {}) {
   });
 }
 
+// C1-front (Chat 64) §R4.1 — POs for a budget line, consumed by the
+// bill-entry CommitmentLinePicker. Mirrors hooks/actuals.js
+// `useActualsForBudgetLine`'s shape (budget-line-keyed query, gated on the
+// line id, 30s staleTime). Reuses the same endpoint as `useBudgetLinePOs`
+// but under its own query key + optional `params` so the create-form picker
+// and the R6 expand grid don't share a cache entry (the picker wants the
+// `remaining_amount`-bearing payload and must refetch after a bill posts).
+export function usePurchaseOrdersForBudgetLine(
+  budgetLineId, { params, enabled = true } = {},
+) {
+  return useQuery({
+    queryKey: ['purchaseOrders', 'budgetLine', budgetLineId, params ?? {}],
+    queryFn: ({ signal }) =>
+      poApi.listBudgetLinePOs(budgetLineId, { signal, params }),
+    enabled: enabled && !!budgetLineId,
+    staleTime: 30_000,
+  });
+}
+
 // R5.5 — Bulk PO fetch indexed by budget_line_id. Not consumed by R6
 // (each row fetches its own), but exposed here so future "expand-all"
 // flows have a single batch endpoint.

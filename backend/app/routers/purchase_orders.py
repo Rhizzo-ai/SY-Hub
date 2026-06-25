@@ -300,9 +300,23 @@ def list_pos_by_budget_line_endpoint(
         status_in=status,
         limit=limit, offset=offset,
     )
+    # C1-front (Chat 64) §R3.3 — derive read-only `remaining_amount` for the
+    # PO lines that sit on THIS budget line (a returned PO may touch other
+    # lines too; those are not in the map → emit null). Computed once in the
+    # endpoint (the serialiser has no db session) via a single aggregated query.
+    po_lines_on_line = [
+        ln for p in rows for ln in p.lines if ln.budget_line_id == line_id
+    ]
+    remaining_map = svc.remaining_by_line(db, po_lines_on_line)
     return {
         "budget_line_id": str(line_id),
-        "items": [svc.serialise(p, include_sensitive=include_sensitive) for p in rows],
+        "items": [
+            svc.serialise(
+                p, include_sensitive=include_sensitive,
+                remaining_by_line_id=remaining_map,
+            )
+            for p in rows
+        ],
         "total": total,
         "limit": limit,
         "offset": offset,
