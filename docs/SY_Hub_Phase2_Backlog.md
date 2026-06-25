@@ -1108,3 +1108,24 @@ triggers the feature should eventually fire, so notifications aren't a retrofit.
   live tenant); log for when multi-tenant goes live — wire real per-request
   tenant resolution (subdomain / header / org-id claim), then the tenant
   scoping in role management and elsewhere becomes meaningful.
+
+## Chat 63 additions (operator-logged)
+
+- **B-BUDGET-UI-DECLUTTER** (visuals pass): Review the budget screen for
+  surface clutter — versions button, changes log/tab, status states. Data
+  model is correct (confirmed Chat 63 vs Buildertrend: five-state model maps
+  to BT's Lock/Unlock + iteration history + committed/actual columns). Question
+  is whether the day-to-day screen shows too much. Decide hide/rename/remove
+  against real screens during the design/polish pass, not in the abstract.
+
+- **B-RECURRING-PO** (future): Option to mark a PO as recurring/rolling
+  (e.g. plant hire where the hire period is uncertain). Rolls over
+  period-to-period instead of forcing an accurate up-front amount or repeated
+  manual re-raises. Bills drawn against it pay down each period. Design when
+  commitments/valuations work is more settled.
+
+- **B-OVER-PO-WARN** (pairs with C1-front): When a bill linked to a PO line
+  would take total-invoiced past that PO line's value, warn-but-allow — flag
+  the £ overrun clearly, record it, let it through. Deliberately deferred from
+  C1-back to keep the money fix isolated. Candidate notify-the-PM/director
+  trigger when notifications land.
