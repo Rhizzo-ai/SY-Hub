@@ -37,23 +37,42 @@ unchanged at `0050_backfill_invoiced_commit`.
   empty→auto-standalone+note; fully-invoiced greyed; `formatMoney`, no
   "£null"). `CreateActualSheet` wires the gate (block-on-submit with inline
   error), the budget-line-change reset note, and the submit payload (standalone
-  omits `linked_commitment_id`; a chosen line sends it).
+  omits `linked_commitment_id`; a chosen line sends it). **No schema change** —
+  `linked_commitment_id` was already optional on both the create and update
+  actuals schemas.
+- **Design-first discipline** caught two real defects in the Build Pack before
+  any code was written: (1) the pack placed the remaining computation inside
+  `serialise()`, which has no DB session — corrected to compute the map in the
+  endpoint and thread it via `remaining_by_line_id`; (2) the pack's `?status=`
+  array query-param had an unverified wire form (no `paramsSerializer`) — used
+  client-side filtering on `PO_COMMITTED_STATUSES` instead.
+- **No migration, no permission, no enum.** Head stays
+  `0050_backfill_invoiced_commit`; **143 permissions; 10 roles.**
 - **Tests:** `backend/tests/test_po_line_remaining.py` (11),
   `frontend/.../__tests__/CommitmentLinePicker.test.jsx` (9) and
   `CreateActualSheet.commitment.test.jsx` (4).
 
-**Verification status at push:** new backend tests **11/11 green** on live
-Postgres (money proofs: £10k − £4k Posted → `"6000.00"`; over-invoice → clamp
-`"0.00"`; null without `pos.view_sensitive`; api endpoint → `"150.00"` /
-read-only `null`). Affected backend suites regression-clean (PO api/unit +
-reconciliation = 76; actuals service/routes = 74). New frontend RTL **13/13
-green**; `webpack compiled successfully`. Full-suite 19-failure baseline is the
-operator's CI figure (the Emergent container ships no Postgres and its writable
-layer is periodically wiped; PG was stood up locally to run the above). Live
-click-through is the operator's gate. Closing doc:
-`docs/chat-summaries/chat-64-closing.md`. Backlog
-(`docs/SY_Hub_Phase2_Backlog.md`) left untouched (operator-only). Forward hooks
-logged: `B-OVER-PO-WARN` and an edit-existing-bill PO re-link UI.
+**Gate:** automated browser pre-check (**7/7** — gate blocks without a choice;
+"£6,000.00 remaining of £10,000.00" matches backend; standalone vs PO-line
+submit payloads correct; empty→standalone; budget-line-change reset note;
+fully-invoiced greyed/disabled) **+ operator live eyeball** — both passed.
+Backend `tests/test_po_line_remaining.py` **11/11** green on Postgres (money
+proofs: £10k − £4k Posted → `"6000.00"`; over-invoice → clamp `"0.00"`; null
+without `pos.view_sensitive`; api endpoint → `"150.00"` / read-only `null`);
+affected backend suites regression-clean (PO api/unit + reconciliation = 76;
+actuals service/routes = 74); frontend RTL **13/13** green. `COUNTED_STATUSES`
+lock-step (imported, not re-declared) is asserted by a test.
+
+**Verified on origin/main:** feature files present; the one-off demo seeder did
+NOT land in the repo; `project_manager` still correctly lacks
+`budgets.view_sensitive` (the preview-only RBAC grant used to let the headless
+test user see budget lines did not escape to the codebase).
+
+Closing doc: `docs/chat-summaries/chat-64-closing.md`. Backlog
+(`docs/SY_Hub_Phase2_Backlog.md`) left untouched (operator-only). **Forward
+hooks (logged, not built):** `B-OVER-PO-WARN` (over-PO warn + notify trigger);
+an edit-existing-bill PO re-link UI; `B-BUDGET-DRILLDOWN` (budget line →
+underlying POs/bills; design-TBD, likely folds into BudgetLinesGrid v2).
 
 ## C1-back — Budget Double-Counts Committed Cost (backend + backfill)
 

@@ -1,135 +1,133 @@
 # Chat 64 — Closing Summary: C1-front, Force-the-Choice Bill-Entry UI
 
-**Type:** Frontend-led, with ONE small additive read-only backend change.
-**Depends on:** C1-back (Chat 63) — shipped on `main`. This is its frontend
-partner.
-**Migration:** NONE. The new backend field is derived at serialisation time,
-not stored. Alembic head unchanged at **`0050_backfill_invoiced_commit`**.
-**Permissions:** NONE added. Finance already holds `pos.view` +
-`pos.view_sensitive`.
+**Type:** Frontend-led, with ONE small additive read-only backend field.
+**Audit reference:** Full-platform audit **2026-06-19, finding C1** (budget
+double-counts committed cost). C1-front is the UI partner to **C1-back** (Chat
+63, backend + backfill) and closes finding C1 end-to-end.
+**Decisions locked by:** Rhys (operator).
+**Migration:** NONE. The new field is derived at serialisation time, not stored.
+Alembic head unchanged at **`0050_backfill_invoiced_commit`** (143 permissions,
+10 roles).
+**Backlog:** `docs/SY_Hub_Phase2_Backlog.md` left untouched (operator-only).
 
 ---
 
 ## 1. Why this existed
 
 C1-back fixed the budget double-count by deriving "invoiced against commitment"
-fresh from bills whose `linked_commitment_id` points at a `PurchaseOrderLine`
-on the same budget line, and it enforces that link on create AND update (422
-`CommitmentLinkError`). But the bill-entry form (`CreateActualSheet.jsx`) never
-set `linked_commitment_id` — the schema accepted it, the form ignored it. So
-every manually-entered bill was implicitly "standalone" and Louise had no way
-to tie a bill to the PO it pays down.
+fresh from bills whose `linked_commitment_id` points at a `PurchaseOrderLine` on
+the same budget line, and enforces that link on create AND update (422
+`CommitmentLinkError`). But the bill-entry form never *set*
+`linked_commitment_id` — the schema accepted it, the UI ignored it — so every
+manually-entered bill was implicitly "standalone" and Louise had no way to tie a
+bill to the PO it pays down. C1-front makes that choice explicit and mandatory.
 
-This pack makes the choice **explicit and mandatory**: when entering a bill on a
-budget line, the user must either pick one of the open PO lines on that line, or
-tick an explicit "No PO available".
+## 2. The four locked operator decisions (all built)
 
-## 2. Operator decisions built (locked, Chat 64)
-
-1. **Remaining per PO line** is shown (requires the backend addition below).
-2. **Standalone wording = exactly "No PO available".**
-3. **Budget line with no open PO lines** → auto-treated as standalone with a
-   short note; no tick forced.
-4. **Changing the budget line after a PO line was picked** → clears the choice
-   automatically and shows a brief reset note.
+1. **Show remaining per PO line** — each eligible PO-line option displays
+   "£X remaining of £Y" (requires the additive backend field, §3).
+2. **Standalone wording = exactly "No PO available."**
+3. **Budget line with no open PO lines → auto-standalone + note** (no tick
+   forced; the submit gate is satisfied automatically).
+4. **Changing the budget line after a PO line was picked → clears the choice**
+   and shows a brief reset note.
 
 ## 3. What changed
 
 ### Backend — derived, read-only `remaining_amount` on PO lines
-
-- **`app/services/purchase_orders.py`**
-  - NEW `remaining_by_line(db, lines)` — `{po_line_id: remaining}` where
-    `remaining = net_amount − Σ counted-status linked bills`, clamped at zero,
-    via a SINGLE `GROUP BY linked_commitment_id` query. `COUNTED_STATUSES`
-    (Posted/Paid/Disputed) is **imported** from `budgets_reconciliation`, never
-    re-declared, so it can never drift from the budget engine.
-  - `_ser_line` / `serialise` gained an optional `remaining_by_line_id` kwarg
-    (default `None`). `remaining_amount` was added to `_LINE_SENSITIVE`, so it
-    is nulled for callers without `pos.view_sensitive` exactly like `net_amount`
-    (sensitivity nulling takes precedence over the map). All ~9 existing
-    `serialise()` callers are unchanged and emit `remaining_amount: null`
-    (backward-compatible).
-- **`app/routers/purchase_orders.py`** — `list_pos_by_budget_line_endpoint`
-  now builds the remaining map (only for PO lines whose `budget_line_id` matches
-  the route's `line_id`) and passes it into each `serialise()` call. Route
-  signature, permission, Pattern-α 404 behaviour and response envelope are
-  unchanged. No other endpoint computes the map → they still emit
-  `remaining_amount: null`.
+- `app/services/purchase_orders.py`: new `remaining_by_line(db, lines)` —
+  `remaining = po_line.net_amount − Σ(linked bills in COUNTED_STATUSES)`,
+  clamped at zero, via a single `GROUP BY linked_commitment_id` query.
+  `COUNTED_STATUSES` (Posted/Paid/Disputed) is **imported** from
+  `budgets_reconciliation`, never re-declared — so it can never drift from the
+  budget engine (asserted by a test).
+- `_ser_line` / `serialise` gained an optional `remaining_by_line_id` kwarg
+  (default `None`); `remaining_amount` was added to `_LINE_SENSITIVE`, so it is
+  nulled for callers without `pos.view_sensitive` exactly like `net_amount`. All
+  ~9 existing `serialise()` callers are unchanged and emit
+  `remaining_amount: null` (backward-compatible).
+- `routers/purchase_orders.py`: `GET /v1/budget-lines/{line_id}/purchase-orders`
+  builds the remaining map (only for PO lines on the route's `line_id`) and
+  threads it into each `serialise()` call. Route signature, permission,
+  Pattern-α 404 and response envelope unchanged. No other endpoint computes the
+  map → they still emit `remaining_amount: null`.
 
 ### Frontend — the force-the-choice picker
+- `src/hooks/purchaseOrders.js`: new `usePurchaseOrdersForBudgetLine` (mirrors
+  `useActualsForBudgetLine`'s budget-line-keyed, gated, 30s-stale shape).
+- `src/components/actuals/CommitmentLinePicker.jsx`: radio group of eligible PO
+  lines (parent PO status ∈ `PO_COMMITTED_STATUSES` AND
+  `line.budget_line_id === budgetLineId`) + a final **"No PO available"** option.
+  Empty → auto-standalone + note. Fully-invoiced lines (`remaining "0.00"` AND
+  fully receipted) render greyed/disabled, not hidden. Money via `formatMoney`
+  (null → no "£null" suffix).
+- `src/components/actuals/CreateActualSheet.jsx`: holds `linkedCommitmentId` +
+  UI-only `isStandalone` locally (NOT RHF fields — `linked_commitment_id` is an
+  optional uuid, seeding `""` would fail Zod). Submit is **blocked** with an
+  inline picker error until a PO line is chosen OR standalone is ticked. Budget-
+  line change clears the choice + shows a transient reset note. Standalone omits
+  `linked_commitment_id`; a chosen line sends it. **No schema change** —
+  `linked_commitment_id` was already optional on both create and update schemas.
 
-- **`src/hooks/purchaseOrders.js`** — NEW `usePurchaseOrdersForBudgetLine`,
-  mirroring `useActualsForBudgetLine`'s shape (budget-line-keyed query, gated on
-  the line id, 30s staleTime). Own query key so the create-form picker and the
-  R6 expand grid don't collide.
-- **`src/components/actuals/CommitmentLinePicker.jsx`** — NEW. Radio-group of
-  eligible PO lines + a final **"No PO available"** option. Eligibility filtered
-  **client-side**: parent PO status ∈ `PO_COMMITTED_STATUSES`
-  (lock-step comment to the backend tuple) AND `line.budget_line_id ===
-  budgetLineId`. Empty → auto-standalone + note. Fully-invoiced lines
-  (`remaining "0.00"` AND fully receipted) shown greyed/disabled, not hidden.
-  Money rendered via `formatMoney` (null → no "£null" suffix). The `?status=`
-  server filter is deliberately **not** used (unverified array-param wire form).
-- **`src/components/actuals/CreateActualSheet.jsx`** — renders the picker under
-  the budget-line block; holds `linkedCommitmentId` + UI-only `isStandalone`
-  locally (NOT RHF fields — `linked_commitment_id` is an optional uuid, seeding
-  `""` would fail Zod). **Gate:** submit is blocked with an inline picker error
-  ("Choose the purchase order this bill pays, or tick 'No PO available'.") until
-  a PO line is chosen OR standalone is ticked. Budget-line change clears the
-  choice + shows a transient reset note (guards the initial set). Standalone
-  omits `linked_commitment_id`; a chosen line sends it. No other field, default,
-  or strip logic touched.
+## 4. Design-first discipline — two real Build-Pack defects caught before build
 
-## 4. Tests added
+1. **`serialise()` has no DB session.** The Build Pack placed the remaining
+   computation inside the serialiser. Corrected: compute the map once in the
+   endpoint (which *has* the session, in a single aggregated query) and thread
+   it in via `remaining_by_line_id`.
+2. **Unverified array query-param.** The pack proposed a `?status=` array filter
+   to narrow POs server-side, but the wire form of an array param is unverified
+   in this stack (no `paramsSerializer` in `api.js`). Used client-side filtering
+   on `PO_COMMITTED_STATUSES` instead — same result, no guesswork on the wire.
 
-- **`backend/tests/test_po_line_remaining.py`** — the 10 spec'd cases (+1
-  backward-compat): no bills→full; one Posted reduces; over-invoiced clamps to
-  0; Draft/Void don't reduce; different-line bill doesn't reduce; serialiser
-  null without sensitive / string with sensitive; api-level endpoint carries
-  `remaining_amount` (and null for read-only); counted-status lock-step guard.
-- **`frontend/.../CommitmentLinePicker.test.jsx`** — loading; empty→auto-
-  standalone+note; populated remaining render; select line; select "No PO
-  available"; fully-invoiced disabled; null money renders no "£null"; error
-  surfacing.
-- **`frontend/.../CreateActualSheet.commitment.test.jsx`** — gate blocks until a
-  choice is made; standalone omits the link; PO-line sends it; budget-line
-  change clears + shows the reset note.
+## 5. Tests
+- Backend `backend/tests/test_po_line_remaining.py` — **11**: no bills→full; one
+  Posted reduces; over-invoiced clamps to 0; Draft/Void don't reduce; different-
+  line bill doesn't reduce; serialiser null without sensitive / string with
+  sensitive; api-level endpoint carries `remaining_amount` (and null for read-
+  only); `COUNTED_STATUSES` lock-step guard.
+- Frontend **13**: `CommitmentLinePicker.test.jsx` (9) +
+  `CreateActualSheet.commitment.test.jsx` (4) — loading/empty/populated/select/
+  standalone/fully-invoiced/null-money/error; the submit gate; standalone omits
+  the link; PO-line sends it; budget-line-change reset note.
 
-## 5. Gate evidence
+## 6. Gate evidence
+- **Automated browser pre-check: 7/7.** Gate blocks without a choice (inline
+  error verbatim); "£6,000.00 remaining of £10,000.00" matches backend;
+  standalone submit POST omits `linked_commitment_id`, PO-line submit POST sends
+  the chosen line id; Landscaping (no POs) shows the standalone note and submits;
+  budget-line change shows the reset note + clears the choice; the fully-invoiced
+  line is greyed/disabled and unselectable.
+- **Operator live eyeball: passed.**
+- Backend money proofs (Postgres): £10k − £4k Posted → `"6000.00"`; +£7k Paid →
+  over-invoiced → clamped `"0.00"`; null without `pos.view_sensitive`; endpoint
+  £200 line − £50 Posted → `"150.00"`, read-only → `null`.
 
-- **Backend (live Postgres):** `tests/test_po_line_remaining.py` → **11 passed**.
-  Money-correctness, printed via the case assertions:
-  - £10,000 line + £4,000 Posted linked bill → `remaining_amount = "6000.00"`
-    (`test_02`); + a £7,000 Paid bill → over-invoiced → clamped `"0.00"`
-    (`test_03`).
-  - Serialised without `pos.view_sensitive` → `remaining_amount: null`
-    (`test_07`); with it → the string figure (`test_08`).
-  - `GET /v1/budget-lines/{id}/purchase-orders`: PO line net £200, £50 Posted
-    linked bill → `remaining_amount "150.00"` for finance; `null` for read_only
-    (`test_09`).
-- **Backend regression (affected surface only):** PO api + PO unit +
-  reconciliation = **76 passed**; actuals service + routes = **74 passed**. The
-  serialiser/endpoint change broke nothing.
-- **Frontend:** the two new RTL files → **13 passed**.
-- **Preview:** `webpack compiled successfully`; the bill-entry sheet renders the
-  new picker. The live click-through gate is the operator's.
-- **No scope creep:** no migration, no permission, no enum; no change to actuals
-  money maths, budget recompute, PO lifecycle, or `_validate_linked_commitment`.
+## 7. Verified on origin/main
+- Feature files present (backend service/router/test; frontend hook/picker/
+  CreateActualSheet wiring + the two RTL files).
+- The one-off demo seeder used for the live click-through did **not** land in the
+  repo.
+- `project_manager` still correctly lacks `budgets.view_sensitive` — the
+  **preview-only** RBAC grant (needed so the only headless-capable test user
+  could see budget lines, since full-budget-scope roles are MFA-enforced) did
+  **not** escape to the codebase. It lived solely in the throwaway preview DB.
 
-### Environment note (Emergent container)
+## 8. Forward hooks (logged, NOT built)
+- **`B-OVER-PO-WARN`** — "bill exceeds its PO line remaining" warning + a
+  candidate notify-the-PM/director trigger. C1-front only *displays* remaining;
+  it never blocks or warns on over-spend.
+- **Edit-existing-bill PO re-link UI** — C1-front is the *create* path only; the
+  patch path is already validated server-side.
+- **`B-BUDGET-DRILLDOWN`** — budget line → underlying POs/bills drill-down;
+  design-TBD, likely folds into BudgetLinesGrid v2.
 
-The Emergent container ships MongoDB, not Postgres, and its writable layer is
-periodically wiped (it erased `/usr/lib/postgresql` mid-session). PG was stood
-up locally (`postgresql-15` + `python -m app.bootstrap` to head `0050`) to run
-the suites above; the full-suite **19-failure baseline** is the operator's CI
-figure and is verified there, not reproduced in this ephemeral container. The
-new tests are pure-session / standard RTL and run anywhere PG + Jest exist.
+## 9. Critical-fix scoreboard (full-platform audit, 2026-06-19)
+| # | Critical finding | Status |
+|---|------------------|--------|
+| **C1** | Budget double-counts committed cost | **CLOSED** — C1-back (Chat 63, backend + backfill) + C1-front (Chat 64, UI) |
+| **C2** | Illusory budget freeze (`clear_unbudgeted`) | **CLOSED** — Chat 63 (B-variant) |
+| **C3** | Corporate SDLT flat-rate undercharge | **CLOSED** — C3 |
+| **C4** | *Last remaining critical from the 2026-06-19 audit* | **OPEN — next** |
 
-## 6. Forward hooks (logged, NOT built)
-
-- **`B-OVER-PO-WARN`** — "bill exceeds its PO line remaining" warning, and a
-  candidate notify-the-directors/finance trigger (over-PO → notify). This
-  feature only *displays* remaining; it never blocks or warns on over-spend.
-- **Edit-existing-bill PO re-link UI** — C1-front is the *create* path only. The
-  patch path is already validated server-side; an edit-form picker is a separate
-  future item.
+With C1 closed, **C4 is the last remaining critical** from the audit.
