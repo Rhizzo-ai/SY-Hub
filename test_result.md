@@ -248,7 +248,7 @@ frontend:
   
   - task: "BILL-ENTRY UI: Force-the-choice PO validation (7 test items)"
     implemented: true
-    working: "NA"
+    working: true
     file: "frontend/src/components/actuals/CommitmentLinePicker.jsx, frontend/src/components/actuals/CreateActualSheet.jsx, frontend/src/components/actuals/BudgetLinePicker.jsx"
     stuck_count: 0
     priority: "high"
@@ -257,16 +257,19 @@ frontend:
       - working: "NA"
         agent: "testing"
         comment: "❌ ENVIRONMENT/DATA SETUP ISSUE - Testing BLOCKED. Project d2a3729a-7ec4-408a-95d5-783520d5ff97 has NO active or locked budget. Login successful (test-pm@example.test, no MFA). Form loaded successfully. Budget line picker shows amber warning: 'No active or locked budget on this project. Create or activate a budget before posting actuals.' Cannot test any of the 7 items (GATE, REMAINING DISPLAY, STANDALONE, EMPTY CASE, RESET, SUBMIT PAYLOADS, FULLY-INVOICED) because budget line selection is prerequisite. CODE REVIEW: ✅ CommitmentLinePicker.jsx correctly implements force-the-choice logic with proper data-testids. ✅ CreateActualSheet.jsx validation gate (lines 127-136) correctly blocks submit without PO choice. ✅ BudgetLinePicker.jsx correctly shows empty state when no budget exists. All required data-testids present. REQUIRED ACTION: Activate budget on project with budget lines 'Groundworks' (2 PO lines: £6,000 remaining + £0 fully-invoiced), 'Roofing' (1 PO line: £8,000 remaining), 'Landscaping' (0 PO lines). OR provide different project ID with correct test data. This is test data issue, NOT code defect. Screenshots: 01-form-loaded.png (amber warning visible), error-screenshot.png (form state)."
+      - working: true
+        agent: "testing"
+        comment: "✅ ALL 7 TEST ITEMS PASSED - Force-the-choice PO validation working correctly. Test data setup resolved (budget activated on project d2a3729a-7ec4-408a-95d5-783520d5ff97). Login: test-pm@example.test (no MFA). TEST RESULTS: (1) GATE ✅ PASS - Form blocked without PO choice, error message: 'Choose the purchase order this bill pays, or tick 'No PO available'.' Form stayed open, no navigation. (2) REMAINING DISPLAY ✅ PASS - Found exact text '£6,000.00 remaining of £10,000.00' on selectable PO line. (3) STANDALONE ✅ PASS - Selected £6,000 PO line, then clicked 'No PO available'. PO line deselected correctly. Form submitted successfully. (4) EMPTY CASE ✅ PASS - Landscaping shows empty note: 'No open purchase orders on this budget line — this will be recorded as a standalone cost.' Form submitted successfully (auto-treated as standalone). (5) RESET ✅ PASS - Changed budget line from Groundworks to Roofing. Reset note displayed: 'Purchase order choice reset — budget line changed.' Roofing PO line '£8,000.00 remaining of £8,000.00' shown and unselected. (6) SUBMIT PAYLOADS ✅ PASS - STANDALONE payload: NO 'linked_commitment_id' key present (correct). PO-LINE payload: 'linked_commitment_id' = '2720d328-0776-4738-9fc1-9c934a555e0b' (UUID present, correct). (7) FULLY-INVOICED ✅ PASS - Second PO line on Groundworks shows '(fully invoiced)' and '£0.00 remaining of £5,000.00'. Line is greyed (opacity-50 class). Radio is disabled. Clicking radio does NOT select it (remains unselected). All data-testids present and functional. No console errors. Screenshots: test1-pass-blocked.png, test2-pass.png, test3-pass.png, test4-empty.png, test5-pass.png, test7-pass.png. CONCLUSION: Bill-entry UI force-the-choice validation is PRODUCTION-READY."
 
 metadata:
   created_by: "testing_agent"
-  version: "107.2"  # B107 validation + blank quantity bug fix + bill-entry UI pre-check
-  test_sequence: 3
+  version: "107.3"  # B107 validation + blank quantity bug fix + bill-entry UI pre-check COMPLETE
+  test_sequence: 4
   run_ui: true
 
 test_plan:
   current_focus:
-    - "Bill-entry UI testing BLOCKED - awaiting test data setup"
+    - "Bill-entry UI testing COMPLETE - ALL 7 ITEMS PASSED"
     - "All B107 checks completed and passed"
     - "Bug fix verification completed and passed"
     - "PO draft creation with number prefix - COMPLETED AND PASSED"
@@ -338,6 +341,151 @@ agent_communication:
       - error-screenshot.png: Shows form state when budget picker cannot render
       
       NOTE: This is a test data/environment setup issue, NOT a code defect. The bill-entry UI code appears correctly implemented based on code review.
+      
+  - agent: "testing"
+    message: |
+      ✅ BILL-ENTRY UI PRE-CHECK COMPLETE — ALL 7 TEST ITEMS PASSED
+      
+      Tested against: https://prod-property-hub.preview.emergentagent.com
+      Login: test-pm@example.test / TestUser-Dev-2026! (no MFA)
+      Project: d2a3729a-7ec4-408a-95d5-783520d5ff97
+      Form URL: /projects/d2a3729a-7ec4-408a-95d5-783520d5ff97/actuals/new
+      
+      ═══════════════════════════════════════════════════════════════════════════
+      TEST RESULTS SUMMARY
+      ═══════════════════════════════════════════════════════════════════════════
+      
+      ✅ TEST 1: GATE - Block submit without PO choice
+         - Budget line: "1. Groundworks" selected
+         - All required fields filled (Entity, Source type, Description, Net=1000, Supplier)
+         - NO PO line selected, NO "No PO available" ticked
+         - Clicked "Create Draft" button
+         - RESULT: Form BLOCKED (stayed open, no navigation)
+         - Error message displayed: "Choose the purchase order this bill pays, or tick 'No PO available'."
+         - Screenshot: test1-pass-blocked.png
+      
+      ✅ TEST 2: REMAINING DISPLAY - Verify £6,000 remaining text
+         - Found 2 PO lines on "Groundworks"
+         - PO Line 1: "PO-DEMO-A-4a2a73 · Demo line 1" with "£6,000.00 remaining of £10,000.00"
+         - EXACT TEXT MATCH: "£6,000.00 remaining of £10,000.00" ✅
+         - Screenshot: test2-pass.png
+      
+      ✅ TEST 3: STANDALONE - Select PO then switch to "No PO available"
+         - Step 1: Clicked selectable £6,000 PO line radio → selected ✅
+         - Step 2: Clicked "No PO available" radio → PO line deselected, standalone selected ✅
+         - Step 3: Clicked "Create Draft" → Form submitted successfully (form closed) ✅
+         - Screenshot: test3-pass.png
+      
+      ✅ TEST 4: EMPTY CASE - Landscaping auto-treated as standalone
+         - Budget line: "3. Landscaping" selected
+         - Empty note displayed: "No open purchase orders on this budget line — this will be recorded as a standalone cost." ✅
+         - NO radio list shown (correct behavior for empty case)
+         - Filled required fields and clicked "Create Draft"
+         - RESULT: Form submitted successfully (auto-treated as standalone) ✅
+         - Screenshot: test4-empty.png
+      
+      ✅ TEST 5: RESET - Change budget line clears PO selection
+         - Selected "Groundworks" and clicked £6,000 PO line radio
+         - Changed budget line to "2. Roofing"
+         - Reset note displayed: "Purchase order choice reset — budget line changed." ✅
+         - Roofing PO line shown: "PO-DEMO-B-4a2a73 · Demo line 1" with "£8,000.00 remaining of £8,000.00"
+         - Roofing PO line radio is UNSELECTED (previous selection cleared) ✅
+         - Screenshot: test5-pass.png
+      
+      ✅ TEST 6: SUBMIT PAYLOADS - Capture POST bodies
+         
+         6a) STANDALONE (Groundworks + "No PO available"):
+         POST /api/v1/actuals
+         Body: {
+           "project_id": "d2a3729a-7ec4-408a-95d5-783520d5ff97",
+           "budget_line_id": "3ac4e2c0-0d00-465a-8c32-b53f75ef2ef7",
+           "entity_id": "4a9736e1-e223-49f4-8c43-5db2d26f7924",
+           "source_type": "Manual_Entry",
+           "transaction_date": "2026-06-25",
+           "description": "standalone",
+           "net_amount": "1000",
+           "vat_amount": "0",
+           "vat_rate_pct": "20",
+           "is_vat_recoverable": true,
+           "currency": "GBP",
+           "supplier_name_snapshot": "Standalone",
+           "is_cis_applicable": false
+         }
+         ✅ PASS: NO "linked_commitment_id" key present (correct for standalone)
+         
+         6b) PO-LINE (Groundworks + select £6,000 line):
+         POST /api/v1/actuals
+         Body: {
+           "project_id": "d2a3729a-7ec4-408a-95d5-783520d5ff97",
+           "budget_line_id": "3ac4e2c0-0d00-465a-8c32-b53f75ef2ef7",
+           "entity_id": "4a9736e1-e223-49f4-8c43-5db2d26f7924",
+           "source_type": "Manual_Entry",
+           "transaction_date": "2026-06-25",
+           "description": "po-line",
+           "net_amount": "2000",
+           "vat_amount": "0",
+           "vat_rate_pct": "20",
+           "is_vat_recoverable": true,
+           "currency": "GBP",
+           "supplier_name_snapshot": "PO Supplier",
+           "is_cis_applicable": false,
+           "linked_commitment_id": "2720d328-0776-4738-9fc1-9c934a555e0b"
+         }
+         ✅ PASS: "linked_commitment_id" = "2720d328-0776-4738-9fc1-9c934a555e0b" (UUID present, correct)
+      
+      ✅ TEST 7: FULLY-INVOICED - Verify greyed/disabled £0 line
+         - Found fully-invoiced line on "Groundworks": "PO-DEMO-A-4a2a73 · Demo line 2(fully invoiced)"
+         - Text shows: "£0.00 remaining of £5,000.00" ✅
+         - Line has "opacity-50" class (greyed) ✅
+         - Radio input is DISABLED ✅
+         - Attempted to click radio (force=True) → Radio remains UNSELECTED ✅
+         - Screenshot: test7-pass.png
+      
+      ═══════════════════════════════════════════════════════════════════════════
+      TECHNICAL VALIDATION
+      ═══════════════════════════════════════════════════════════════════════════
+      
+      Data-testids verified:
+      ✅ create-actual-form (form container)
+      ✅ budget-line-picker (native <select>)
+      ✅ commitment-picker (PO section container)
+      ✅ commitment-picker-line-{id} (PO line rows with radio inputs)
+      ✅ commitment-picker-standalone ("No PO available" row with radio)
+      ✅ commitment-picker-error (inline error message)
+      ✅ commitment-reset-note (reset note on budget line change)
+      ✅ commitment-picker-empty (empty state note for Landscaping)
+      ✅ create-actual-entity (Radix Select for Entity)
+      ✅ create-actual-source-type (Radix Select for Source type)
+      ✅ create-actual-description (Textarea)
+      ✅ create-actual-net (Input for Net amount)
+      ✅ create-actual-supplier (Input for Supplier name)
+      ✅ create-actual-submit (Submit button)
+      
+      Budget lines found:
+      - "1. Groundworks" (value: 3ac4e2c0-0d00-465a-8c32-b53f75ef2ef7)
+        → 2 PO lines: £6,000 remaining (selectable) + £0 fully-invoiced (disabled)
+      - "2. Roofing" (value: a5536e16-38a5-4c7d-bcc4-5da18d6f3c88)
+        → 1 PO line: £8,000 remaining (selectable)
+      - "3. Landscaping" (value: 41e384da-0e70-4859-97a7-ac6061096695)
+        → 0 PO lines (empty case, auto-standalone)
+      
+      Console: No JavaScript runtime errors detected
+      Network: All POST requests to /api/v1/actuals captured successfully
+      
+      ═══════════════════════════════════════════════════════════════════════════
+      CONCLUSION
+      ═══════════════════════════════════════════════════════════════════════════
+      
+      The "force-the-choice" bill-entry UI is PRODUCTION-READY. All 7 test items passed:
+      1. ✅ GATE validation blocks submit without PO choice
+      2. ✅ REMAINING DISPLAY shows correct £6,000 text
+      3. ✅ STANDALONE radio deselects PO and submits successfully
+      4. ✅ EMPTY CASE auto-treats as standalone with correct note
+      5. ✅ RESET clears PO selection when budget line changes
+      6. ✅ SUBMIT PAYLOADS correct (standalone omits linked_commitment_id, PO-line includes UUID)
+      7. ✅ FULLY-INVOICED line is greyed, disabled, and cannot be selected
+      
+      No critical issues found. Feature is ready for production deployment.
       
   - agent: "testing"
     message: |
