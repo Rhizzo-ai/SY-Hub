@@ -103,59 +103,57 @@
 #====================================================================================================
 
 user_problem_statement: |
-  DISPLAY-HONESTY FIX VERIFICATION for appraisal scenario comparator.
+  RECOVERY VERIFICATION ONLY (no feature testing). PostgreSQL was wiped on this pod 
+  and has just been re-provisioned + re-bootstrapped. Confirm the backend is healthy 
+  and reachable through the public preview.
   
   Base URL: https://prod-property-hub.preview.emergentagent.com
   
-  THE BUG (now fixed): the scenario comparator endpoint returned `residual_land_value` 
-  for a scenario even when its RLV solve did NOT converge. The fix gates 
-  `residual_land_value` so it is non-null ONLY when the current appraisal has a value 
-  AND `rlv_converged is True`, and adds a new per-scenario key `rlv_converged`.
-  
   Verify:
-  1. CONTRACT: comparator response includes new `rlv_converged` key
-  2. NON-CONVERGED: unreachable RLV solve → residual_land_value is null, rlv_converged is false
-  3. CONVERGED: reachable RLV solve → residual_land_value is non-null, rlv_converged is true
+  1. GET /api/health returns HTTP 200 with JSON (NOT 502/Cloudflare error)
+  2. Backend origin is serving JSON (not HTML error page)
+  3. Authenticated path works end-to-end against Postgres: POST /api/auth/login 
+     with test-pm@example.test, then GET /api/projects to confirm DB connectivity
 
 backend:
-  - task: "Appraisal Comparator Contract Verification"
+  - task: "Health Endpoint Verification"
     implemented: true
     working: true
-    file: "/app/backend/app/services/appraisal_scenarios.py"
+    file: "/app/backend/app/routers/meta.py"
     stuck_count: 0
     priority: "high"
     needs_retesting: false
     status_history:
       - working: true
         agent: "testing"
-        comment: "✅ PASS - GET /api/v1/appraisal-groups/{group_id}/comparator returns HTTP 200 with JSON. Base scenario object includes new 'rlv_converged' key (proving fix shipped). Initial state: rlv_converged=false, residual_land_value=null (no RLV solve run yet)."
+        comment: "✅ PASS - GET /api/health returns HTTP 200 with JSON: {'status':'ok','module':'users+rbac','phase':'1.2'}. NOT a 502 or Cloudflare error. Backend origin is serving correctly."
   
-  - task: "RLV Non-Converged Display Honesty"
+  - task: "Authentication Endpoint Verification"
     implemented: true
     working: true
-    file: "/app/backend/app/services/appraisal_scenarios.py"
+    file: "/app/backend/app/routers/auth.py"
     stuck_count: 0
     priority: "high"
     needs_retesting: false
     status_history:
       - working: true
         agent: "testing"
-        comment: "✅ PASS - POST /api/v1/appraisals/{id}/recalculate-rlv with unreachable target (basis=on_cost, target_pct=500) returned converged=false. Comparator correctly shows: residual_land_value=null AND rlv_converged=false. Fix working: non-converged solves do NOT display misleading land values."
+        comment: "✅ PASS - POST /api/auth/login with test-pm@example.test / TestUser-Dev-2026! returns HTTP 200 with JSON. User authenticated successfully (no MFA required). Cookies set: access_token, refresh_token. Response includes user object with correct email and role."
   
-  - task: "RLV Converged Display Honesty"
+  - task: "Database Connectivity Verification"
     implemented: true
     working: true
-    file: "/app/backend/app/services/appraisal_scenarios.py"
+    file: "/app/backend/app/routers/projects.py"
     stuck_count: 0
     priority: "high"
     needs_retesting: false
     status_history:
       - working: true
         agent: "testing"
-        comment: "✅ PASS - POST /api/v1/appraisals/{id}/recalculate-rlv with reachable target (basis=on_cost, target_pct=20) returned converged=true after 21 iterations. Comparator correctly shows: residual_land_value='39629.75' (non-null numeric string) AND rlv_converged=true. Fix working: converged solves display the computed land value."
+        comment: "✅ PASS - GET /api/projects returns HTTP 200 with JSON containing 1 project (SY-R7-DEMO). Database connectivity confirmed. PostgreSQL is operational and serving data correctly."
 
 frontend:
-  - task: "N/A - Backend API verification only"
+  - task: "N/A - Recovery verification only (backend testing)"
     implemented: true
     working: "NA"
     file: "N/A"
@@ -165,18 +163,18 @@ frontend:
     status_history:
       - working: "NA"
         agent: "testing"
-        comment: "Display-honesty fix verification is backend API-only. Frontend not tested."
+        comment: "Recovery verification is backend-only. Frontend not tested."
 
 metadata:
   created_by: "testing_agent"
-  version: "display_honesty_fix_1.0"
-  test_sequence: 2
+  version: "recovery_verification_1.0"
+  test_sequence: 1
   run_ui: false
 
 test_plan:
   current_focus:
-    - "DISPLAY-HONESTY fix verification complete"
-    - "All RLV convergence gating tests passed"
+    - "PostgreSQL recovery verification complete"
+    - "All backend health checks passed"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
@@ -184,84 +182,49 @@ test_plan:
 agent_communication:
   - agent: "testing"
     message: |
-      ✅ DISPLAY-HONESTY FIX VERIFICATION COMPLETE — ALL TESTS PASSED
+      ✅ POSTGRESQL RECOVERY VERIFICATION COMPLETE — ALL TESTS PASSED
       
       Tested against: https://prod-property-hub.preview.emergentagent.com
       Test credentials: test-pm@example.test / TestUser-Dev-2026!
       
       ═══════════════════════════════════════════════════════════════════════════
-      DISPLAY-HONESTY FIX VERIFICATION SUMMARY
+      RECOVERY VERIFICATION SUMMARY
       ═══════════════════════════════════════════════════════════════════════════
       
-      ✅ STEP 1: CONTRACT VERIFICATION
-         Endpoint: GET /api/v1/appraisal-groups/{group_id}/comparator
+      ✅ TEST 1: Health Endpoint (GET /api/health)
          - HTTP Status: 200 ✅
-         - Response includes 'rlv_converged' key in Base scenario ✅
-         - NEW KEY proves fix has shipped ✅
-         - Initial state: rlv_converged=false, residual_land_value=null ✅
+         - Content-Type: application/json ✅
+         - Response: {"status":"ok","module":"users+rbac","phase":"1.2"} ✅
+         - NOT a 502 Bad Gateway ✅
+         - NOT a Cloudflare HTML error page ✅
+         - Backend origin is serving correctly ✅
       
-      ✅ STEP 2: NON-CONVERGED RLV SOLVE
-         Endpoint: POST /api/v1/appraisals/{id}/recalculate-rlv
-         - Request: {"basis": "on_cost", "target_pct": 500} (unreachable) ✅
+      ✅ TEST 2: Authentication (POST /api/auth/login)
          - HTTP Status: 200 ✅
-         - RLV solve result: converged=false ✅
-         - Message: "Target margin unreachable: not achievable even at £0 land price" ✅
-         - Comparator verification:
-           * residual_land_value: null ✅
-           * rlv_converged: false ✅
-         - FIX WORKING: Non-converged solves do NOT show misleading land values ✅
+         - Content-Type: application/json ✅
+         - Login successful with test-pm@example.test ✅
+         - User authenticated: Test PM (project_manager role) ✅
+         - MFA not required (mfa_enrollment_required: false) ✅
+         - Cookies set: access_token, refresh_token ✅
+         - NOT a 502/503 or HTML error page ✅
       
-      ✅ STEP 3: CONVERGED RLV SOLVE
-         Endpoint: POST /api/v1/appraisals/{id}/recalculate-rlv
-         - Request: {"basis": "on_cost", "target_pct": 20} (reachable) ✅
+      ✅ TEST 3: Database Connectivity (GET /api/projects)
          - HTTP Status: 200 ✅
-         - RLV solve result: converged=true, iterations=21 ✅
-         - Computed land value: £39,629.75 ✅
-         - Comparator verification:
-           * residual_land_value: "39629.75" (non-null numeric string) ✅
-           * rlv_converged: true ✅
-         - FIX WORKING: Converged solves correctly display computed land value ✅
-      
-      ═══════════════════════════════════════════════════════════════════════════
-      TECHNICAL DETAILS
-      ═══════════════════════════════════════════════════════════════════════════
-      
-      Fix Location: /app/backend/app/services/appraisal_scenarios.py
-      Function: get_group_comparator() (lines 221-286)
-      
-      The fix implements display-honesty gating:
-      
-      1. NEW KEY: 'rlv_converged' added to each scenario in comparator response
-         - Value: bool(current.rlv_converged) if current exists, else None
-         - Explicitly surfaces convergence state to frontend
-      
-      2. GATED VALUE: 'residual_land_value' now conditional:
-         - Non-null ONLY when:
-           a) current appraisal exists
-           b) rlv_computed_land_value is not None
-           c) rlv_converged is True  <-- THE CRITICAL GATE
-         - Null otherwise
-      
-      3. BEHAVIOR VERIFIED:
-         - Non-converged solve (500% target): residual_land_value=null ✅
-         - Converged solve (20% target): residual_land_value="39629.75" ✅
-         - Contract: rlv_converged key present in all scenarios ✅
+         - Content-Type: application/json ✅
+         - Response contains project data from PostgreSQL ✅
+         - Projects found: 1 (SY-R7-DEMO project) ✅
+         - Database is operational and serving data ✅
+         - NOT a 502/503 or HTML error page ✅
       
       ═══════════════════════════════════════════════════════════════════════════
       CONCLUSION
       ═══════════════════════════════════════════════════════════════════════════
       
-      The DISPLAY-HONESTY fix is VERIFIED and WORKING CORRECTLY:
+      PostgreSQL recovery is COMPLETE and SUCCESSFUL. The backend is:
+      • Healthy and reachable through the public preview URL
+      • Serving JSON responses (not 502/Cloudflare errors)
+      • Authenticating users correctly against the database
+      • Reading data from PostgreSQL successfully
       
-      ✅ The comparator endpoint no longer shows misleading RLV values for 
-         non-converged solves
-      ✅ The new 'rlv_converged' key provides explicit convergence state
-      ✅ The gating logic correctly hides residual_land_value when rlv_converged 
-         is false or None
-      ✅ Converged solves correctly display the computed land value
-      
-      The fix prevents the scenario comparator from displaying £0 or probe values
-      from failed RLV solves, ensuring users only see meaningful land values when
-      the solver has successfully converged to the target margin.
-      
-      All three verification steps PASSED. Fix is production-ready.
+      The earlier 502 / Cloudflare "origin returned an invalid response" issue is RESOLVED.
+      Backend is production-ready after database recovery.
