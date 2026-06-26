@@ -593,6 +593,173 @@ class TestRlvSolver:
             db.rollback()
             db.close()
 
+    # --- C4: bracketed-bisection solver -------------------------------
+    def _rlv_appraisal(self, db, project, *, units, land=Decimal("100000"),
+                       fees=None):
+        """Build a flushed Appraisal + units the same way the tests above do."""
+        from app.models.appraisals import (
+            Appraisal, AppraisalUnit, AppraisalCostLine,
+        )
+        from app.services.appraisal_versioning import next_version_for_project
+        a = Appraisal(
+            project_id=uuid.UUID(project["id"]),
+            version_number=next_version_for_project(db, uuid.UUID(project["id"])),
+            name="RLV-C4", reference_date=date(2025, 6, 1),
+            land_purchase_price=land,
+            sdlt_category="Residential_Standard",
+            project_duration_months=12,
+            created_by_user_id=db.execute(text(
+                "SELECT id FROM users WHERE email=:e"
+            ), {"e": ADMIN_EMAIL}).scalar(),
+        )
+        db.add(a)
+        db.flush()
+        for i, u in enumerate(units, start=1):
+            db.add(AppraisalUnit(
+                appraisal_id=a.id, display_order=i, unit_label=f"U{i}",
+                unit_type=u.get("unit_type", "Detached"),
+                tenure="Open_Market", quantity=u["quantity"],
+                price_per_unit=u["price"], build_cost_per_unit=u["build"],
+            ))
+        if fees:
+            db.add(AppraisalCostLine(
+                appraisal_id=a.id, label="Fees", category="Professional_Fees",
+                auto_source="Manual", amount=fees, display_order=1,
+            ))
+        db.flush()
+        return a
+
+    def test_rlv_bisection_converges_normal_scheme(self, project):
+        """GDV well above cost, on_cost 20%: converges, bounded, margin re-checks."""
+        from app.db import SessionLocal
+        from app.services.rlv_solver import solve
+        from app.services.appraisal_calc import recompute
+        db = SessionLocal()
+        try:
+            a = self._rlv_appraisal(
+                db, project,
+                units=[{"quantity": 4, "price": Decimal("500000"),
+                        "build": Decimal("180000")}],
+                fees=Decimal("100000"),
+            )
+            res = solve(db, a, basis="on_cost", target_pct=Decimal("20"))
+            chk = recompute(db, a, override_land_price=res.land_value)
+            assert res.converged is True
+            assert res.iterations < 60
+            assert Decimal("0") < res.land_value < chk.total_gdv
+            # Independent re-check: profit gap to a 20%-on-cost target within £1.50.
+            gap = chk.total_profit - chk.total_cost * Decimal("0.20")
+            assert abs(gap) <= Decimal("1.50"), gap
+        finally:
+            db.rollback()
+            db.close()
+
+    def test_rlv_bisection_converges_on_gdv_basis(self, project):
+        """on_gdv 15%: converges, bounded, independent margin re-check."""
+        from app.db import SessionLocal
+        from app.services.rlv_solver import solve
+        from app.services.appraisal_calc import recompute
+        db = SessionLocal()
+        try:
+            a = self._rlv_appraisal(
+                db, project,
+                units=[{"quantity": 4, "price": Decimal("500000"),
+                        "build": Decimal("180000")}],
+                fees=Decimal("100000"),
+            )
+            res = solve(db, a, basis="on_gdv", target_pct=Decimal("15"))
+            chk = recompute(db, a, override_land_price=res.land_value)
+            assert res.converged is True
+            assert res.iterations < 60
+            assert Decimal("0") < res.land_value < chk.total_gdv
+            gap = chk.total_profit - chk.total_gdv * Decimal("0.15")
+            assert abs(gap) <= Decimal("1.50"), gap
+        finally:
+            db.rollback()
+            db.close()
+
+    def test_rlv_degenerate_no_gdv_returns_message(self, project):
+        """No units → GDV 0 → degenerate, honest message, land_value 0."""
+        from app.db import SessionLocal
+        from app.services.rlv_solver import solve
+        db = SessionLocal()
+        try:
+            a = self._rlv_appraisal(db, project, units=[])
+            res = solve(db, a, basis="on_cost", target_pct=Decimal("20"))
+            assert res.converged is False
+            assert res.land_value == Decimal("0.00")
+            assert res.message is not None
+            assert "sales value" in res.message.lower()
+        finally:
+            db.rollback()
+            db.close()
+
+    def test_rlv_unreachable_at_zero_land_reports_best(self, project):
+        """Target missed even at £0 land → unreachable, reports best at £0."""
+        from app.db import SessionLocal
+        from app.services.rlv_solver import solve
+        db = SessionLocal()
+        try:
+            # Thin scheme: ~11% on-cost at £0 land; demand 200%.
+            a = self._rlv_appraisal(
+                db, project,
+                units=[{"quantity": 1, "unit_type": "Flat",
+                        "price": Decimal("100000"), "build": Decimal("90000")}],
+            )
+            res = solve(db, a, basis="on_cost", target_pct=Decimal("200"))
+            assert res.converged is False
+            assert res.land_value == Decimal("0.00")
+            assert res.message is not None
+            assert "even at £0" in res.message
+            assert isinstance(res.achieved_pct, Decimal)
+            assert res.achieved_pct >= Decimal("0")
+        finally:
+            db.rollback()
+            db.close()
+
+    def test_rlv_iterations_bounded(self, project):
+        """A solvable scheme never exceeds the 60-iteration safety cap."""
+        from app.db import SessionLocal
+        from app.services.rlv_solver import solve
+        db = SessionLocal()
+        try:
+            a = self._rlv_appraisal(
+                db, project,
+                units=[{"quantity": 3, "price": Decimal("450000"),
+                        "build": Decimal("160000")}],
+                fees=Decimal("75000"),
+            )
+            res = solve(db, a, basis="on_cost", target_pct=Decimal("18"))
+            assert res.iterations <= 60
+        finally:
+            db.rollback()
+            db.close()
+
+    def test_rlv_result_contract_unchanged(self, project):
+        """RlvResult exposes the 7 router-facing fields with stable types."""
+        from app.db import SessionLocal
+        from app.services.rlv_solver import solve
+        db = SessionLocal()
+        try:
+            a = self._rlv_appraisal(
+                db, project,
+                units=[{"quantity": 4, "price": Decimal("500000"),
+                        "build": Decimal("180000")}],
+                fees=Decimal("100000"),
+            )
+            res = solve(db, a, basis="on_cost", target_pct=Decimal("20"))
+            assert isinstance(res.converged, bool)
+            assert isinstance(res.iterations, int)
+            assert isinstance(res.land_value, Decimal)
+            assert isinstance(res.basis, str)
+            assert isinstance(res.target_pct, Decimal)
+            assert isinstance(res.achieved_pct, Decimal)
+            assert res.message is None or isinstance(res.message, str)
+        finally:
+            db.rollback()
+            db.close()
+
+
 
 # --------------------------------------------------------------------------
 # State machine

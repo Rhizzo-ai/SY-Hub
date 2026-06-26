@@ -1,13 +1,20 @@
-"""RLV (Residual Land Value) solver — Prompt 2.2.
+"""RLV (Residual Land Value) solver — Prompt 2.2 / C4 rewrite.
 
-Iterative Decimal-only solver. Given a target margin (on-cost or on-gdv),
-finds the land purchase price that would produce that margin, holding
-the rest of the appraisal constant.
+Bracketed bisection solver. Given a target margin (on-cost or on-gdv),
+finds the land purchase price that produces that margin, holding the
+rest of the appraisal constant.
 
-Fails gracefully: returns converged=False after 50 iterations.
+profit_gap(L) is monotonically non-increasing in L (raising land raises
+acquisition + SDLT and changes nothing else), so a sign change brackets
+exactly one root and bisection is guaranteed to converge.
 
-Does NOT mutate the appraisal's land_purchase_price — caller decides
-whether to write `rlv_computed_land_value` back to the header.
+Three honest outcomes:
+  - converged=True  : root found within £1 tolerance
+  - converged=False + message : UNREACHABLE (target missed even at £0
+    land) or DEGENERATE (no GDV to anchor)
+
+Does NOT mutate the appraisal's land_purchase_price — the caller decides
+whether to write rlv_computed_land_value back to the header.
 """
 from __future__ import annotations
 
@@ -26,9 +33,15 @@ log = logging.getLogger("syhomes.appraisal.rlv")
 
 _PENNY = Decimal("0.01")
 _ZERO = Decimal("0")
-MAX_ITERATIONS = 50
-# Converge when projected profit is within £1 of target.
-TOLERANCE = Decimal("1.00")
+# Safety cap only — the bracket-tolerance exit fires first in practice.
+MAX_ITERATIONS = 60
+# Half a penny: when the land bracket is this narrow, the penny-rounded
+# answer is exact.
+_BRACKET_TOL = Decimal("0.005")
+# Land can never sensibly exceed this multiple of GDV; upper search bound.
+_GDV_CEILING_MULT = Decimal("2")
+# Profit-gap tolerance in £ (legacy behaviour: within £1 of target).
+_GAP_TOL = Decimal("1.00")
 
 
 @dataclass
@@ -51,8 +64,8 @@ def solve(
 ) -> RlvResult:
     """Solve for the land_purchase_price that hits the target margin.
 
-    Strategy: secant-like iteration. Start with two guesses and walk
-    toward the root of `f(L) = profit_at(L) - target_profit(L)`.
+    Bracket [0, 2*GDV] then bisect. profit_gap is monotone non-increasing
+    in land, so gap(0) >= 0 >= gap(ceiling) brackets the root.
     """
     if basis not in ("on_cost", "on_gdv"):
         raise ValueError(f"Unknown RLV basis: {basis!r}")
@@ -63,8 +76,7 @@ def solve(
     def profit_gap(land: Decimal) -> tuple[Decimal, Decimal, Decimal]:
         """Return (gap, total_cost, total_gdv) at `land`.
 
-        gap = total_profit(L) - required_profit_for_target(L)
-        where required_profit depends on basis."""
+        gap = total_profit(L) - required_profit_for_target(L)."""
         res = recompute(db, appraisal, override_land_price=land)
         if basis == "on_cost":
             required = res.total_cost * tgt
@@ -72,67 +84,77 @@ def solve(
             required = res.total_gdv * tgt
         return (res.total_profit - required, res.total_cost, res.total_gdv)
 
-    # Seed guesses. Use current land and 80% of current land.
-    current = Decimal(appraisal.land_purchase_price or 0)
-    if current <= _ZERO:
-        # Use 10% of total_gdv as a starter — anchored to output.
-        seed_gdv = Decimal(appraisal.gdv_total or 0)
-        current = seed_gdv * Decimal("0.10") if seed_gdv > _ZERO else Decimal("100000")
+    # --- Degenerate input: no sales value to anchor the search ----------
+    gap0, cost0, gdv0 = profit_gap(_ZERO)
+    iters = 1
+    if gdv0 <= _ZERO:
+        return RlvResult(
+            False, iters, _penny(_ZERO), basis, target_pct, Decimal("0.0000"),
+            message=(
+                "Cannot solve RLV: appraisal has no sales value (GDV is zero). "
+                "Add units with sale prices first."
+            ),
+        )
 
-    L0 = current
-    L1 = current * Decimal("0.80") if current > _ZERO else Decimal("80000")
-    if L1 == L0:
-        L1 = L0 + Decimal("1000")
+    ceiling = _penny(gdv0 * _GDV_CEILING_MULT)
 
-    gap0, _, _ = profit_gap(L0)
-    if abs(gap0) <= TOLERANCE:
-        # Already on target — record result at current land.
-        _, cost_now, gdv_now = profit_gap(L0)
-        achieved = _achieved_pct(cost_now, gdv_now, gap0, tgt, basis)
-        return RlvResult(True, 1, _penny(L0), basis, target_pct, achieved)
+    # --- Lower bound L=0 -------------------------------------------------
+    if abs(gap0) <= _GAP_TOL:
+        achieved = _achieved_pct(cost0, gdv0, gap0, tgt, basis)
+        return RlvResult(True, iters, _penny(_ZERO), basis, target_pct, achieved)
+    if gap0 < _ZERO:
+        achieved = _achieved_pct(cost0, gdv0, gap0, tgt, basis)
+        return RlvResult(
+            False, iters, _penny(_ZERO), basis, target_pct, achieved,
+            message=(
+                "Target margin unreachable: not achievable even at £0 land price. "
+                f"Best achievable margin is {achieved}% at £0 land."
+            ),
+        )
 
-    gap1, _, _ = profit_gap(L1)
+    # --- Upper bound L=ceiling ------------------------------------------
+    gap_hi, cost_hi, gdv_hi = profit_gap(ceiling)
+    iters += 1
+    if gap_hi > _ZERO:
+        achieved = _achieved_pct(cost_hi, gdv_hi, gap_hi, tgt, basis)
+        return RlvResult(
+            False, iters, _penny(ceiling), basis, target_pct, achieved,
+            message=(
+                "Target margin still exceeded at the maximum search land price "
+                f"(£{ceiling}); appraisal structure is degenerate."
+            ),
+        )
 
-    iters = 2
-    last_gap = gap1
-    last_cost = _ZERO
-    last_gdv = _ZERO
-
+    # --- Bisection: gap(0) > 0 > gap(ceiling), root bracketed -----------
+    lo, hi = _ZERO, ceiling
+    last_cost, last_gdv, last_gap = cost_hi, gdv_hi, gap_hi
     while iters < MAX_ITERATIONS:
-        denom = gap1 - gap0
-        if denom == _ZERO:
-            # Nudge.
-            L2 = L1 * Decimal("1.05") + Decimal("1")
-        else:
-            # Secant: L2 = L1 - gap1 * (L1 - L0) / (gap1 - gap0)
-            L2 = L1 - gap1 * (L1 - L0) / denom
-
-        if L2 < _ZERO:
-            # Land value can't be negative — clamp and record non-convergence.
-            log.info("RLV solver: negative land_value projected (%s); clamping", L2)
-            L2 = _ZERO
-            gap2, last_cost, last_gdv = profit_gap(L2)
-            achieved = _achieved_pct(last_cost, last_gdv, gap2, tgt, basis)
-            return RlvResult(
-                False, iters, _penny(L2), basis, target_pct, achieved,
-                message="Target margin unreachable: required land value negative.",
-            )
-
-        gap2, last_cost, last_gdv = profit_gap(L2)
-        last_gap = gap2
-        if abs(gap2) <= TOLERANCE:
-            achieved = _achieved_pct(last_cost, last_gdv, gap2, tgt, basis)
-            return RlvResult(True, iters + 1, _penny(L2), basis, target_pct, achieved)
-
-        L0, gap0 = L1, gap1
-        L1, gap1 = L2, gap2
+        mid = (lo + hi) / Decimal("2")
+        gap_mid, cost_mid, gdv_mid = profit_gap(mid)
         iters += 1
+        last_cost, last_gdv, last_gap = cost_mid, gdv_mid, gap_mid
 
-    # Non-convergence.
+        if abs(gap_mid) <= _GAP_TOL:
+            achieved = _achieved_pct(cost_mid, gdv_mid, gap_mid, tgt, basis)
+            return RlvResult(True, iters, _penny(mid), basis, target_pct, achieved)
+
+        if gap_mid > _ZERO:
+            lo = mid
+        else:
+            hi = mid
+
+        if (hi - lo) <= _BRACKET_TOL:
+            mid = (lo + hi) / Decimal("2")
+            gap_f, cost_f, gdv_f = profit_gap(mid)
+            iters += 1
+            achieved = _achieved_pct(cost_f, gdv_f, gap_f, tgt, basis)
+            return RlvResult(True, iters, _penny(mid), basis, target_pct, achieved)
+
+    # --- Safety stop (unreachable given the bracket math) ---------------
     achieved = _achieved_pct(last_cost, last_gdv, last_gap, tgt, basis)
     return RlvResult(
-        False, iters, _penny(L1), basis, target_pct, achieved,
-        message=f"RLV did not converge in {MAX_ITERATIONS} iterations.",
+        False, iters, _penny((lo + hi) / Decimal("2")), basis, target_pct, achieved,
+        message=f"RLV did not converge in {MAX_ITERATIONS} iterations (unexpected).",
     )
 
 
