@@ -267,8 +267,13 @@ def get_group_comparator(
             ),
             "residual_land_value": (
                 str(current.rlv_computed_land_value)
-                if current and current.rlv_computed_land_value is not None
+                if (current
+                    and current.rlv_computed_land_value is not None
+                    and current.rlv_converged is True)
                 else None
+            ),
+            "rlv_converged": (
+                bool(current.rlv_converged) if current is not None else None
             ),
             "total_units": total_units,
             "passes_hurdle": _passes_hurdle(current) if current else False,
