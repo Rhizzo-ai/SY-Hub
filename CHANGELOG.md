@@ -10,6 +10,71 @@ Each entry: date, prompt reference (if applicable), change, rationale.
 
 ## Entries
 
+## C4 — RLV solver robustness (secant → bracketed bisection) + comparator tail-fix
+
+Chat 65 (decisions by Rhys). Closes the last Critical from the 2026-06-19 audit.
+**Scope — backend only. NO migration, NO permission, NO schema change, NO
+router signature change, NO frontend change.** Alembic head unchanged at
+`0050_backfill_invoiced_against_commitment`. Permissions 143, roles 10.
+
+### C4 — solver rewrite (`backend/app/services/rlv_solver.py`)
+
+The RLV solver finds the land purchase price that hits a target margin
+(`on_cost` or `on_gdv`). The previous implementation used **unbracketed secant
+iteration**, which could overshoot to absurd land values, stall on a zero
+denominator, thrash to the 50-iteration cap on solvable inputs, and — critically
+— could not distinguish "genuinely unreachable" from "method failed" (both
+surfaced as the same vague "did not converge").
+
+- **Replaced with bracketed bisection.** Exploits the proven monotonicity of
+  `profit_gap(L)` (raising land raises acquisition + SDLT and changes nothing
+  else, so profit only ever falls as land rises → a sign change brackets exactly
+  one root → bisection is guaranteed to converge).
+- **Search bracket `[0, 2 × GDV]`.** Land can never sensibly exceed twice the
+  scheme's sales value; this is a firm, fast upper bound that cannot clip a real
+  root.
+- **Three honest outcomes:** converged (root found within £1 of target);
+  unreachable (target missed even at £0 land — returns best-achievable margin
+  with a clear message); degenerate (GDV = 0 — "add units with sale prices
+  first" message).
+- **Iterations bounded at 60** as a pure safety cap; the bracket-tolerance exit
+  (£0.005 land bracket → penny-exact answer) fires first, typically in ~25
+  evaluations. Replaces brittle exact-equality Decimal checks with
+  tolerance-based comparisons.
+- `solve()` signature, `RlvResult` dataclass (7 fields), and the `_penny` /
+  `_achieved_pct` helpers preserved exactly — router and downstream contract
+  unchanged. Does NOT mutate `appraisal.land_purchase_price` (probe-only).
+- **Validation:** algorithm proven offline before build across named cases +
+  500 randomised schemes (worst-case post-rounding margin gap £1.01, under the
+  £1.50 test bound). On-platform: 10 RLV tests green (3 pre-existing unchanged +
+  6 new + endpoint), full appraisals suite 52 passed; independent live-API
+  verification confirmed convergence + honest unreachable verdicts.
+
+### C4-tail — scenario comparator display honesty (`appraisal_scenarios.py`)
+
+The scenario comparator (`get_group_comparator`) surfaced
+`residual_land_value` from `rlv_computed_land_value` **without checking
+`rlv_converged`**, so a failed/unreachable solve could display a misleading land
+figure on the side-by-side screen used to choose between scenarios.
+(`_passes_hurdle` reads profit %, not RLV — so no pass/fail corruption; this was
+display-honesty only.)
+
+- `residual_land_value` is now non-null **only** when a value exists AND
+  `rlv_converged is True`; otherwise `None` (screen shows "—").
+- New `rlv_converged` key added to each scenario row so the frontend can
+  distinguish "no trustworthy RLV" from a real figure.
+- Two-key edit only; no other comparator field changed. 3 new tests
+  (`backend/tests/test_appraisal_scenarios_comparator.py`); 16 scenario tests
+  green incl. pre-existing payload-shape regression; verified live end-to-end
+  (500% target → null + converged=false; 20% target → real figure +
+  converged=true).
+
+### Critical-fix backlog — CLEARED
+
+C3 · NEW-CRIT-1+H1 · C2 · C1-back · C1-front · C4 · C4-tail all closed and
+verified on `origin/main`. Remaining audit items: 7 High, 12 Medium, 9 Low
+(none money/data-corrupting). Next tier: H4/H5 (appraisal land/finance
+double-count) — design-first, see chat-66 opener.
 ## C1-front — Force-the-Choice Bill-Entry UI (frontend + 1 read-only backend field)
 
 Frontend partner to C1-back (Chat 64; decisions locked by Rhys). Makes the
